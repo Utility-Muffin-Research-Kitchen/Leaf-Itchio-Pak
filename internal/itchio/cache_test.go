@@ -1,6 +1,7 @@
 package itchio_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,36 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
+
+func BenchmarkLoadGamesCache1000(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "games_cache.json")
+	games := make([]itchio.Game, 1000)
+	for i := range games {
+		games[i] = itchio.Game{
+			Title:    fmt.Sprintf("Game %04d", i),
+			Author:   fmt.Sprintf("Author %03d", i%100),
+			URL:      fmt.Sprintf("https://author-%d.itch.io/game-%d", i%100, i),
+			CoverURL: fmt.Sprintf("https://img.example/%d.png", i),
+			Platform: []string{"GB", "GBC", "GBA", "NES", "MD", "P8"}[i%6],
+			IsFree:   i%4 != 0,
+		}
+	}
+	if err := itchio.SaveGamesCache(path, games); err != nil {
+		b.Fatalf("SaveGamesCache: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cache, err := itchio.LoadGamesCache(path)
+		if err != nil {
+			b.Fatalf("LoadGamesCache: %v", err)
+		}
+		if len(cache.Games) != len(games) {
+			b.Fatalf("loaded %d games, want %d", len(cache.Games), len(games))
+		}
+	}
+}
 
 func TestSaveAndLoadGamesCache(t *testing.T) {
 	dir := t.TempDir()

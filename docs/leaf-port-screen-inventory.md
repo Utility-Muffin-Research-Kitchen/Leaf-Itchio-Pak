@@ -104,10 +104,14 @@ filters, GIF compositing/animation, filename collision guards, ROM/save/state
 migration, archive inspection, inventory badges, settings persistence, and
 secret redaction.
 
-Still required before Phase 1 closes:
+Phase 1 closure coverage now includes:
 
-- focused feed-code/system classification tests;
-- nested archive, 7z, multi-ROM, and soundtrack transaction fixtures;
-- signed-URL redaction tests and log scans;
-- explicit cancellation/no-partial-write tests for every cache/download path;
-- native baseline memory/latency measurements and animated-GIF observation.
+- exact feed-code/slug classification and cross-feed deduplication tests;
+- nested ZIP and embedded 7z ROM, music, nested-archive, and resource-fork
+  fixtures, plus the existing multi-ROM/Pico-8 plan helpers;
+- API-key, signed-query, signed-download-path, and resolver-error log redaction;
+- atomic catalogue/owned-cache writes, cancellable feed builds, atomic streamed
+  downloads, and preservation of an existing destination after truncation;
+- case-fold collision planning matching FAT32 semantics;
+- reproducible native startup, first-page, cached-list, and animated-GIF
+  measurements in `docs/baselines/2026-07-09-upstream-v1.0.19.md`.

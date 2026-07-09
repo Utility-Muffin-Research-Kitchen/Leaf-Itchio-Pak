@@ -32,6 +32,31 @@ func TestSlugToTitle(t *testing.T) {
 	}
 }
 
+func BenchmarkFetchFirstFeedPage36(b *testing.B) {
+	page, err := os.ReadFile("../../testdata/rss_page1.xml")
+	if err != nil {
+		b.Fatalf("read fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write(page)
+	}))
+	b.Cleanup(srv.Close)
+	client := itchio.NewClientWithBase(srv.URL)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		games, fetchErr := client.FetchGamesFromURL(srv.URL + "/games/made-with-gb-studio.xml?page=1")
+		if fetchErr != nil {
+			b.Fatalf("FetchGamesFromURL: %v", fetchErr)
+		}
+		if len(games) != 36 {
+			b.Fatalf("parsed %d games, want 36", len(games))
+		}
+	}
+}
+
 func TestFetchGamesFromURL_bracketedTitleFallsBackToSlug(t *testing.T) {
 	// Pico-8 developers sometimes name their game with brackets, e.g. "[Spread]"
 	// or "[welcome to dreamsearch]". After parseTitle strips [Tag] patterns the
@@ -246,7 +271,7 @@ func TestFetchAllGames(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
-		slug := r.URL.Path   // e.g. "/games/made-with-gb-studio.xml"
+		slug := r.URL.Path // e.g. "/games/made-with-gb-studio.xml"
 		page := r.URL.Query().Get("page")
 		switch {
 		case slug == "/games/made-with-gb-studio.xml" && page == "1":

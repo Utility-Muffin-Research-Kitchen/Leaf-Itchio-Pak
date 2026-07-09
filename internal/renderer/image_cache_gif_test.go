@@ -29,6 +29,42 @@ func makeTestGIF(nFrames int, delays []int) *gif.GIF {
 	}
 }
 
+func BenchmarkRenderAnimatedGIF160x90x30(b *testing.B) {
+	const (
+		width  = 160
+		height = 90
+		frames = 30
+	)
+	palette := color.Palette{color.Black, color.White, color.RGBA{R: 80, G: 160, B: 240, A: 255}}
+	images := make([]*image.Paletted, frames)
+	delays := make([]int, frames)
+	for i := range images {
+		img := image.NewPaletted(image.Rect(0, 0, width, height), palette)
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				img.SetColorIndex(x, y, uint8((x+y+i)%len(palette)))
+			}
+		}
+		images[i] = img
+		delays[i] = 5
+	}
+	g := &gif.GIF{
+		Image:  images,
+		Delay:  delays,
+		Config: image.Config{Width: width, Height: height, ColorModel: palette},
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(width * height * frames)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		anim := renderGIFFrames(g)
+		if len(anim.frames) != maxGIFFrames {
+			b.Fatalf("rendered %d frames, want capped %d", len(anim.frames), maxGIFFrames)
+		}
+	}
+}
+
 func TestRenderGIFFramesCount(t *testing.T) {
 	g := makeTestGIF(3, []int{10, 20, 15})
 	anim := renderGIFFrames(g)
