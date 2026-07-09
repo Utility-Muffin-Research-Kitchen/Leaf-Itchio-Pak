@@ -9,7 +9,7 @@ import (
 
 	evdev "github.com/holoplot/go-evdev"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 const (

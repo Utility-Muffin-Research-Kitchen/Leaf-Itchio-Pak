@@ -3,13 +3,13 @@
 package ui
 
 import (
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
 // appVersion is set at build time via -ldflags:
 //
-//	-X github.com/carroarmato0/nextui-itchio-pak/internal/ui.appVersion=vX.Y.Z
+//	-X github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui.appVersion=vX.Y.Z
 var appVersion = "dev"
 
 const (

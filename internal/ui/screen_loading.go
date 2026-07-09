@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 )
 
 // formatKB formats a byte count as a human-readable KB or MB string.

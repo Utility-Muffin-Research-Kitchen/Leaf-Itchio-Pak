@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // buildTestZIP creates an in-memory ZIP with the given files (name → content).

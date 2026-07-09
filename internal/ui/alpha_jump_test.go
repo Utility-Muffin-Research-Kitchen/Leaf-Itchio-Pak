@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 var jumpGames = []itchio.Game{

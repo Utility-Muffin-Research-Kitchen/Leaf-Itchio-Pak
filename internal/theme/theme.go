@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // Theme holds the 7 UI colors read from minuisettings.txt.

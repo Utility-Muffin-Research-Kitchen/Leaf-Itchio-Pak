@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
 

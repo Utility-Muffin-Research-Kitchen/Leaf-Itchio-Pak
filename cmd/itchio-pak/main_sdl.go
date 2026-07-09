@@ -7,14 +7,14 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/power"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/settings"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/theme"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/ui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/theme"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
 	"github.com/veandco/go-sdl2/sdl"
 )
 

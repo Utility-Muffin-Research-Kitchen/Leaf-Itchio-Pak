@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // captureOutput redirects stdlib log output to a buffer for the test duration.

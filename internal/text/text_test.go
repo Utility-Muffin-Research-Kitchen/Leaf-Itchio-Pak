@@ -3,7 +3,7 @@ package text_test
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/text"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 func TestIsEmoji(t *testing.T) {

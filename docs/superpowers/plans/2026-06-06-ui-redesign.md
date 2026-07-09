@@ -113,7 +113,7 @@ In `internal/settings/settings.go`, add one line to the `Config` struct after `S
 ./scripts/test.sh 2>&1 | tail -5
 ```
 
-Expected: `ok  	github.com/carroarmato0/nextui-itchio-pak/internal/settings`
+Expected: `ok  	github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings`
 
 - [ ] **Step 5: Commit**
 
@@ -256,7 +256,7 @@ func LayoutFor(w, h int32) Layout {
 ./scripts/test.sh 2>&1 | grep -E "ok|FAIL" | grep ui
 ```
 
-Expected: `ok  	github.com/carroarmato0/nextui-itchio-pak/internal/ui`
+Expected: `ok  	github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui`
 
 - [ ] **Step 5: Commit**
 
@@ -285,7 +285,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 var filterTestGames = []itchio.Game{
@@ -367,7 +367,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 var jumpGames = []itchio.Game{
@@ -454,7 +454,7 @@ package ui
 import (
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 // applyPlatformFilter returns games whose Platform field matches platform
@@ -495,7 +495,7 @@ func applySearchFilter(games []itchio.Game, query string) []itchio.Game {
 ```go
 package ui
 
-import "github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+import "github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 
 // alphaJumpIndex returns the index of the first game whose sort-key first rune
 // differs from games[cursor]'s, scanning in direction dir (+1 = forward, -1 = backward).
@@ -535,7 +535,7 @@ func firstRune(s string) rune {
 ./scripts/test.sh 2>&1 | grep -E "ok|FAIL" | grep ui
 ```
 
-Expected: `ok  	github.com/carroarmato0/nextui-itchio-pak/internal/ui`
+Expected: `ok  	github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui`
 
 - [ ] **Step 7: Commit**
 
@@ -638,8 +638,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -1029,9 +1029,9 @@ No unit test (SDL2). Verified visually.
 package ui
 
 import (
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/veandco/go-sdl2/sdl"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 )
 
 func TestLoad_MissingFile_ReturnsEmpty(t *testing.T) {

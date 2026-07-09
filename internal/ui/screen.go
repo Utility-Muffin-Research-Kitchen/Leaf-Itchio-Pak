@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/veandco/go-sdl2/sdl"
 )
 

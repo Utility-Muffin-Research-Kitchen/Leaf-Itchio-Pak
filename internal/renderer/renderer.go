@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	itext "github.com/carroarmato0/nextui-itchio-pak/internal/text"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/theme"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	itext "github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/theme"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )

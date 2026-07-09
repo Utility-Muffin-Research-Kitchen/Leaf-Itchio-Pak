@@ -18,7 +18,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/veandco/go-sdl2/sdl"
 	"golang.org/x/image/draw"
 )

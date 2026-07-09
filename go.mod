@@ -1,4 +1,4 @@
-module github.com/carroarmato0/nextui-itchio-pak
+module github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak
 
 go 1.22
 

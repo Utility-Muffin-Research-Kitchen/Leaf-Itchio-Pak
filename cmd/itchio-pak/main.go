@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // version is set at build time via -ldflags:

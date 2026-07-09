@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 // minimalPNG returns the bytes of a 1x1 white PNG.

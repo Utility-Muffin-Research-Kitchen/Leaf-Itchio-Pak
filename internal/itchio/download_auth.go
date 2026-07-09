@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // OwnedKey represents one purchase granting download access to a game.

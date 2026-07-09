@@ -111,7 +111,7 @@ build_native() {
     VERSION="$(pak_version)"
     COMMIT="${GIT_COMMIT:-unknown}"
     mkdir -p bin/native
-    go build -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/carroarmato0/nextui-itchio-pak/internal/ui.appVersion=$VERSION'" \
+    go build -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui.appVersion=$VERSION'" \
         -o bin/native/itchio-pak ./cmd/itchio-pak/
     echo "Built: bin/native/itchio-pak ($VERSION / $COMMIT)"
 }
@@ -134,7 +134,7 @@ build_platform() {
     COMMIT="${GIT_COMMIT:-unknown}"
     CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
         go build -a -tags netgo -buildvcs=false \
-        -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/carroarmato0/nextui-itchio-pak/internal/ui.appVersion=$VERSION'" \
+        -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui.appVersion=$VERSION'" \
         -o bin/"$PLATFORM"/itchio-pak ./cmd/itchio-pak/
     echo "Built: bin/$PLATFORM/itchio-pak ($VERSION / $COMMIT)"
 

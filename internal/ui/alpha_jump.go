@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+import "github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 
 // alphaJumpIndex returns the index of the first game whose sort-key first rune
 // differs from games[cursor]'s, scanning in direction dir (+1 = forward, -1 = backward).

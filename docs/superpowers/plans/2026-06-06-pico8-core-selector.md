@@ -468,8 +468,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func TestMigratePico8Files_movesROMAndCoverArt(t *testing.T) {
@@ -689,8 +689,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // MigratePico8Files moves all Pico-8 ROM files (and their cover art) whose
@@ -971,8 +971,8 @@ type SettingsScreen struct {
 Add the import for inventory at the top of the file imports:
 
 ```go
-"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 ```
 
 - [ ] **Step 3: Update `NewSettingsScreen` signature and body**

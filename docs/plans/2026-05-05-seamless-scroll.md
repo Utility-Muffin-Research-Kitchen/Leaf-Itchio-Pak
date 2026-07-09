@@ -76,7 +76,7 @@
   ./scripts/test.sh
   ```
 
-  Expected: all tests pass. Look for `ok github.com/carroarmato0/nextui-itchio-pak/internal/itchio`.
+  Expected: all tests pass. Look for `ok github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio`.
 
 - [ ] **Step 4: Commit**
 

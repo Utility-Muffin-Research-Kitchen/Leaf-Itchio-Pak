@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/bodgit/sevenzip"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // InspectRemote7z downloads the 7z archive at cdnURL to a temporary file,

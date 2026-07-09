@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
