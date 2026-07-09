@@ -280,11 +280,18 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	f, err := os.Create(dest)
+	tmp, err := os.CreateTemp(dir, ".itchio-download-*.part")
 	if err != nil {
-		return fmt.Errorf("create dest: %w", err)
+		return fmt.Errorf("create download temp: %w", err)
 	}
-	defer f.Close()
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	total := resp.ContentLength
 	var downloaded int64
@@ -292,7 +299,7 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
+			if _, werr := tmp.Write(buf[:n]); werr != nil {
 				logger.Error("stream: write error after %d bytes: %v", downloaded, werr)
 				return fmt.Errorf("write: %w", werr)
 			}
@@ -309,6 +316,16 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 			return fmt.Errorf("read stream: %w", err)
 		}
 	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync download temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close download temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return fmt.Errorf("commit download: %w", err)
+	}
+	committed = true
 	logger.Info("stream: done, wrote %d bytes", downloaded)
 	return nil
 }
@@ -335,6 +352,7 @@ func (c *Client) FetchFileHeader(cdnURL string, n int) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("header fetch: read: %w", err)
 	}
-	logger.Debug("header fetch: read %d bytes from %s", len(data), cdnURL)
+	// cdnURL may contain signed credentials; never include it in logs.
+	logger.Debug("header fetch: read %d bytes", len(data))
 	return data, nil
 }

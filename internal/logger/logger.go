@@ -3,6 +3,7 @@ package logger
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,6 +54,13 @@ type secret struct {
 var (
 	secretsMu sync.RWMutex
 	secrets   []secret
+
+	// Query credentials occur in itch.io resolver URLs and CDN-signed URLs.
+	// Preserve parameter names for diagnosis, but never their values.
+	sensitiveQueryValue = regexp.MustCompile(`(?i)([?&](?:key|csrf|token|signature|x-amz-signature|x-amz-credential|x-amz-security-token|download_key_id)=)[^&\s"'<>]+`)
+	// Free-download page URLs carry the download key as a path segment rather
+	// than a query parameter.
+	signedDownloadPath = regexp.MustCompile(`(?i)(https?://[^\s"'<>]+/download/)[^/?\s"'<>]+`)
 )
 
 // RegisterSecret registers a plaintext value to be fully replaced with label in
@@ -80,6 +88,8 @@ func redact(s string) string {
 	for _, sec := range secrets {
 		s = strings.ReplaceAll(s, sec.plain, sec.label)
 	}
+	s = sensitiveQueryValue.ReplaceAllString(s, `${1}[REDACTED]`)
+	s = signedDownloadPath.ReplaceAllString(s, `${1}[REDACTED]`)
 	return s
 }
 

@@ -160,3 +160,22 @@ func TestRegisterSecret_UpdatesExistingLabel(t *testing.T) {
 		t.Errorf("redaction label not found:\n%s", out)
 	}
 }
+
+func TestSignedURLCredentialsAreRedacted(t *testing.T) {
+	resetLevel(t)
+	logger.SetLevel(logger.LevelDebug)
+	buf := captureOutput(t)
+
+	logger.Debug("cdn=https://cdn.example/game.zip?X-Amz-Signature=sig-secret&token=token-secret")
+	logger.Debug("page=https://author.itch.io/game/download/path-secret")
+
+	out := buf.String()
+	for _, secret := range []string{"sig-secret", "token-secret", "path-secret"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("signed URL credential %q appeared in output:\n%s", secret, out)
+		}
+	}
+	if strings.Count(out, "[REDACTED]") != 3 {
+		t.Errorf("redaction count = %d, want 3:\n%s", strings.Count(out, "[REDACTED]"), out)
+	}
+}

@@ -77,3 +77,25 @@ func TestSaveOwnedCache_EmptySlice(t *testing.T) {
 		t.Errorf("expected 0 URLs, got %v", got)
 	}
 }
+
+func TestSaveOwnedCache_AtomicOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "owned_cache.json")
+	if err := itchio.SaveOwnedCache(path, []string{"https://old.itch.io/game"}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	if err := itchio.SaveOwnedCache(path, []string{"https://new.itch.io/game"}); err != nil {
+		t.Fatalf("overwrite cache: %v", err)
+	}
+
+	urls, err := itchio.LoadOwnedCache(path)
+	if err != nil {
+		t.Fatalf("LoadOwnedCache: %v", err)
+	}
+	if len(urls) != 1 || urls[0] != "https://new.itch.io/game" {
+		t.Fatalf("cache after overwrite = %v", urls)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Error("temporary owned-cache file remains after commit")
+	}
+}
