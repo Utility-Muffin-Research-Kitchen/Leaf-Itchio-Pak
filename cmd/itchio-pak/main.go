@@ -27,10 +27,10 @@ var version = "dev"
 var gitCommit = "unknown"
 
 func main() {
-	headless    := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
-	cpuProfile  := flag.String("cpuprofile", "", "write CPU profile to `file`")
-	memProfile  := flag.String("memprofile", "", "write memory profile to `file` on exit")
-	pprofAddr   := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
+	headless := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
+	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
+	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
+	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
 	flag.Parse()
 
 	logPath := logFilePath()
@@ -41,8 +41,7 @@ func main() {
 	if err == nil {
 		log.SetOutput(logFile)
 		// Redirect fd 2 (stderr) so Go runtime panics land in the log too.
-		// Dup2 is not available on Linux ARM64; Dup3 with flags=0 is equivalent.
-		_ = syscall.Dup3(int(logFile.Fd()), 2, 0)
+		redirectStderr(logFile.Fd())
 		defer logFile.Close()
 	}
 

@@ -1,14 +1,29 @@
-# Itch.io Pak for NextUI
+# Itch.io Pak for Leaf
 
 ![CI](../../actions/workflows/ci.yml/badge.svg)
-[![Ko-Fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/carroarmato0)
 
-<img src="docs/screenshots/main.png" alt="Game list" width="800"/>
+> [!IMPORTANT]
+> The Leaf port is under active development and is not installable yet. The
+> first public build will be distributed through Pak Rat after all verification
+> gates pass; it will not be a default packaged Leaf app.
 
-An unofficial community Pak for NextUI on TrimUI and Miyoo Flip handheld gaming
-devices. Browse, discover, and download homebrew ROM games for Game Boy, Game
-Boy Color, Game Boy Advance, NES/Famicom, Sega Genesis, and Pico-8 directly
-from itch.io — all on-device, no PC required.
+This is UMRK's Leaf-only fork of
+[carroarmato0/NextUI-Itchio-Pak](https://github.com/carroarmato0/NextUI-Itchio-Pak).
+It is maintained by the Utility Muffin Research Kitchen from upstream release
+`v1.0.19` at commit `42171a5a764ff341d581b6e3ec6cd02adb936eb7`.
+It is being adapted for the Miniloong Pocket 1 with a Catastrophe box-model GUI,
+Leaf runtime paths, dual-SD support, and Jawaka integration. The Go catalogue,
+download, inventory, content-filter, GIF, and music features are being retained
+while the NextUI renderer and device contracts are replaced.
+
+This fork does not target NextUI compatibility. Its implementation and
+documentation are developed with AI assistance under human review; the
+original author and full source history remain attributed through Git and the
+unchanged MIT license.
+
+Fork provenance and upstream-sync policy are recorded in [UPSTREAM.md](UPSTREAM.md).
+The implementation plan lives in the umbrella workspace at
+`umrk-workspace/plans/leaf-itchio-pak.md`.
 
 > **Disclaimer:** This is an unofficial community project, not affiliated with
 > or endorsed by itch.io.
@@ -20,14 +35,11 @@ from itch.io — all on-device, no PC required.
 
 ---
 
-## Supported Devices
+## Target device
 
 | Device | Platform code | Status |
 |---|---|---|
-| TrimUI Brick | `tg5040` | Tested |
-| TrimUI Smart Pro | `tg5040` | Tested |
-| TrimUI Smart Pro S | `tg5050` | Tested |
-| Miyoo Flip | `my355` | Tested |
+| Miniloong Pocket 1 | `mlp1` | Port in progress |
 
 ---
 

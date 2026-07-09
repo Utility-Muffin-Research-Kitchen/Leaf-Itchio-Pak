@@ -1,73 +1,53 @@
-# Itch.io Pak — Claude Reference
+# Leaf Itch.io Pak — Contributor Reference
 
-Unofficial NextUI Pak that lets users browse and download GB/GBC games from Itch.io directly on handheld devices. Written in Go, rendered with SDL2, cross-compiled for ARM64. Not affiliated with Itch.io / Leafo.
+This repository is UMRK's Leaf-only fork of `carroarmato0/NextUI-Itchio-Pak`.
+The upstream NextUI implementation is a source and behavior reference, not a
+runtime or layout compatibility target.
 
-## Critical Constraints
+## Current scope
 
-- **Target arch:** ARM64 only — no x86 binaries ship to devices
-- **No X11/Wayland/PulseAudio** on devices — SDL2 runs in raw framebuffer mode
-- **Cross-compile required** for device targets — use the container scripts, never `go build` directly for tg5040/tg5050/my355
-- **Single binary** covers all three platforms; only the bundled SDL2 `.so` files differ per platform
-- **CGo is required** — SDL2 bindings use CGo; pure-Go-only builds use the `headless` build tag (CI only)
+- Target only Miniloong Pocket 1 (`PLATFORM=mlp1`, aarch64 RK3566).
+- Package as `Apps/mlp1/Itch-io.pak`; do not add it to Leaf's default apps.
+- Publish through Pak Rat only after every verification gate passes.
+- Keep the Go catalogue, download, inventory, content-filter, GIF, API-key, and
+  music behavior unless the port plan explicitly replaces it.
+- Replace SDL renderer ownership with an app-local CGo bridge to Catastrophe's
+  retained box-model GUI.
+- Support both SD cards through Leaf's runtime environment and explicit
+  destination selection.
 
-## Supported Platforms
+## Runtime contract
 
-| Code | Device | Resolution |
-|------|--------|------------|
-| `tg5040` | TrimUI Brick (1024×768) + Smart Pro (1280×720) | ARM64 |
-| `tg5050` | TrimUI Smart Pro S (1280×720) | ARM64 |
-| `my355` | Miyoo Flip (640×480) | ARM64 |
+Source `$SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh` from the
+Pak entrypoint when present. Prefer the public variables documented in
+`../umrk-workspace/docs/runtime-paths.md`; do not hardcode `/mnt/SDCARD` or
+NextUI paths in new code.
 
-## Key Commands
+Durable app state belongs under `.userdata/mlp1/itchio`; release-managed files
+belong under `.system/leaf/platforms/mlp1`. The launcher stack is entered
+through `jawakad`, and suspend inhibition must use a generic Jawaka contract.
+
+## Build and test
 
 ```sh
-./scripts/test.sh                  # Run tests (containerised)
-./scripts/build.sh native          # Build for host (containerised)
-./scripts/build.sh tg5040          # Cross-compile for TrimUI
-./scripts/build.sh all             # Cross-compile all three platforms
-./scripts/release.sh               # Build + package dist/ artifacts
-./scripts/deploy.sh                # Push to connected device via ADB
-./scripts/debug.sh logs            # Stream device log live
-./scripts/dev-screenshot.sh --all --out-dir /tmp/itchio-screenshots
+./scripts/test.sh
+go test -race -tags headless ./...
 ```
 
-All also available as `make` targets: `test`, `build-native`, `build-all`, `release`, `deploy`, `clean`.
+The containerized Linux suite is canonical. The host command is an additional
+fast check. Device packaging and staging will move to an MLP1-only lane as the
+Leaf port lands.
 
-## Key Directories
+## Code constraints
 
-```
-cmd/itchio-pak/    Entry point (main.go, main_sdl.go, main_headless.go)
-internal/itchio/   HTTP client, RSS feed, scraper, download flows
-internal/ui/       Screen definitions (screen_*.go)
-internal/renderer/ SDL2 drawing layer + LRU image cache
-internal/roms/     ROM type detection, destination folder logic
-internal/settings/ JSON config read/write
-internal/inventory/Owned/downloaded game tracking, update detection
-internal/logger/   Levelled file logger → $HOME/itchio-pak.log
-internal/power/    Sleep/wake/shutdown handling
-assets/            font.ttf + 4 fallback fonts, ca-certificates.crt
-testdata/          HTML/RSS fixtures for offline unit tests
-```
+- Use `internal/logger` instead of direct production-path prints.
+- Keep network tests offline with `httptest` and checked-in fixtures.
+- Keep headless business logic independently testable.
+- In the Catastrophe bridge, define `CAT_IMPLEMENTATION` and
+  `CAT_WIDGETS_IMPLEMENTATION` in exactly one translation unit and include
+  `catastrophe_widgets.h` only after `catastrophe.h`.
+- Public Catastrophe API names use `cat_`; internal names use `cat__`; constants,
+  macros, and enums use `CAT_`.
 
-## Coding Standards
-
-- All new and modified code **must** include structured log calls at key points — see memory entry "Logging standards" for the full checklist (goroutines, cache ops, HTTP calls, file I/O).
-- No `fmt.Println` / `log.Printf` in production paths — use `internal/logger`.
-- SDL2 renderer code is excluded from CI via `//go:build !headless`; headless-safe logic goes in separate files.
-- Tests use `httptest.NewServer` with fixtures from `testdata/` — no live network calls in tests.
-
-## Known Gotchas
-
-- **SDL_ttf `GlyphMetrics` always succeeds** (returns `.notdef`) — do not use it for font coverage detection; parse the cmap table directly. See memory entry "SDL_ttf GlyphMetrics unreliable".
-- **Itch.io owned-keys last page:** the API returns `{}` (object) not `[]` (array) when exhausted — use `json.RawMessage` and check `raw[0] == '['` before unmarshaling. See `auth_validate.go` for the pattern.
-- **Screenshot output:** always write to `/tmp/itchio-screenshots/`, never to `docs/screenshots/` — that directory is populated manually by the developer after design approval.
-
-## Skills — When to Use Which
-
-| Skill | When |
-|-------|------|
-| `itchio-pak-project` | Architecture decisions, platform codes, ROM destination paths |
-| `itchio-pak-build` | Build/release/deploy questions, container runtime, artifact structure |
-| `itchio-pak-adb-debug` | Live device debugging, ADB workflows, log streaming |
-| `itchio-pak-itch-scraping` | RSS feed, scraper logic, download flows, testdata fixtures |
-| `itchio-pak-device-screenshot` | Capturing a screenshot from real hardware to compare against mockups |
+See `UPSTREAM.md` for provenance and the umbrella implementation plan for the
+ordered migration and release gates.
