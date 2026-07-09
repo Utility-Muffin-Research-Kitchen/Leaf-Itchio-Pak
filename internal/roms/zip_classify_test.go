@@ -39,6 +39,9 @@ func TestClassifyEntry(t *testing.T) {
 		{"game.P8", roms.KindROM},
 		{"cart.p8.png", roms.KindROM},
 		{"cart.P8.PNG", roms.KindROM},
+		{"nested/game.gbc", roms.KindROM},
+		{"soundtrack/disc-1/track01.flac", roms.KindMusic},
+		{"archives/game.zip", roms.KindOther},
 		// cover.png must remain KindOther (not confused with .p8.png)
 		{"cover.png", roms.KindOther},
 		// macOS resource forks must never be classified as playable files,
