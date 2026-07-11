@@ -53,6 +53,8 @@ func appButton(button Button) appui.Button {
 		return appui.ButtonB
 	case ButtonX:
 		return appui.ButtonX
+	case ButtonY:
+		return appui.ButtonY
 	case ButtonL1:
 		return appui.ButtonL1
 	case ButtonR1:

@@ -174,6 +174,30 @@ func (c *Context) Close() error {
 	return nil
 }
 
+// Keyboard runs Catastrophe's device-native blocking keyboard widget. A
+// cancelled edit returns the original text with accepted=false.
+func (c *Context) Keyboard(initial string) (value string, accepted bool, err error) {
+	if err := c.ensureOpen(); err != nil {
+		return initial, false, err
+	}
+	initialC, freeInitial := cString(initial)
+	defer freeInitial()
+	const outputSize = 1024
+	output := C.malloc(outputSize)
+	if output == nil {
+		return initial, false, errors.New("catui: keyboard allocation failed")
+	}
+	defer C.free(output)
+	var acceptedC C.int
+	if err := statusError(C.catui_keyboard(initialC, (*C.char)(output), C.size_t(outputSize), &acceptedC)); err != nil {
+		return initial, false, err
+	}
+	if acceptedC == 0 {
+		return initial, false, nil
+	}
+	return C.GoString((*C.char)(output)), true, nil
+}
+
 func (c *Context) IsOwnerThread() bool {
 	return c != nil && c.ensureOpen() == nil && C.catui_is_owner_thread() != 0
 }

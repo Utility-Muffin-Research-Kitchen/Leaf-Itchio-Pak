@@ -65,6 +65,8 @@ void catui_request_frame_in(uint32_t ms);
 
 int catui_poll_input(catui_input_event *out);
 int catui_wake(void);
+int catui_keyboard(const char *initial_text, char *out_text,
+                   size_t out_size, int *accepted);
 
 int catui_clear(void);
 int catui_present(void);

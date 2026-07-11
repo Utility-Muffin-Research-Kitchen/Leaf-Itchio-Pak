@@ -519,6 +519,14 @@ func (s *ListScreen) SyncCatModel(model *appui.MainListModel) {
 
 func (s *ListScreen) RetryCatLoad() { go s.loadPage(1, "") }
 
+func (s *ListScreen) CatFilter() (platform, sort, query string) {
+	return s.platformFilter, string(s.sortMode), s.searchQuery
+}
+
+func (s *ListScreen) ApplyCatFilter(platform, sort, query string) {
+	s.SetFilter(platform, sort, query)
+}
+
 func (s *ListScreen) CycleCatSort(direction int) {
 	if !s.cacheReady {
 		return

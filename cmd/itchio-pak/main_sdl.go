@@ -58,6 +58,18 @@ func runSDL() {
 		}
 		return
 	}
+	if inputFixture := os.Getenv("ITCHIO_CAT_INPUT"); inputFixture != "" {
+		frames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_INPUT_FRAMES"))
+		if err := catui.RunInputFixture(catui.InputFixtureConfig{
+			Screen:         inputFixture,
+			Frames:         frames,
+			ScreenshotPath: os.Getenv("ITCHIO_CAT_INPUT_SCREENSHOT"),
+		}); err != nil {
+			logger.Error("Catastrophe input slice: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	runtimeEnv, err := leaf.LoadEnvironment()
 	if err != nil {
 		logger.Error("leaf runtime: %v", err)
@@ -400,6 +412,23 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	if err != nil {
 		return err
 	}
+	type catRoute uint8
+	const (
+		catRouteList catRoute = iota
+		catRouteFilter
+	)
+	route := catRouteList
+	var filterModel *appui.FilterModel
+	var filterScreen *catui.FilterScreen
+	drawCurrent := func() error {
+		switch route {
+		case catRouteFilter:
+			imageCache.BeginFrame()
+			return filterScreen.Draw()
+		default:
+			return screen.Draw()
+		}
+	}
 
 	running, redraw := true, true
 	targetFrames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_LIVE_LIST_FRAMES"))
@@ -424,17 +453,44 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 				redraw = true
 				continue
 			}
-			switch screen.HandleInput(event) {
-			case appui.ListIntentExit:
-				running = false
-			case appui.ListIntentRetry:
-				list.RetryCatLoad()
-			case appui.ListIntentPreviousSort:
-				list.CycleCatSort(-1)
-			case appui.ListIntentNextSort:
-				list.CycleCatSort(1)
-			case appui.ListIntentOpen, appui.ListIntentFilter, appui.ListIntentSettings:
-				logger.Debug("cat live list: destination screen is not migrated yet")
+			switch route {
+			case catRouteFilter:
+				switch filterScreen.HandleInput(event) {
+				case appui.FilterIntentEditSearch:
+					value, accepted, keyboardErr := ctx.Keyboard(filterModel.Query)
+					if keyboardErr != nil {
+						return keyboardErr
+					}
+					if accepted {
+						filterModel.Query = value
+					}
+				case appui.FilterIntentApply:
+					list.ApplyCatFilter(filterModel.Platform, filterModel.Sort, filterModel.Query)
+					route = catRouteList
+				case appui.FilterIntentCancel:
+					route = catRouteList
+				}
+			default:
+				switch screen.HandleInput(event) {
+				case appui.ListIntentExit:
+					running = false
+				case appui.ListIntentRetry:
+					list.RetryCatLoad()
+				case appui.ListIntentPreviousSort:
+					list.CycleCatSort(-1)
+				case appui.ListIntentNextSort:
+					list.CycleCatSort(1)
+				case appui.ListIntentFilter:
+					platform, sort, query := list.CatFilter()
+					filterModel = appui.NewFilterModel(platform, sort, query)
+					filterScreen, err = catui.NewFilterScreen(ctx, filterModel)
+					if err != nil {
+						return err
+					}
+					route = catRouteFilter
+				case appui.ListIntentOpen, appui.ListIntentSettings:
+					logger.Debug("cat live list: destination screen is not migrated yet")
+				}
 			}
 			redraw = true
 		}
@@ -443,7 +499,7 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		}
 		list.SyncCatModel(model)
 		if redraw {
-			if err := screen.Draw(); err != nil {
+			if err := drawCurrent(); err != nil {
 				return err
 			}
 			drawn++
@@ -452,7 +508,7 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					if err := ctx.BeginCapture(); err != nil {
 						return err
 					}
-					if err := screen.Draw(); err != nil {
+					if err := drawCurrent(); err != nil {
 						_ = ctx.EndCapture()
 						return err
 					}
@@ -480,7 +536,7 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			}
 			ctx.RequestFrameIn(uint32(milliseconds))
 			redraw = true
-		} else if model.State == appui.ListLoading {
+		} else if route == catRouteList && model.State == appui.ListLoading {
 			ctx.RequestFrameIn(100)
 			redraw = true
 		}

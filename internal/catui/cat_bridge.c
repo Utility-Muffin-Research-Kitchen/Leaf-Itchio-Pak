@@ -1,5 +1,7 @@
 #define CAT_IMPLEMENTATION
 #include "catastrophe.h"
+#define CAT_WIDGETS_IMPLEMENTATION
+#include "catastrophe_widgets.h"
 #include "cjson/cJSON.c"
 
 #include "cat_bridge.h"
@@ -45,6 +47,21 @@ static int catui__owner(void) {
 static int catui__guard(void) {
     if (!catui__state.initialized) return CATUI_CLOSED;
     return catui__owner() ? CATUI_OK : CATUI_WRONG_THREAD;
+}
+
+int catui_keyboard(const char *initial_text, char *out_text,
+                   size_t out_size, int *accepted) {
+    int guard = catui__guard();
+    if (guard != CATUI_OK) return guard;
+    if (!out_text || out_size == 0 || !accepted) return CATUI_ERROR;
+
+    cat_keyboard_result result = {0};
+    int rc = cat_keyboard(initial_text ? initial_text : "", NULL,
+                          CAT_KB_GENERAL, &result);
+    if (rc == CAT_ERROR) return CATUI_ERROR;
+    *accepted = rc == CAT_OK ? 1 : 0;
+    snprintf(out_text, out_size, "%s", result.text);
+    return CATUI_OK;
 }
 
 static cat_draw_color catui__color(uint32_t color) {

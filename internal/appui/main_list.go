@@ -13,6 +13,7 @@ const (
 	ButtonA
 	ButtonB
 	ButtonX
+	ButtonY
 	ButtonL1
 	ButtonR1
 	ButtonStart

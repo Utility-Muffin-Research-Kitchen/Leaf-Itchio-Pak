@@ -38,6 +38,9 @@ func main() {
 	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, or empty")
 	catMainListFrames := flag.Int("cat-main-list-frames", 0, "exit Catastrophe main-list fixture after N frames")
 	catMainListScreenshot := flag.String("cat-main-list-screenshot", "", "save the final Catastrophe main-list frame as PNG")
+	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture: filter")
+	catInputFrames := flag.Int("cat-input-frames", 0, "exit Catastrophe input fixture after N frames")
+	catInputScreenshot := flag.String("cat-input-screenshot", "", "save the final Catastrophe input fixture as PNG")
 	catLiveList := flag.Bool("cat-live-list", false, "run the Catastrophe main list against the real Leaf cache/feed")
 	catLiveListFrames := flag.Int("cat-live-list-frames", 0, "exit the live Catastrophe main list after N frames")
 	catLiveListScreenshot := flag.String("cat-live-list-screenshot", "", "save the final live Catastrophe main-list frame as PNG")
@@ -163,6 +166,11 @@ func main() {
 		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_STATE", *catMainListState)
 		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_FRAMES", fmt.Sprintf("%d", *catMainListFrames))
 		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_SCREENSHOT", *catMainListScreenshot)
+	}
+	if *catInput != "" {
+		_ = os.Setenv("ITCHIO_CAT_INPUT", *catInput)
+		_ = os.Setenv("ITCHIO_CAT_INPUT_FRAMES", fmt.Sprintf("%d", *catInputFrames))
+		_ = os.Setenv("ITCHIO_CAT_INPUT_SCREENSHOT", *catInputScreenshot)
 	}
 	if *catLiveList {
 		_ = os.Setenv("ITCHIO_CAT_LIVE_LIST", "1")

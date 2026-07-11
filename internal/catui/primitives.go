@@ -421,7 +421,7 @@ func (ui *Composer) DrawProgressView(bounds Rect, title, detail string, progress
 }
 
 func (ui *Composer) DrawTextField(bounds Rect, label, value string, active bool) error {
-	color := ui.ctx.ThemeColor(RoleDisabled)
+	color := ui.ctx.ThemeColor(RoleAccent)
 	if active {
 		color = ui.ctx.ThemeColor(RoleHighlight)
 	}
@@ -429,14 +429,10 @@ func (ui *Composer) DrawTextField(bounds Rect, label, value string, active bool)
 		return err
 	}
 	inner := insetRect(bounds, ui.ctx.Scale(12), ui.ctx.Scale(5))
-	textColor := ui.ctx.ThemeColor(RoleText)
-	if active {
-		textColor = ui.ctx.ThemeColor(RoleHighlightedText)
-	}
+	textColor := contrastText(color)
 	text := value
 	if text == "" {
 		text = label
-		textColor = ui.ctx.ThemeColor(RoleHint)
 	}
 	y := inner.Y + (inner.H-ui.ctx.FontHeight(FontSmall))/2
 	_, err := ui.ctx.DrawFallbackText(FontSmall, text, inner.X, y, textColor, inner.W)
