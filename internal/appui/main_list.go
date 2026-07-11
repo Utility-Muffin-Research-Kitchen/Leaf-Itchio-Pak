@@ -60,6 +60,8 @@ type MainListModel struct {
 	Cursor      int
 	VisibleRows int
 	ErrorDetail string
+	Platform    string
+	Sort        string
 }
 
 func NewMainListModel(items []ListItem) *MainListModel {

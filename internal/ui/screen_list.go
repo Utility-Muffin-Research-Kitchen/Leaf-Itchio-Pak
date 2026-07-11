@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -176,6 +177,9 @@ type ListScreen struct {
 	// badgePriceCache holds pre-formatted "$X.XX" strings keyed by game URL.
 	// Populated lazily on first Draw access; cleared on rebuildView.
 	badgePriceCache map[string]string
+
+	wakeMu sync.RWMutex
+	wake   func()
 }
 
 func NewListScreen(
@@ -242,7 +246,7 @@ func NewListScreen(
 		default:
 		}
 		s.ownedUpdateCh <- m
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
+		s.wakeUI()
 		logger.Info("owned: %d owned game URL(s) received from key validation", len(m))
 	}
 
@@ -299,6 +303,26 @@ func (s *ListScreen) loadPage(page int, query string) {
 	default:
 	}
 	s.pageUpdateCh <- pageResult{games: games, err: err}
+	s.wakeUI()
+}
+
+// SetWake replaces the legacy SDL user-event notifier. Catastrophe callers use
+// Context.Wake so MLP1's idle evdev poll is interrupted without renderer work
+// leaving the owner thread.
+func (s *ListScreen) SetWake(wake func()) {
+	s.wakeMu.Lock()
+	s.wake = wake
+	s.wakeMu.Unlock()
+}
+
+func (s *ListScreen) wakeUI() {
+	s.wakeMu.RLock()
+	wake := s.wake
+	s.wakeMu.RUnlock()
+	if wake != nil {
+		wake()
+		return
+	}
 	sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
 }
 
@@ -415,7 +439,7 @@ func (s *ListScreen) warmPreloadWindow() {
 	logger.Debug("cover: warmed window abs=%d ±%d (%d games in view)", absIdx, preloadRadius, len(s.viewGames))
 }
 
-func (s *ListScreen) Draw(r *renderer.Renderer) {
+func (s *ListScreen) consumeUpdates() {
 	select {
 	case games := <-s.cacheUpdateCh:
 		s.cachedGames = games
@@ -448,6 +472,66 @@ func (s *ListScreen) Draw(r *renderer.Renderer) {
 		s.needsRebuild = false
 		s.rebuildView()
 	}
+}
+
+// SyncCatModel binds the migrated Cat view to the real feed, cache, owned-game,
+// and inventory state while the rest of the screen graph is still being ported.
+func (s *ListScreen) SyncCatModel(model *appui.MainListModel) {
+	if model == nil {
+		return
+	}
+	s.consumeUpdates()
+	model.Platform = "All platforms"
+	if s.platformFilter != "" {
+		model.Platform = s.platformFilter
+	}
+	model.Sort = itchio.SortModeBadge(s.sortMode)
+	if s.loading.Load() {
+		model.SetLoading()
+		return
+	}
+	if s.err != nil {
+		model.SetError(s.err.Error())
+		return
+	}
+	items := make([]appui.ListItem, 0, len(s.viewGames))
+	for _, game := range s.viewGames {
+		badge := "Free"
+		switch {
+		case s.inv.HasPendingUpdates(game.URL):
+			badge = "UP"
+		case s.inv.IsRemoved(game.URL):
+			badge = "!"
+		case s.inv.IsPresent(game.URL):
+			badge = "DL"
+		case s.ownedURLs[game.URL]:
+			badge = "OWNED"
+		case !game.IsFree:
+			badge = "$" + strconv.FormatFloat(game.Price, 'f', 2, 64)
+		}
+		items = append(items, appui.ListItem{
+			Title: game.Title, Author: game.Author, CoverKey: game.CoverURL,
+			Badge: badge, Tags: append([]string(nil), game.Tags...),
+		})
+	}
+	model.SetItems(items)
+}
+
+func (s *ListScreen) RetryCatLoad() { go s.loadPage(1, "") }
+
+func (s *ListScreen) CycleCatSort(direction int) {
+	if !s.cacheReady {
+		return
+	}
+	next := s.nextSortModeSimple()
+	if direction < 0 {
+		next = s.prevSortModeSimple()
+	}
+	s.SetFilter(s.platformFilter, string(next), s.searchQuery)
+}
+
+func (s *ListScreen) Draw(r *renderer.Renderer) {
+	s.consumeUpdates()
 	s.processAutoRepeat()
 	bg := r.Theme.Background
 	r.Clear(bg[0], bg[1], bg[2])
@@ -1475,7 +1559,7 @@ func (s *ListScreen) buildCache() {
 		case s.cacheUpdateCh <- snapshot:
 		default:
 		}
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
+		s.wakeUI()
 	})
 	if err != nil {
 		logger.Error("cache: full fetch failed after %d games: %v", len(games), err)
@@ -1492,7 +1576,7 @@ func (s *ListScreen) buildCache() {
 	case s.cacheUpdateCh <- games:
 	default:
 	}
-	sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
+	s.wakeUI()
 	if s.updateSvc != nil {
 		s.updateSvc.TriggerNow()
 	}
@@ -1519,7 +1603,7 @@ func (s *ListScreen) newCacheRefreshScreen(prev Screen) Screen {
 		case s.cacheUpdateCh <- games:
 		default:
 		}
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
+		s.wakeUI()
 		if s.updateSvc != nil {
 			s.updateSvc.TriggerNow()
 		}

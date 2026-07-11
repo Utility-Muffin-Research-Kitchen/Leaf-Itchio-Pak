@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/catui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
@@ -119,6 +120,14 @@ func runSDL() {
 		logger.Warn("inventory reset: %v", inventoryErr)
 	}
 	inv.VerifyAndClean(inventoryPath)
+	client := itchio.NewClient()
+	if os.Getenv("ITCHIO_CAT_LIVE_LIST") == "1" {
+		if err := runCatLiveList(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath); err != nil {
+			logger.Error("Catastrophe live main list: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	level := cfg.LogLevel
 	if level == "" {
@@ -181,8 +190,6 @@ func runSDL() {
 		}
 		logger.Debug("renderer: theme updated (NextUI active: %v)", enabled && themeAvailable)
 	}
-
-	client := itchio.NewClient()
 
 	cache := renderer.NewImageCache(50, client.HTTPClient())
 	defer cache.Clear()
@@ -361,6 +368,127 @@ loop:
 			current.Draw(r)
 		}
 	}
+}
+
+func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, ownedCachePath string,
+	inv *inventory.Inventory, inventoryPath string) error {
+	resourceDir := os.Getenv("ITCHIO_RES_DIR")
+	fontPath := os.Getenv("CAT_FONT_PATH")
+	if fontPath == "" && resourceDir != "" {
+		fontPath = filepath.Join(resourceDir, "font.ttf")
+	}
+	ctx, err := catui.Init(catui.Config{
+		Title:            "Itch.io",
+		FontPath:         fontPath,
+		FallbackFontsDir: resourceDir,
+	})
+	if err != nil {
+		return err
+	}
+	defer ctx.Close()
+
+	imageCache := catui.NewImageCache(50, client.HTTPClient())
+	defer imageCache.Clear()
+	imageCache.SetNotify(func() { _ = ctx.Wake() })
+	legacyTheme := theme.Defaults()
+	list := ui.NewListScreen(client, cfg, cfgPath, nil, cachePath, inv, inventoryPath,
+		nil, legacyTheme, legacyTheme, false, nil, ownedCachePath)
+	list.SetWake(func() { _ = ctx.Wake() })
+	model := appui.NewMainListModel(nil)
+	model.SetLoading()
+	screen, err := catui.NewMainListScreen(ctx, model, imageCache)
+	if err != nil {
+		return err
+	}
+
+	running, redraw := true, true
+	targetFrames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_LIVE_LIST_FRAMES"))
+	screenshotPath := os.Getenv("ITCHIO_CAT_LIVE_LIST_SCREENSHOT")
+	drawn := 0
+	for running {
+		list.SyncCatModel(model)
+		if uploaded, processErr := imageCache.ProcessPending(ctx); processErr != nil {
+			return processErr
+		} else if uploaded {
+			redraw = true
+		}
+		for {
+			event, ok, pollErr := ctx.PollInput()
+			if pollErr != nil {
+				return pollErr
+			}
+			if !ok {
+				break
+			}
+			if event.Wake {
+				redraw = true
+				continue
+			}
+			switch screen.HandleInput(event) {
+			case appui.ListIntentExit:
+				running = false
+			case appui.ListIntentRetry:
+				list.RetryCatLoad()
+			case appui.ListIntentPreviousSort:
+				list.CycleCatSort(-1)
+			case appui.ListIntentNextSort:
+				list.CycleCatSort(1)
+			case appui.ListIntentOpen, appui.ListIntentFilter, appui.ListIntentSettings:
+				logger.Debug("cat live list: destination screen is not migrated yet")
+			}
+			redraw = true
+		}
+		if !running {
+			break
+		}
+		list.SyncCatModel(model)
+		if redraw {
+			if err := screen.Draw(); err != nil {
+				return err
+			}
+			drawn++
+			if targetFrames > 0 && drawn >= targetFrames {
+				if screenshotPath != "" {
+					if err := ctx.BeginCapture(); err != nil {
+						return err
+					}
+					if err := screen.Draw(); err != nil {
+						_ = ctx.EndCapture()
+						return err
+					}
+					if err := ctx.ScreenshotPNG(screenshotPath); err != nil {
+						_ = ctx.EndCapture()
+						return err
+					}
+					if err := ctx.EndCapture(); err != nil {
+						return err
+					}
+				}
+				ctx.RequestFrame()
+				return ctx.Present()
+			}
+			redraw = false
+		}
+		if targetFrames > 0 && drawn < targetFrames {
+			ctx.RequestFrame()
+			redraw = true
+		}
+		if delay, animated := imageCache.NextFrameIn(); animated {
+			milliseconds := delay.Milliseconds()
+			if milliseconds < 1 {
+				milliseconds = 1
+			}
+			ctx.RequestFrameIn(uint32(milliseconds))
+			redraw = true
+		} else if model.State == appui.ListLoading {
+			ctx.RequestFrameIn(100)
+			redraw = true
+		}
+		if err := ctx.Present(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func drawPowerPendingOverlay(r *renderer.Renderer, action power.Action) {

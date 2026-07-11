@@ -92,7 +92,14 @@ func (screen *MainListScreen) Draw() error {
 	if err != nil {
 		return err
 	}
-	subtitle := fmt.Sprintf("All platforms  ·  Newest  ·  %d games", len(screen.model.Items))
+	platform, sort := screen.model.Platform, screen.model.Sort
+	if platform == "" {
+		platform = "All platforms"
+	}
+	if sort == "" {
+		sort = "Newest"
+	}
+	subtitle := fmt.Sprintf("%s  ·  %s  ·  %d games", platform, sort, len(screen.model.Items))
 	if err := screen.ui.DrawSubHeader(frame.Layout.SubHeader, subtitle); err != nil {
 		return err
 	}
@@ -163,7 +170,7 @@ func (screen *MainListScreen) drawReady(content Box) error {
 	y := art.Y + art.H + screen.ui.BasePadding/2
 	remaining := Rect{X: panel.X, Y: y, W: panel.W, H: panel.Y + panel.H - y}
 	if _, err := screen.ctx.DrawFallbackText(FontLarge, selected.Title, remaining.X, remaining.Y,
-		screen.ctx.ThemeColor(RoleEmphasis), remaining.W); err != nil {
+		screen.ctx.ThemeColor(RoleText), remaining.W); err != nil {
 		return err
 	}
 	y += screen.ctx.FontHeight(FontLarge) + screen.ctx.Scale(4)
@@ -177,7 +184,8 @@ func (screen *MainListScreen) drawReady(content Box) error {
 	if y < remaining.Y+remaining.H {
 		tags := make([]string, 0, len(selected.Tags))
 		for _, tag := range selected.Tags {
-			if tag != "" && !strings.EqualFold(tag, "free") {
+			if tag != "" && !strings.EqualFold(tag, "free") &&
+				!strings.ContainsRune("$€£¥", rune(tag[0])) {
 				tags = append(tags, tag)
 			}
 		}
