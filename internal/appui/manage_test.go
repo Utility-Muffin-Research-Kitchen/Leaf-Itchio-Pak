@@ -2,19 +2,22 @@ package appui
 
 import "testing"
 
-func TestManageNavigationSkipsUnavailableFiles(t *testing.T) {
+func TestManageNavigationIncludesUnavailableFilesForInspection(t *testing.T) {
 	model := NewManageModel("Manage")
 	model.SetItems("2 files", []ManageItem{
 		{Kind: ManageItemFile, Label: "missing.gb", Enabled: false},
 		{Kind: ManageItemFile, Label: "ready.gb", Enabled: true},
 		{Kind: ManageItemDeleteAll, Label: "Delete all", Enabled: true},
 	})
-	if model.Cursor != 1 {
-		t.Fatalf("cursor = %d, want first enabled row", model.Cursor)
+	if model.Cursor != 0 {
+		t.Fatalf("cursor = %d, want first row", model.Cursor)
 	}
 	model.Handle(InputEvent{Button: ButtonDown, Pressed: true})
-	if model.Cursor != 2 {
-		t.Fatalf("cursor = %d, want delete row", model.Cursor)
+	if model.Cursor != 1 {
+		t.Fatalf("cursor = %d, want unavailable row to be focusable", model.Cursor)
+	}
+	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != ManageIntentActivate {
+		t.Fatalf("unavailable A = %v, want controller explanation", got)
 	}
 }
 

@@ -130,7 +130,7 @@ func TestCatManageDisablesFilesOnRemovedSource(t *testing.T) {
 	if err := os.RemoveAll(sources[1].Root); err != nil {
 		t.Fatal(err)
 	}
-	_, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
+	flow, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,12 @@ func TestCatManageDisablesFilesOnRemovedSource(t *testing.T) {
 		if item.Kind == appui.ManageItemDeleteAll && item.Enabled {
 			t.Fatal("delete-all enabled with an unavailable source")
 		}
+	}
+	if _, _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	if model.State != appui.ManageError || model.Message != "Secondary SD is not mounted" {
+		t.Fatalf("unavailable explanation = state %v message %q", model.State, model.Message)
 	}
 }
 

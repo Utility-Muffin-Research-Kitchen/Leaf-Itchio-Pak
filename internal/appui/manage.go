@@ -60,8 +60,8 @@ func (m *ManageModel) SetItems(subtitle string, items []ManageItem) {
 	if m.Cursor >= len(m.Items) {
 		m.Cursor = len(m.Items) - 1
 	}
-	if m.Cursor < 0 || len(m.Items) == 0 || !m.Items[m.Cursor].Enabled {
-		m.Cursor = firstEnabledManageItem(m.Items)
+	if m.Cursor < 0 || len(m.Items) == 0 {
+		m.Cursor = 0
 	}
 }
 
@@ -116,7 +116,7 @@ func (m *ManageModel) Handle(event InputEvent) ManageIntent {
 	case ButtonR1:
 		m.move(page)
 	case ButtonA:
-		if m.Cursor >= 0 && m.Cursor < len(m.Items) && m.Items[m.Cursor].Enabled {
+		if m.Cursor >= 0 && m.Cursor < len(m.Items) {
 			return ManageIntentActivate
 		}
 	}
@@ -128,32 +128,11 @@ func (m *ManageModel) move(delta int) {
 		m.Cursor = 0
 		return
 	}
-	step := 1
-	if delta < 0 {
-		step = -1
-		delta = -delta
+	m.Cursor += delta
+	if m.Cursor < 0 {
+		m.Cursor = 0
 	}
-	index := m.Cursor
-	for delta > 0 {
-		next := index + step
-		if next < 0 || next >= len(m.Items) {
-			break
-		}
-		index = next
-		if m.Items[index].Enabled {
-			delta--
-		}
+	if m.Cursor >= len(m.Items) {
+		m.Cursor = len(m.Items) - 1
 	}
-	if index >= 0 && index < len(m.Items) && m.Items[index].Enabled {
-		m.Cursor = index
-	}
-}
-
-func firstEnabledManageItem(items []ManageItem) int {
-	for index, item := range items {
-		if item.Enabled {
-			return index
-		}
-	}
-	return 0
 }

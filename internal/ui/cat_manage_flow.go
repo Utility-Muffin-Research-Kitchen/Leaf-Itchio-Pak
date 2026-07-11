@@ -113,10 +113,15 @@ func (flow *CatManageFlow) indicesAvailable(indices []int) bool {
 }
 
 func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *appui.RenameModel, error) {
-	if model.Cursor < 0 || model.Cursor >= len(model.Items) || !model.Items[model.Cursor].Enabled {
+	if model.Cursor < 0 || model.Cursor >= len(model.Items) {
 		return nil, nil, nil
 	}
 	item := model.Items[model.Cursor]
+	if !item.Enabled {
+		err := flow.itemUnavailableError(item)
+		model.SetError(err.Error())
+		return nil, nil, nil
+	}
 	if item.Kind == appui.ManageItemRename {
 		return NewCatRenameFlow(flow.inv, flow.inventoryPath, flow.gameURL, item.FileIndex, flow.sources)
 	}
@@ -146,6 +151,29 @@ func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *
 	}
 	model.SetConfirm(title, lines)
 	return nil, nil, nil
+}
+
+func (flow *CatManageFlow) itemUnavailableError(item appui.ManageItem) error {
+	var indices []int
+	switch item.Kind {
+	case appui.ManageItemFile, appui.ManageItemRename:
+		indices = []int{item.FileIndex}
+	case appui.ManageItemDeleteROMs:
+		indices = flow.indicesByKind(inventory.ContentKindROM)
+	case appui.ManageItemDeleteMusic:
+		indices = flow.indicesByKind(inventory.ContentKindMusic)
+	case appui.ManageItemDeleteAll:
+		indices = allFileIndices(flow.entry.Files)
+	}
+	for _, index := range indices {
+		if index < 0 || index >= len(flow.entry.Files) {
+			return fmt.Errorf("inventory changed before this action")
+		}
+		if _, _, err := flow.resolveFile(flow.entry.Files[index], false); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("this action is currently unavailable")
 }
 
 func (flow *CatManageFlow) Cancel(model *appui.ManageModel) { flow.pending = nil; flow.refresh(model) }
