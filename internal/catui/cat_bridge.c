@@ -411,6 +411,9 @@ static int catui__fallback_text(int tier, const char *text, int draw,
     }
     width += catui__flush_run(run_font, run, &used, draw, x + width, y, color);
 
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    if (draw) SDL_RenderFlush(renderer);
+#endif
     if (draw && max_w > 0) SDL_RenderSetClipRect(renderer, had_clip ? &previous : NULL);
     return width;
 }
@@ -539,6 +542,12 @@ int catui_screenshot_png(const char *path) {
     SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32,
                                                           SDL_PIXELFORMAT_RGBA32);
     if (!surface) return CATUI_ERROR;
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* Make deterministic fixture readback independent of the renderer's
+       command-batching policy. SDL_RenderReadPixels is a sync point on most
+       backends, but SDL_RenderFlush is the explicit contract. */
+    SDL_RenderFlush(cat_get_renderer());
+#endif
     int result = SDL_RenderReadPixels(cat_get_renderer(), NULL, SDL_PIXELFORMAT_RGBA32,
                                       surface->pixels, surface->pitch);
     if (result == 0) result = IMG_SavePNG(surface, path);

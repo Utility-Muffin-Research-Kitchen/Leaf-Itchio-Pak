@@ -14,7 +14,7 @@ export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
 export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
 
 .DEFAULT_GOAL := native
-.PHONY: test test-race native mac run-mac run-cat-proof cat-proof-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
+.PHONY: test test-race native mac run-mac run-cat-fixtures cat-fixture-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
 test:
 	go test -count=1 -tags headless ./...
@@ -52,17 +52,17 @@ run-mac: mac
 		LOGS_PATH="$(CURDIR)/build/mac/logs" \
 		"$(CURDIR)/build/mac/bin/itchio-pak"
 
-run-cat-proof: mac
+run-cat-fixtures: mac
 	CAT_ENV=DEV \
 		CAT_WINDOW_WIDTH=960 CAT_WINDOW_HEIGHT=720 \
 		CAT_FONT_PATH="$(CATASTROPHE_DIR)/res/font.ttf" \
 		CAT_STATUS_ASSETS_DIR="$(CATASTROPHE_DIR)/res/assets" \
 		ITCHIO_RES_DIR="$(CURDIR)/assets" \
-		LOGS_PATH="$(CURDIR)/build/cat-proof/logs" \
-		"$(CURDIR)/build/mac/bin/itchio-pak" --cat-proof
+		LOGS_PATH="$(CURDIR)/build/cat-fixtures/logs" \
+		"$(CURDIR)/build/mac/bin/itchio-pak" --cat-fixtures
 
-cat-proof-snapshots: mac
-	./scripts/cat-proof-smoke.sh
+cat-fixture-snapshots: mac
+	./scripts/cat-fixtures-smoke.sh
 
 mlp1: check-catastrophe
 	./scripts/build.sh mlp1

@@ -12,11 +12,12 @@ storage and runtime integration for Leaf. The active target is the Miniloong
 Pocket 1 (`mlp1`) only. NextUI and the former TrimUI/Miyoo package lanes are not
 supported.
 
-The Catastrophe CGo bridge and first box-model visual proof are implemented.
-The inherited screens remain temporary until their vertical slices migrate;
-the shipping design has Catastrophe as the sole GUI owner. The bridge ownership
-and verification contract is documented in
-[docs/catastrophe-bridge.md](docs/catastrophe-bridge.md).
+The Catastrophe CGo bridge and shared Leaf-native screen primitives are
+implemented. The inherited screens remain temporary until their vertical
+slices migrate; the shipping design has Catastrophe as the sole GUI owner. See
+[docs/catastrophe-bridge.md](docs/catastrophe-bridge.md) for the ownership
+contract and [docs/catastrophe-primitives.md](docs/catastrophe-primitives.md)
+for the screen-composition vocabulary.
 
 ## Provenance and licensing
 
@@ -48,8 +49,8 @@ make test-race
 make native
 make mac
 make run-mac
-make run-cat-proof
-make cat-proof-snapshots
+make run-cat-fixtures
+make cat-fixture-snapshots
 make mlp1
 make package-platform PLATFORM=mlp1
 make package-mlp1

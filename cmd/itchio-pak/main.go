@@ -30,9 +30,10 @@ var gitCommit = "unknown"
 func main() {
 	headless := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
 	rotateLogOnly := flag.Bool("rotate-log-only", false, "rotate the app log and exit (launcher use)")
-	catProof := flag.Bool("cat-proof", false, "run the Catastrophe bridge visual proof")
-	catProofFrames := flag.Int("cat-proof-frames", 0, "exit Catastrophe proof after N frames")
-	catProofScreenshot := flag.String("cat-proof-screenshot", "", "save the final Catastrophe proof frame as PNG")
+	catFixtures := flag.Bool("cat-fixtures", false, "run the offline Catastrophe shared-primitives fixture")
+	catFixturePage := flag.Int("cat-fixture-page", 0, "Catastrophe fixture page (0-4)")
+	catFixtureFrames := flag.Int("cat-fixture-frames", 0, "exit Catastrophe fixture after N frames")
+	catFixtureScreenshot := flag.String("cat-fixture-screenshot", "", "save the final Catastrophe fixture frame as PNG")
 	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
 	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
 	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
@@ -144,10 +145,11 @@ func main() {
 		logger.Info("headless mode: exiting cleanly")
 		os.Exit(0)
 	}
-	if *catProof {
-		_ = os.Setenv("ITCHIO_CAT_PROOF", "1")
-		_ = os.Setenv("ITCHIO_CAT_PROOF_FRAMES", fmt.Sprintf("%d", *catProofFrames))
-		_ = os.Setenv("ITCHIO_CAT_PROOF_SCREENSHOT", *catProofScreenshot)
+	if *catFixtures {
+		_ = os.Setenv("ITCHIO_CAT_FIXTURES", "1")
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_PAGE", fmt.Sprintf("%d", *catFixturePage))
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_FRAMES", fmt.Sprintf("%d", *catFixtureFrames))
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_SCREENSHOT", *catFixtureScreenshot)
 	}
 
 	runSDL()

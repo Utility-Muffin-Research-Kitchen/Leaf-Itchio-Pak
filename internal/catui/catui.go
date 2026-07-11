@@ -263,8 +263,7 @@ func (c *Context) DrawFooter(items []FooterItem) error {
 	if len(items) == 0 {
 		return nil
 	}
-	bytes := C.size_t(len(items)) * C.size_t(unsafe.Sizeof(C.catui_footer_item{}))
-	memory := C.malloc(bytes)
+	memory := C.calloc(C.size_t(len(items)), C.size_t(unsafe.Sizeof(C.catui_footer_item{})))
 	if memory == nil {
 		return errors.New("catui: allocate footer items")
 	}
@@ -276,6 +275,7 @@ func (c *Context) DrawFooter(items []FooterItem) error {
 		defer C.free(unsafe.Pointer(labels[i]))
 		cItems[i].button = C.int(item.Button)
 		cItems[i].label = labels[i]
+		cItems[i].is_confirm = 0
 		if item.IsConfirm {
 			cItems[i].is_confirm = 1
 		}

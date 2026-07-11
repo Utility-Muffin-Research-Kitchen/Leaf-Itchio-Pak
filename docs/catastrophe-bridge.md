@@ -11,7 +11,7 @@ binding published by Catastrophe.
 - The bridge does not include `catastrophe_widgets.h`, so there is no
   `CAT_WIDGETS_IMPLEMENTATION` definition.
 - Catastrophe owns SDL initialization, the window, renderer, fonts, input pump,
-  presentation, and shutdown on the migrated proof path.
+  presentation, and shutdown on migrated and fixture paths.
 - Go receives final-pixel boxes, colors, input values, and opaque generation-
   checked texture IDs. It never receives an `SDL_Window`, `SDL_Renderer`,
   `SDL_Texture`, `TTF_Font`, or `SDL_Surface` pointer.
@@ -19,22 +19,22 @@ binding published by Catastrophe.
   operation except `Wake` rejects calls from another OS thread.
 
 The existing screens still use the inherited renderer until their vertical
-slices move in later phases. `--cat-proof` is the first complete Catastrophe-
-owned route in the real executable; it establishes the boundary without
-claiming that the old screens have already been ported.
+slices move in later phases. `--cat-fixtures` is a complete offline
+Catastrophe-owned route in the real executable; it establishes and continuously
+checks the boundary without claiming that the old screens have already moved.
 
 ## Main-loop and worker wake contract
 
-The proof loop drains the bridge input queue, applies state changes, draws only
-when input, a worker wake, or the GIF animation deadline requires it, and calls
-`cat_present` once per rendered frame. Animation uses `cat_request_frame_in`
-rather than a permanent 60 fps loop.
+The fixture loop drains the bridge input queue, applies state changes, redraws
+only on navigation, and calls `cat_present` once per rendered frame. Migrated
+animation paths schedule `cat_request_frame_in` deadlines rather than a
+permanent 60 fps loop.
 
 Workers call `Context.Wake`. The bridge records a wake event atomically and
 calls Catastrophe's generic `cat_wake`. Desktop builds use an SDL user event;
 device builds additionally write a nonblocking pipe included in
 `cat_present`'s evdev poll set. This wakes an otherwise idle MLP1 renderer
-without unsafe cross-thread drawing or a polling loop. The proof deliberately
+without unsafe cross-thread drawing or a polling loop. The fixture deliberately
 tests this with no scheduled redraw and fails when the wake takes over 750 ms.
 
 ## Texture lifetime
@@ -58,33 +58,28 @@ into bounded runs, and uses the same run logic for measurement and drawing.
 Unsupported codepoints are omitted rather than rendered as tofu.
 
 Box operations are direct calls to `cat_box_content`, both carve functions,
-`cat_box_split_cols`, and `cat_box_fit_rows`. They use final pixels. The proof
-carves title and optional footer bands, applies internal padding, then splits
-the content 58/42 with a padding-backed gutter.
+`cat_box_split_cols`, and `cat_box_fit_rows`. They use final pixels. Shared
+composition policy is documented in `catastrophe-primitives.md`.
 
-## Visual proof
+## Offline fixtures
 
 Run interactively:
 
 ```sh
-make run-cat-proof
+make run-cat-fixtures
 ```
 
 Generate the deterministic Mac verification pair:
 
 ```sh
-make cat-proof-snapshots
+make cat-fixture-snapshots
 ```
 
-The generated, ignored files are:
-
-- `build/cat-proof/dark-hints-bump0.png`;
-- `build/cat-proof/light-nohints-bump5.png`.
-
-Together they cover inherited title/status chrome, hint-visible and hidden
-layout, minimum and maximum font bump, theme-role color changes, fitted rows,
-multilingual fallback runs, a decoded animated GIF, an uploaded QR texture,
-progress and triangle primitives, clipping, and worker wake delivery.
+The command renders five generated, ignored 960x720 PNGs under
+`build/cat-fixtures`. Together they cover every shared primitive without
+network or user data. The earlier Phase 5 proof route was removed when these
+shared fixtures replaced it; its Mac theme/font extremes and physical MLP1
+evidence remain recorded in the workspace plan.
 
 For a finite device proof, stage explicitly through Leaf and run:
 
@@ -92,9 +87,6 @@ For a finite device proof, stage explicitly through Leaf and run:
 make -C ../Leaf stage-app APP=Leaf-Itchio-Pak DEVICE=mlp1
 adb shell 'UMRK_ENV_FILE=/mnt/sdcard/.system/leaf/platforms/mlp1/launcher/env.sh \
   /mnt/sdcard/Apps/mlp1/Itch-io.pak/launch.sh \
-  --cat-proof --cat-proof-frames=10 \
-  --cat-proof-screenshot=/mnt/sdcard/.userdata/mlp1/Itch-io/cat-proof.png'
+  --cat-fixtures --cat-fixture-page=0 --cat-fixture-frames=1 \
+  --cat-fixture-screenshot=/mnt/sdcard/.userdata/mlp1/Itch-io/cat-fixture.png'
 ```
-
-The proof route is temporary. Delete it after shared primitives and all screens
-exercise the same bridge directly.

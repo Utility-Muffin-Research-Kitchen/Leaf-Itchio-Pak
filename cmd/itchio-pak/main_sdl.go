@@ -32,13 +32,15 @@ const (
 func runSDL() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if os.Getenv("ITCHIO_CAT_PROOF") == "1" {
-		frames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_PROOF_FRAMES"))
-		if err := catui.RunProof(catui.ProofConfig{
+	if os.Getenv("ITCHIO_CAT_FIXTURES") == "1" {
+		page, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_FIXTURE_PAGE"))
+		frames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_FIXTURE_FRAMES"))
+		if err := catui.RunFixtures(catui.FixtureConfig{
+			Page:           page,
 			Frames:         frames,
-			ScreenshotPath: os.Getenv("ITCHIO_CAT_PROOF_SCREENSHOT"),
+			ScreenshotPath: os.Getenv("ITCHIO_CAT_FIXTURE_SCREENSHOT"),
 		}); err != nil {
-			logger.Error("Catastrophe proof: %v", err)
+			logger.Error("Catastrophe fixtures: %v", err)
 			os.Exit(1)
 		}
 		return
