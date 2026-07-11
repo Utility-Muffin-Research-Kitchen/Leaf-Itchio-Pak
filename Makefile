@@ -1,48 +1,78 @@
-.PHONY: test test-coverage build-native build-tg5040 build-tg5050 build-my355 build-all release deploy deploy-sd deploy-adb debug-logs debug-push debug-run clean
+SHELL := /bin/bash
+
+APP_VERSION ?= 0.1.0
+MIN_JAWAKA_VERSION ?= 0.5.4
+GIT_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || printf 0)
+WORKSPACE_ROOT ?= $(abspath ..)
+CATASTROPHE_DIR ?= $(WORKSPACE_ROOT)/Catastrophe
+MLP1_TOOLCHAIN_IMAGE ?= ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
+GO_IMAGE ?= docker.io/library/golang:1.22.12-bookworm
+MLP1_BUILD_IMAGE ?= leaf-itchio-pak-mlp1-go1.22.12
+
+export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
+export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
+
+.DEFAULT_GOAL := native
+.PHONY: test test-race native mac run-mac mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
 test:
-	./scripts/test.sh
+	go test -count=1 -tags headless ./...
 
-test-coverage:
-	./scripts/test.sh --coverage
+test-race:
+	go test -count=1 -race -tags headless ./...
 
-build-native:
+check-catastrophe:
+	@test -f "$(CATASTROPHE_DIR)/include/catastrophe.h" || { \
+		echo "Catastrophe not found at $(CATASTROPHE_DIR) (set CATASTROPHE_DIR to its checkout)." >&2; \
+		exit 1; \
+	}
+
+check-sdl:
+	@pkg-config --exists sdl2 SDL2_image SDL2_ttf 2>/dev/null || { \
+		echo "SDL2 dependencies not found. On macOS: brew install pkg-config sdl2 sdl2_image sdl2_ttf" >&2; \
+		exit 1; \
+	}
+
+native: check-catastrophe check-sdl
 	./scripts/build.sh native
 
-build-tg5040:
-	./scripts/build.sh tg5040
+mac: check-catastrophe check-sdl
+	@case "$$(uname -s)" in Darwin) ;; *) echo "make mac requires macOS" >&2; exit 1 ;; esac
+	./scripts/build.sh mac
 
-build-tg5050:
-	./scripts/build.sh tg5050
+run-mac: mac
+	@mkdir -p "$(CURDIR)/build/mac/sdcard"
+	ITCHIO_RES_DIR="$(CURDIR)/assets" \
+		PLATFORM=mlp1 \
+		SDCARD_PATH="$(CURDIR)/build/mac/sdcard" \
+		SDCARD_PATHS="$(CURDIR)/build/mac/sdcard" \
+		UMRK_PLATFORM_PATH="$(WORKSPACE_ROOT)/miniloong-launcher-switcher/device/mlp1" \
+		USERDATA_PATH="$(CURDIR)/build/mac/userdata" \
+		LOGS_PATH="$(CURDIR)/build/mac/logs" \
+		"$(CURDIR)/build/mac/bin/itchio-pak"
 
-build-my355:
-	./scripts/build.sh my355
+mlp1: check-catastrophe
+	./scripts/build.sh mlp1
 
-build-all:
-	./scripts/build.sh all
+package-platform:
+	@test -n "$(PLATFORM)" || { echo "usage: make package-platform PLATFORM=mlp1" >&2; exit 1; }
+	@case "$(PLATFORM)" in \
+		mlp1) $(MAKE) package-mlp1 ;; \
+		*) echo "unsupported Leaf-Itchio-Pak platform: $(PLATFORM)" >&2; exit 1 ;; \
+	esac
 
-release:
-	./scripts/release.sh
+package-mlp1: mlp1
+	./scripts/package.sh
 
-deploy:
-	./scripts/deploy.sh
-
-deploy-sd:
-	./scripts/deploy.sh $(SD)
-
-deploy-adb:
-	./scripts/deploy.sh
-
-debug-logs:
-	./scripts/debug.sh logs
-
-debug-push:
-	./scripts/debug.sh push
-
-debug-run:
-	./scripts/debug.sh run
+package-smoke: package-mlp1
+	./scripts/package-smoke.py \
+		--package build/mlp1/package/Itch-io.pak \
+		--archive build/mlp1/Itch-io.mlp1.pak.zip \
+		--version "$(APP_VERSION)" \
+		--min-jawaka-version "$(MIN_JAWAKA_VERSION)" \
+		--toolchain-image "$(MLP1_TOOLCHAIN_IMAGE)"
+	./scripts/launch-smoke.sh build/mlp1/package/Itch-io.pak/launch.sh
 
 clean:
-	rm -rf bin/ dist/ lib/ coverage.out coverage.html debug-cache/
-	@RUNTIME=$$(command -v podman >/dev/null 2>&1 && echo podman || echo docker); \
-	$$RUNTIME rmi itchio-pak-dev itchio-pak-tg5040-dev itchio-pak-tg5050-dev itchio-pak-my355-dev 2>/dev/null || true
+	rm -rf build

@@ -5,6 +5,7 @@ package renderer
 import (
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -54,9 +55,9 @@ type Renderer struct {
 	W, H          int32
 	Theme         theme.Theme
 	texts         *textCache
-	sizes         map[sizeKey][2]int32 // SizeUTF8 measurement cache (no GPU resources; no LRU needed)
-	runeFont      map[rune]int         // fontIndex result per rune; populated lazily, never evicted
-	wrapCache     map[wrapKey][]string // WrapText output keyed on (text, maxWidth); no LRU needed
+	sizes         map[sizeKey][2]int32     // SizeUTF8 measurement cache (no GPU resources; no LRU needed)
+	runeFont      map[rune]int             // fontIndex result per rune; populated lazily, never evicted
+	wrapCache     map[wrapKey][]string     // WrapText output keyed on (text, maxWidth); no LRU needed
 	pillCache     map[pillKey]*sdl.Texture // pre-rendered pill textures; nil entry = render target unsupported
 }
 
@@ -86,7 +87,12 @@ func New(title string, w, h int, th theme.Theme) (*Renderer, error) {
 	if fontSize < 22 {
 		fontSize = 22
 	}
-	font, err := ttf.OpenFont("assets/font.ttf", fontSize)
+	fontsDir := os.Getenv("ITCHIO_RES_DIR")
+	if fontsDir == "" {
+		fontsDir = filepath.Join("res", "fonts")
+	}
+	primaryFontPath := filepath.Join(fontsDir, "font.ttf")
+	font, err := ttf.OpenFont(primaryFontPath, fontSize)
 	if err != nil {
 		return nil, fmt.Errorf("open font: %w", err)
 	}
@@ -96,7 +102,7 @@ func New(title string, w, h int, th theme.Theme) (*Renderer, error) {
 	if smallSize < 18 {
 		smallSize = 18
 	}
-	smallFont, err := ttf.OpenFont("assets/font.ttf", smallSize)
+	smallFont, err := ttf.OpenFont(primaryFontPath, smallSize)
 	if err != nil {
 		return nil, fmt.Errorf("open small font: %w", err)
 	}
@@ -104,7 +110,7 @@ func New(title string, w, h int, th theme.Theme) (*Renderer, error) {
 	r := &Renderer{
 		Window: win, Renderer: ren, Font: font, SmallFont: smallFont,
 		W: int32(w), H: int32(h),
-		primaryRanges: buildGlyphRanges("assets/font.ttf"),
+		primaryRanges: buildGlyphRanges(primaryFontPath),
 		Theme:         th,
 		texts:         newTextCache(maxTextCacheEntries),
 		sizes:         make(map[sizeKey][2]int32),
@@ -116,9 +122,9 @@ func New(title string, w, h int, th theme.Theme) (*Renderer, error) {
 		logger.Warn("renderer: could not parse primary font cmap; fallback fonts disabled")
 	}
 
-	// Load all assets/font_fallback_*.ttf files alphabetically.
+	// Load all app-local font_fallback_*.ttf files alphabetically.
 	// Each covers a different script family (Arabic, Hebrew, Thai, Devanagari…).
-	paths, _ := filepath.Glob("assets/font_fallback_*.ttf")
+	paths, _ := filepath.Glob(filepath.Join(fontsDir, "font_fallback_*.ttf"))
 	sort.Strings(paths)
 	for _, path := range paths {
 		main, err := ttf.OpenFont(path, fontSize)

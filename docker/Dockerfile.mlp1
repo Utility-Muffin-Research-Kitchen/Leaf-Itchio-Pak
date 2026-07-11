@@ -1,0 +1,13 @@
+ARG GO_IMAGE=docker.io/library/golang:1.22.12-bookworm
+ARG TOOLCHAIN_IMAGE=ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
+FROM ${GO_IMAGE} AS go_toolchain
+
+FROM ${TOOLCHAIN_IMAGE}
+
+COPY --from=go_toolchain /usr/local/go /usr/local/go
+ENV GOROOT=/usr/local/go \
+    GOPATH=/go \
+    GOTOOLCHAIN=local \
+    PATH=/usr/local/go/bin:${PATH}
+
+WORKDIR /workspace/Leaf-Itchio-Pak

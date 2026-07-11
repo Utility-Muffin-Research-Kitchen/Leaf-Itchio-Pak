@@ -1,17 +1,8 @@
-# Release artifacts
-dist/
-
-# SDL2 shared libraries extracted at build time
-# (tg5050 shares lib/tg5040/ — there is no lib/tg5050/ directory)
-lib/tg5040/*.so*
-lib/my355/*.so*
-
-# Release zips
+# Generated build and release artifacts
+build/
 *.pak.zip
-*.pakz
-
-# Build output
 bin/
+dist/
 
 # Native build binary (wherever go build drops it)
 cmd/itchio-pak/itchio-pak
@@ -22,10 +13,6 @@ cmd/itchio-pak/itchio-pak
 .go_cache/
 .remember/
 tmp/
-
-# ADB debug output
-debug-cache/
-debug-profiles/
 
 # Git worktrees
 .worktrees/

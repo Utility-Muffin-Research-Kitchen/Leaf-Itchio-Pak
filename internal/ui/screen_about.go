@@ -13,9 +13,9 @@ import (
 var appVersion = "dev"
 
 const (
-	appRepoURL   = "https://github.com/carroarmato0/NextUI-Itchio-Pak"
-	appDescLine1 = "Browse and download retro homebrew ROMs"
-	appDescLine2 = "from Itch.io — GB, GBC, GBA, NES, Genesis."
+	appRepoURL   = "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak"
+	appDescLine1 = "Browse games and soundtracks from itch.io"
+	appDescLine2 = "and add compatible downloads to Leaf."
 	appNote      = "Unofficial community Pak — not affiliated with Itch.io."
 )
 
@@ -27,7 +27,7 @@ func NewAboutScreen(prev Screen) *AboutScreen {
 	return &AboutScreen{prev: prev}
 }
 
-func (s *AboutScreen) NeedsRedraw() bool { return false }
+func (s *AboutScreen) NeedsRedraw() bool         { return false }
 func (s *AboutScreen) HasPendingAnimation() bool { return false }
 
 func (s *AboutScreen) Draw(r *renderer.Renderer) {

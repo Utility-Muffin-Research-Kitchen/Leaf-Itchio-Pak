@@ -28,6 +28,7 @@ var gitCommit = "unknown"
 
 func main() {
 	headless := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
+	rotateLogOnly := flag.Bool("rotate-log-only", false, "rotate the app log and exit (launcher use)")
 	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
 	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
 	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
@@ -35,7 +36,13 @@ func main() {
 
 	logPath := logFilePath()
 	_ = os.MkdirAll(filepath.Dir(logPath), 0755)
-	rotateLog(logPath)
+	if *rotateLogOnly {
+		rotateLog(logPath)
+		return
+	}
+	if os.Getenv("ITCHIO_LOG_PREPARED") != "1" {
+		rotateLog(logPath)
+	}
 	logFile, err := os.OpenFile(logPath,
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
