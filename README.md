@@ -86,6 +86,10 @@ Go caches, user state, debug profiles, or foreign-platform libraries.
 The Pak consumes Leaf's launcher environment and writes durable app state to
 `$USERDATA_PATH/Itch-io` and logs to `$LOGS_PATH/itchio-pak.log`. It preserves
 the inherited `CAT_*` appearance snapshot and uses the packaged CA bundle.
+While the screen graph is being migrated, a normal launch of an explicitly
+staged development pak opens the Catastrophe preview route. Set
+`ITCHIO_UI_MODE=legacy` only when comparing against the retained legacy graph;
+explicit fixture and command-line routes are not modified by the wrapper.
 
 ## Installation policy
 
