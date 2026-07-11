@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -44,12 +46,13 @@ type MultiROMDownloadScreen struct {
 	invPath   string
 	prev      Screen
 
-	state      int32 // multiDLState, accessed atomically
-	currentIdx int32 // index of the file currently being downloaded, atomic
-	dlProgress int64 // bytes downloaded for current file, atomic
-	dlTotal    int64 // total bytes for current file, atomic
-	err        error
-	finalPaths []string // resolved dest path for each completed download
+	state          int32 // multiDLState, accessed atomically
+	currentIdx     int32 // index of the file currently being downloaded, atomic
+	dlProgress     int64 // bytes downloaded for current file, atomic
+	dlTotal        int64 // total bytes for current file, atomic
+	err            error
+	finalPaths     []string // resolved dest path for each completed download
+	inhibitBlocked atomic.Bool
 }
 
 func NewMultiROMDownloadScreen(
@@ -67,7 +70,7 @@ func NewMultiROMDownloadScreen(
 		prev:       prev,
 		finalPaths: make([]string, len(downloads)),
 	}
-	go s.runDownloads()
+	go s.runDownloads(false)
 	return s
 }
 
@@ -75,8 +78,20 @@ func (s *MultiROMDownloadScreen) loadState() multiDLState {
 	return multiDLState(atomic.LoadInt32(&s.state))
 }
 
-func (s *MultiROMDownloadScreen) runDownloads() {
+func (s *MultiROMDownloadScreen) runDownloads(allowUninhibited bool) {
 	defer func() { sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT}) }()
+	lease, guardErr := leaf.BeginOperation(context.Background(), "batch download", allowUninhibited)
+	if guardErr != nil {
+		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+		s.inhibitBlocked.Store(true)
+		atomic.StoreInt32(&s.state, int32(multiDLError))
+		return
+	}
+	defer lease.Release()
+	if !lease.Protected {
+		logger.Warn("multi-download: continuing without Jawaka suspend protection by user request")
+	}
+	s.inhibitBlocked.Store(false)
 
 	for i, dl := range s.downloads {
 		atomic.StoreInt32(&s.currentIdx, int32(i))
@@ -162,7 +177,7 @@ func (s *MultiROMDownloadScreen) runDownloads() {
 	atomic.StoreInt32(&s.state, int32(multiDLDone))
 }
 
-func (s *MultiROMDownloadScreen) NeedsRedraw() bool        { return true }
+func (s *MultiROMDownloadScreen) NeedsRedraw() bool         { return true }
 func (s *MultiROMDownloadScreen) HasPendingAnimation() bool { return false }
 
 func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
@@ -229,6 +244,14 @@ func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
 	}
 
 	ftrY := r.DrawFooterBar(footerH)
+	if st == multiDLError && s.inhibitBlocked.Load() {
+		r.DrawFooterHints([]renderer.FooterHint{
+			{Kind: renderer.BadgeCircle, Label: "A", Text: "Continue"},
+			{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"},
+		}, ftrY)
+		r.Present()
+		return
+	}
 	switch st {
 	case multiDLDownloading:
 		r.DrawSmallText("Please wait...", 10, ftrY, ht[0], ht[1], ht[2])
@@ -247,6 +270,16 @@ func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
 	switch ev := e.(type) {
 	case *sdl.KeyboardEvent:
 		if ev.Type == sdl.KEYDOWN {
+			if s.loadState() == multiDLError && s.inhibitBlocked.Load() {
+				switch ev.Keysym.Sym {
+				case sdl.K_RETURN:
+					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
+					go s.runDownloads(true)
+					return s
+				case sdl.K_ESCAPE:
+					return s.prev
+				}
+			}
 			switch ev.Keysym.Sym {
 			case sdl.K_ESCAPE, sdl.K_RETURN:
 				return s.prev
@@ -254,6 +287,16 @@ func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
 		}
 	case *sdl.ControllerButtonEvent:
 		if ev.Type == sdl.CONTROLLERBUTTONDOWN {
+			if s.loadState() == multiDLError && s.inhibitBlocked.Load() {
+				switch ev.Button {
+				case sdl.CONTROLLER_BUTTON_B:
+					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
+					go s.runDownloads(true)
+					return s
+				case sdl.CONTROLLER_BUTTON_A:
+					return s.prev
+				}
+			}
 			switch ev.Button {
 			case sdl.CONTROLLER_BUTTON_A, sdl.CONTROLLER_BUTTON_B:
 				return s.prev

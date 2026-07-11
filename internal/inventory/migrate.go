@@ -1,12 +1,14 @@
 package inventory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
@@ -81,6 +83,11 @@ func MigrateFile(
 	cb SaveDataCallback,
 ) (MigrateResult, error) {
 	var res MigrateResult
+	lease, err := leaf.BeginOperation(context.Background(), "rename batch", false)
+	if err != nil {
+		return res, fmt.Errorf("protect rename batch: %w", err)
+	}
+	defer lease.Release()
 
 	entry, ok := inv.Lookup(gameURL)
 	if !ok {

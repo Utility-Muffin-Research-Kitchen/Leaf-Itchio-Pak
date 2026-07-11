@@ -3,12 +3,14 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
@@ -527,6 +529,12 @@ func (s *ManageDownloadsScreen) performDelete(gameURL string, fileIdx int) (bool
 	if !ok {
 		return true, 0
 	}
+	lease, guardErr := leaf.BeginOperation(context.Background(), "delete batch", false)
+	if guardErr != nil {
+		logger.Warn("delete blocked: %v", guardErr)
+		return false, len(entry.Files)
+	}
+	defer lease.Release()
 
 	var toDelete []inventory.DownloadedFile
 	switch fileIdx {

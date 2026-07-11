@@ -4,6 +4,7 @@ package ui
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/md5"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -47,13 +49,14 @@ type ZIPDownloadScreen struct {
 	inv     *inventory.Inventory
 	invPath string
 
-	state       zipDLState
-	downloaded  int64
-	total       int64
-	extracted   []string
-	skipped     []string
-	musicFailed bool
-	err         error
+	state          zipDLState
+	downloaded     int64
+	total          int64
+	extracted      []string
+	skipped        []string
+	musicFailed    bool
+	err            error
+	inhibitBlocked atomic.Bool
 }
 
 func (s *ZIPDownloadScreen) loadState() zipDLState {
@@ -74,12 +77,24 @@ func NewZIPDownloadScreen(
 		game: game, detail: detail, plan: plan,
 		inv: inv, invPath: invPath, prev: prev,
 	}
-	go s.run()
+	go s.run(false)
 	return s
 }
 
-func (s *ZIPDownloadScreen) run() {
+func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
 	defer func() { sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT}) }()
+	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
+	if guardErr != nil {
+		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+		s.inhibitBlocked.Store(true)
+		s.storeState(zipDLError)
+		return
+	}
+	defer lease.Release()
+	if !lease.Protected {
+		logger.Warn("zip-download: continuing without Jawaka suspend protection by user request")
+	}
+	s.inhibitBlocked.Store(false)
 
 	tmp, err := os.CreateTemp("", "itchio-zip-*.zip")
 	if err != nil {
@@ -1068,6 +1083,14 @@ func (s *ZIPDownloadScreen) Draw(r *renderer.Renderer) {
 	}
 
 	ftrY := r.DrawFooterBar(footerH)
+	if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
+		r.DrawFooterHints([]renderer.FooterHint{
+			{Kind: renderer.BadgeCircle, Label: "A", Text: "Continue"},
+			{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"},
+		}, ftrY)
+		r.Present()
+		return
+	}
 	switch s.loadState() {
 	case zipDLDownloading, zipDLExtracting:
 		r.DrawSmallText("Please wait…", 10, ftrY, ht[0], ht[1], ht[2])
@@ -1085,7 +1108,16 @@ func (s *ZIPDownloadScreen) HandleEvent(e sdl.Event) Screen {
 		if ev.Type != sdl.KEYDOWN {
 			return s
 		}
-		if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
+		if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
+			switch ev.Keysym.Sym {
+			case sdl.K_RETURN:
+				s.storeState(zipDLDownloading)
+				go s.run(true)
+				return s
+			case sdl.K_ESCAPE:
+				return s.prev
+			}
+		} else if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
 			switch ev.Keysym.Sym {
 			case sdl.K_ESCAPE, sdl.K_RETURN:
 				return s.prev
@@ -1095,7 +1127,16 @@ func (s *ZIPDownloadScreen) HandleEvent(e sdl.Event) Screen {
 		if ev.Type != sdl.CONTROLLERBUTTONDOWN {
 			return s
 		}
-		if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
+		if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
+			switch ev.Button {
+			case sdl.CONTROLLER_BUTTON_B:
+				s.storeState(zipDLDownloading)
+				go s.run(true)
+				return s
+			case sdl.CONTROLLER_BUTTON_A:
+				return s.prev
+			}
+		} else if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
 			switch ev.Button {
 			case sdl.CONTROLLER_BUTTON_A, sdl.CONTROLLER_BUTTON_B:
 				return s.prev

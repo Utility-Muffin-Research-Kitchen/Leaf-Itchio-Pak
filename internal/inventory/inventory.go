@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
@@ -170,6 +172,11 @@ func Load(path string) (*Inventory, error) {
 
 // Save writes the inventory to path atomically (write to .tmp then rename).
 func (inv *Inventory) Save(path string) error {
+	lease, err := leaf.BeginOperation(context.Background(), "inventory commit", false)
+	if err != nil {
+		return fmt.Errorf("protect inventory commit: %w", err)
+	}
+	defer lease.Release()
 	inv.mu.Lock()
 	inv.Version = SchemaVersion
 	data, err := json.MarshalIndent(inv, "", "  ")

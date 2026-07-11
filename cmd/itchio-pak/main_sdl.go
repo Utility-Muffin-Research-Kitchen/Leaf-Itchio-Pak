@@ -32,6 +32,9 @@ func runSDL() {
 		logger.Error("leaf runtime: %v", err)
 		os.Exit(1)
 	}
+	if err := leaf.ConfigureDaemon(runtimeEnv); err != nil {
+		logger.Warn("leaf daemon: %v", err)
+	}
 	if err := runtimeEnv.EnsureAppDirs(); err != nil {
 		logger.Error("leaf runtime: %v", err)
 		os.Exit(1)

@@ -1,6 +1,7 @@
 package itchio
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
@@ -248,6 +250,11 @@ func (c *Client) DownloadFree(upload Upload, dest string, progress func(int64, i
 }
 
 func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) error {
+	lease, guardErr := leaf.BeginOperation(context.Background(), "HTTP body write", false)
+	if guardErr != nil {
+		return fmt.Errorf("protect HTTP body write: %w", guardErr)
+	}
+	defer lease.Release()
 	// c.http has a 30-second Timeout that covers the entire response body read —
 	// fine for API calls but fatal for large file downloads. Create a per-call
 	// client with no overall timeout (Timeout: 0) that shares the same

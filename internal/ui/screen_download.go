@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -34,19 +36,21 @@ func (s *DownloadScreen) storeState(st dlState) {
 }
 
 type DownloadScreen struct {
-	client        *itchio.Client
-	cfg           *settings.Config
-	game          itchio.Game
-	detail        *itchio.GameDetail
-	upload        roms.Upload
-	prev          Screen
-	state         dlState
-	downloaded    int64
-	total         int64
-	dest          string
-	err           error
-	inv           *inventory.Inventory
-	inventoryPath string
+	client         *itchio.Client
+	cfg            *settings.Config
+	game           itchio.Game
+	detail         *itchio.GameDetail
+	upload         roms.Upload
+	prev           Screen
+	state          dlState
+	downloaded     int64
+	total          int64
+	dest           string
+	err            error
+	inv            *inventory.Inventory
+	inventoryPath  string
+	start          func(bool)
+	inhibitBlocked atomic.Bool
 }
 
 func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.Game, detail *itchio.GameDetail, upload roms.Upload, dest string, inv *inventory.Inventory, inventoryPath string, prev Screen) *DownloadScreen {
@@ -56,81 +60,97 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 		inv: inv, inventoryPath: inventoryPath,
 	}
 
-	go func() {
-		progress := func(dl, total int64) {
-			atomic.StoreInt64(&s.downloaded, dl)
-			atomic.StoreInt64(&s.total, total)
-		}
+	s.start = func(allowUninhibited bool) {
+		go func() {
+			lease, guardErr := leaf.BeginOperation(context.Background(), "download", allowUninhibited)
+			if guardErr != nil {
+				s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+				s.inhibitBlocked.Store(true)
+				s.storeState(dlError)
+				sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT})
+				return
+			}
+			defer lease.Release()
+			if !lease.Protected {
+				logger.Warn("download: continuing without Jawaka suspend protection by user request")
+			}
+			s.inhibitBlocked.Store(false)
+			progress := func(dl, total int64) {
+				atomic.StoreInt64(&s.downloaded, dl)
+				atomic.StoreInt64(&s.total, total)
+			}
 
-		isAuth := upload.DownloadKeyID != ""
-		logger.Info("download: starting %q file=%s dest=%s auth=%v",
-			game.Title, upload.Filename, dest, isAuth)
+			isAuth := upload.DownloadKeyID != ""
+			logger.Info("download: starting %q file=%s dest=%s auth=%v",
+				game.Title, upload.Filename, dest, isAuth)
 
-		var err error
-		if isAuth {
-			err = client.DownloadAuthUpload(cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
-		} else {
-			itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
-			err = client.DownloadFree(itchUpload, dest, progress)
-		}
+			var err error
+			if isAuth {
+				err = client.DownloadAuthUpload(cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
+			} else {
+				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
+				err = client.DownloadFree(itchUpload, dest, progress)
+			}
 
-		if err != nil {
-			logger.Error("download: failed file=%s: %v", upload.Filename, err)
-			s.err = err
-			s.storeState(dlError)
-		} else {
-			logger.Info("download: complete file=%s", upload.Filename)
+			if err != nil {
+				logger.Error("download: failed file=%s: %v", upload.Filename, err)
+				s.err = err
+				s.storeState(dlError)
+			} else {
+				logger.Info("download: complete file=%s", upload.Filename)
 
-			// Apply unified naming if enabled for this game.
-			finalDest := dest
-			unifiedName := false
-			if cfg.UnifiedNaming {
-				entry, entryExists := inv.Lookup(game.URL)
-				disabled := entryExists && entry.UnifiedNamingDisabled
-				if !disabled {
-					newDest, didRename := roms.ResolveUnifiedDest(dest, game.Title, true)
-					if didRename {
-						if renameErr := os.Rename(dest, newDest); renameErr != nil {
-							logger.Warn("unified-naming: rename failed: %v", renameErr)
+				// Apply unified naming if enabled for this game.
+				finalDest := dest
+				unifiedName := false
+				if cfg.UnifiedNaming {
+					entry, entryExists := inv.Lookup(game.URL)
+					disabled := entryExists && entry.UnifiedNamingDisabled
+					if !disabled {
+						newDest, didRename := roms.ResolveUnifiedDest(dest, game.Title, true)
+						if didRename {
+							if renameErr := os.Rename(dest, newDest); renameErr != nil {
+								logger.Warn("unified-naming: rename failed: %v", renameErr)
+							} else {
+								logger.Info("unified-naming: renamed %q → %q", filepath.Base(dest), filepath.Base(newDest))
+								finalDest = newDest
+								unifiedName = true
+							}
 						} else {
-							logger.Info("unified-naming: renamed %q → %q", filepath.Base(dest), filepath.Base(newDest))
-							finalDest = newDest
-							unifiedName = true
+							unifiedName = true // name already correct
 						}
-					} else {
-						unifiedName = true // name already correct
 					}
 				}
-			}
 
-			if roms.ROMExt(upload.Filename) == ".p8.png" {
-				if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
-					logger.Warn("cover-art: game=%q: %v", game.Title, artErr)
+				if roms.ROMExt(upload.Filename) == ".p8.png" {
+					if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
+						logger.Warn("cover-art: game=%q: %v", game.Title, artErr)
+					}
+				} else if artErr := client.DownloadCoverArt(game.CoverURL, finalDest); artErr != nil {
+					logger.Warn("cover-art: game=%q url=%s: %v", game.Title, game.CoverURL, artErr)
 				}
-			} else if artErr := client.DownloadCoverArt(game.CoverURL, finalDest); artErr != nil {
-				logger.Warn("cover-art: game=%q url=%s: %v", game.Title, game.CoverURL, artErr)
+				s.inv.Add(game.URL, inventory.Entry{
+					GameURL:  game.URL,
+					Title:    game.Title,
+					Author:   game.Author,
+					CoverURL: game.CoverURL,
+					IsFree:   game.IsFree,
+				}, inventory.DownloadedFile{
+					Filename:     upload.Filename,
+					DestPath:     finalDest,
+					DownloadedAt: time.Now(),
+					UnifiedName:  unifiedName,
+				})
+				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
+					logger.Warn("inventory: save failed: %v", saveErr)
+				} else {
+					logger.Info("inventory: recorded game=%q file=%s unified=%v", game.Title, filepath.Base(finalDest), unifiedName)
+				}
+				s.dest = finalDest
+				s.storeState(dlDone)
 			}
-			s.inv.Add(game.URL, inventory.Entry{
-				GameURL:  game.URL,
-				Title:    game.Title,
-				Author:   game.Author,
-				CoverURL: game.CoverURL,
-				IsFree:   game.IsFree,
-			}, inventory.DownloadedFile{
-				Filename:     upload.Filename,
-				DestPath:     finalDest,
-				DownloadedAt: time.Now(),
-				UnifiedName:  unifiedName,
-			})
-			if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
-				logger.Warn("inventory: save failed: %v", saveErr)
-			} else {
-				logger.Info("inventory: recorded game=%q file=%s unified=%v", game.Title, filepath.Base(finalDest), unifiedName)
-			}
-			s.dest = finalDest
-			s.storeState(dlDone)
-		}
-	}()
+		}()
+	}
+	s.start(false)
 
 	return s
 }
@@ -231,6 +251,14 @@ func (s *DownloadScreen) Draw(r *renderer.Renderer) {
 	}
 
 	ftrY := r.DrawFooterBar(footerH)
+	if s.loadState() == dlError && s.inhibitBlocked.Load() {
+		r.DrawFooterHints([]renderer.FooterHint{
+			{Kind: renderer.BadgeCircle, Label: "A", Text: "Continue"},
+			{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"},
+		}, ftrY)
+		r.Present()
+		return
+	}
 	switch s.loadState() {
 	case dlDownloading:
 		r.DrawSmallText("Please wait...", 10, ftrY, ht[0], ht[1], ht[2])
@@ -248,7 +276,16 @@ func (s *DownloadScreen) HandleEvent(e sdl.Event) Screen {
 		if ev.Type != sdl.KEYDOWN {
 			return s
 		}
-		if s.loadState() != dlDownloading {
+		if s.loadState() == dlError && s.inhibitBlocked.Load() {
+			switch ev.Keysym.Sym {
+			case sdl.K_RETURN:
+				s.storeState(dlDownloading)
+				s.start(true)
+				return s
+			case sdl.K_ESCAPE:
+				return s.prev
+			}
+		} else if s.loadState() != dlDownloading {
 			switch ev.Keysym.Sym {
 			case sdl.K_ESCAPE, sdl.K_RETURN:
 				return s.prev
@@ -258,7 +295,16 @@ func (s *DownloadScreen) HandleEvent(e sdl.Event) Screen {
 		if ev.Type != sdl.CONTROLLERBUTTONDOWN {
 			return s
 		}
-		if s.loadState() != dlDownloading {
+		if s.loadState() == dlError && s.inhibitBlocked.Load() {
+			switch ev.Button {
+			case sdl.CONTROLLER_BUTTON_B:
+				s.storeState(dlDownloading)
+				s.start(true)
+				return s
+			case sdl.CONTROLLER_BUTTON_A:
+				return s.prev
+			}
+		} else if s.loadState() != dlDownloading {
 			switch ev.Button {
 			case sdl.CONTROLLER_BUTTON_B, sdl.CONTROLLER_BUTTON_A:
 				return s.prev

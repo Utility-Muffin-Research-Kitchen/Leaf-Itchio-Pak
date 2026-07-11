@@ -2,13 +2,13 @@ package itchio
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/gif"
 	_ "image/jpeg"
-	_ "image/png"
 	"image/png"
 	"io"
 	"net/http"
@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
@@ -42,8 +43,8 @@ func compositeGIFFrames(g *gif.GIF) image.Image {
 	draw.Draw(canvas, bounds, bgFill, image.Point{}, draw.Src)
 
 	var (
-		bestCanvas    *image.RGBA
-		bestVariance  float64
+		bestCanvas   *image.RGBA
+		bestVariance float64
 	)
 
 	for i, frame := range g.Image {
@@ -125,6 +126,11 @@ func coverArtBasename(romDestPath string) string {
 // with the same stem but a different extension are removed. Returns nil for an
 // empty coverURL.
 func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
+	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
+	if guardErr != nil {
+		return fmt.Errorf("protect artwork conversion: %w", guardErr)
+	}
+	defer lease.Release()
 	if coverURL == "" {
 		logger.Debug("cover-art: no cover URL, skipping")
 		return nil
@@ -220,6 +226,11 @@ func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
 // Used for .p8.png cartridges, which are themselves valid PNG images — no
 // separate network request is needed.
 func CopyCoverArt(romDestPath string) error {
+	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
+	if guardErr != nil {
+		return fmt.Errorf("protect artwork conversion: %w", guardErr)
+	}
+	defer lease.Release()
 	dir := filepath.Dir(romDestPath)
 	mediaDir := filepath.Join(dir, ".media")
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
