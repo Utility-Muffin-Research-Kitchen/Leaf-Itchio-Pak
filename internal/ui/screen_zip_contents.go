@@ -4,7 +4,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -20,10 +19,9 @@ import (
 type zipContentRowKind int
 
 const (
-	zipRowROM        zipContentRowKind = iota // selectable ROM entry for version picker
-	zipRowExtHeader                           // non-selectable section label for an extension group
-	zipRowMusicToggle                         // music download yes/no toggle
-	zipRowGBADir                              // GBA destination folder toggle (GBA vs MGBA)
+	zipRowROM         zipContentRowKind = iota // selectable ROM entry for version picker
+	zipRowExtHeader                            // non-selectable section label for an extension group
+	zipRowMusicToggle                          // music download yes/no toggle
 )
 
 type zipContentRow struct {
@@ -31,7 +29,6 @@ type zipContentRow struct {
 	entry   roms.ZIPEntry
 	ext     string // lowercase extension group, for zipRowROM
 	toggled bool   // for zipRowMusicToggle
-	gbaDir  string // for zipRowGBADir: full path of chosen GBA directory
 }
 
 // ZIPContentsScreen shows the ZIP manifest to the user for two cases:
@@ -113,10 +110,6 @@ func (s *ZIPContentsScreen) buildRows() {
 		s.rows = append(s.rows, zipContentRow{kind: zipRowMusicToggle, toggled: false})
 	}
 
-	if s.cfg.ROMLocation == "ask" && len(s.plan.Manifest.ROMsByExt()[".gba"]) > 0 {
-		s.rows = append(s.rows, zipContentRow{kind: zipRowGBADir, gbaDir: s.resolveLastGBADir()})
-	}
-
 	// Start cursor on the first selectable row, not on a header.
 	s.cursor = 0
 	s.scrollOffset = 0
@@ -125,25 +118,7 @@ func (s *ZIPContentsScreen) buildRows() {
 	}
 }
 
-// resolveLastGBADir returns the remembered GBA destination directory, falling back to
-// the default if the remembered path no longer exists or was never set.
-func (s *ZIPContentsScreen) resolveLastGBADir() string {
-	if s.cfg.LastROMDirs != nil {
-		if dir, ok := s.cfg.LastROMDirs[".gba"]; ok && dir != "" {
-			if _, err := os.Stat(dir); err == nil {
-				return dir
-			}
-			delete(s.cfg.LastROMDirs, ".gba")
-			if len(s.cfg.LastROMDirs) == 0 {
-				s.cfg.LastROMDirs = nil
-			}
-			s.cfg.Save(s.cfgPath) //nolint:errcheck — best-effort cleanup
-		}
-	}
-	return roms.GBADir
-}
-
-func (s *ZIPContentsScreen) NeedsRedraw() bool        { return true }
+func (s *ZIPContentsScreen) NeedsRedraw() bool         { return true }
 func (s *ZIPContentsScreen) HasPendingAnimation() bool { return false }
 
 func (s *ZIPContentsScreen) Draw(r *renderer.Renderer) {
@@ -232,14 +207,6 @@ func (s *ZIPContentsScreen) Draw(r *renderer.Renderer) {
 			}
 			label := "Download soundtrack: "
 			r.DrawText(label+val, 20, y, tr, tg, tb)
-		case zipRowGBADir:
-			var dirLabel string
-			if row.gbaDir == roms.GBAMGBADir {
-				dirLabel = "Game Boy Advance (MGBA)"
-			} else {
-				dirLabel = "Game Boy Advance (GBA)"
-			}
-			r.DrawText("GBA folder: "+dirLabel, 20, y, tr, tg, tb)
 		}
 		y += rowH
 	}
@@ -311,12 +278,6 @@ func (s *ZIPContentsScreen) activate() {
 		s.selectedROMs[row.ext] = row.entry.Name
 	case zipRowMusicToggle:
 		s.rows[s.cursor].toggled = !s.rows[s.cursor].toggled
-	case zipRowGBADir:
-		if s.rows[s.cursor].gbaDir == roms.GBADir {
-			s.rows[s.cursor].gbaDir = roms.GBAMGBADir
-		} else {
-			s.rows[s.cursor].gbaDir = roms.GBADir
-		}
 	}
 }
 
@@ -330,14 +291,6 @@ func (s *ZIPContentsScreen) confirm() Screen {
 		switch row.kind {
 		case zipRowMusicToggle:
 			plan.DownloadMusic = row.toggled
-		case zipRowGBADir:
-			if s.cfg.LastROMDirs == nil {
-				s.cfg.LastROMDirs = make(map[string]string)
-			}
-			s.cfg.LastROMDirs[".gba"] = row.gbaDir
-			s.cfg.Save(s.cfgPath) //nolint:errcheck — best-effort persistence
-			plan.ROMDirs = map[string]string{".gba": row.gbaDir}
-			logger.Info("zip-contents: GBA dir set to %s", row.gbaDir)
 		}
 	}
 	if s.cfg.MusicDownload == "auto" && s.plan.Manifest.HasMusic() {
@@ -352,6 +305,6 @@ func (s *ZIPContentsScreen) confirm() Screen {
 		plan.MusicDir = roms.MusicDestinationDir(s.game.Title)
 	}
 
-	logger.Info("zip-contents: confirmed ROMs=%v music=%v musicDir=%s gbaDir=%s", plan.DownloadROMs, plan.DownloadMusic, plan.MusicDir, plan.ROMDirs[".gba"])
+	logger.Info("zip-contents: confirmed ROMs=%v music=%v musicDir=%s", plan.DownloadROMs, plan.DownloadMusic, plan.MusicDir)
 	return NewZIPDownloadScreen(s.client, s.cfg, s.game, s.detail, plan, s.inv, s.invPath, s.prev)
 }

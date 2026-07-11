@@ -1,8 +1,25 @@
 #!/bin/sh
-PAK_DIR="$(dirname "$0")"
-PAK_NAME="$(basename "$PAK_DIR")"
-PAK_NAME="${PAK_NAME%.*}"
-export HOME="$SHARED_USERDATA_PATH/$PAK_NAME"
+set -eu
+PAK_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+PLATFORM="${PLATFORM:-mlp1}"
+if [ -n "${UMRK_ENV_FILE:-}" ] && [ -f "$UMRK_ENV_FILE" ]; then
+    . "$UMRK_ENV_FILE"
+elif [ -n "${SDCARD_PATH:-}" ] &&
+     [ -f "$SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh" ]; then
+    . "$SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh"
+else
+    for _root in /mnt/sdcard /media/sdcard1; do
+        _env="$_root/.system/leaf/platforms/$PLATFORM/launcher/env.sh"
+        if [ -f "$_env" ]; then . "$_env"; break; fi
+    done
+    unset _root _env
+fi
+
+USERDATA_PATH="${USERDATA_PATH:-${SDCARD_PATH:-/mnt/sdcard}/.userdata/$PLATFORM}"
+LOGS_PATH="${LOGS_PATH:-$USERDATA_PATH/logs}"
+export PLATFORM USERDATA_PATH LOGS_PATH
+export HOME="$USERDATA_PATH/Itch-io"
 # Select bundled SDL2 libs for this device family.
 # cpuinfo hwserial contains TG5050 on the Smart Pro S; all other TrimUI devices
 # fall through to tg5040.  Miyoo devices expose /usr/miyoo.
@@ -31,7 +48,7 @@ for _d in /usr/trimui/lib /usr/miyoo/lib /usr/lib /usr/local/lib; do
     fi
 done
 unset _d
-export LD_LIBRARY_PATH="${NATIVE_SDL_LIB:+$NATIVE_SDL_LIB:}$PLATFORM_LIB:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="${NATIVE_SDL_LIB:+$NATIVE_SDL_LIB:}$PLATFORM_LIB:${LD_LIBRARY_PATH:-}"
 export PATH="$PAK_DIR:$PATH"
 # The device has no system CA certificate store; point Go's TLS stack at the
 # bundle we ship so HTTPS requests to itch.io can be verified correctly.

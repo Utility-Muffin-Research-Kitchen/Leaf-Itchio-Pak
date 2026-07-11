@@ -1,10 +1,28 @@
 package roms_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func TestMain(m *testing.M) {
+	err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: map[string]string{
+			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+		},
+		SourceID:    "primary",
+		PrimaryRoot: "/leaf",
+		MusicRoot:   "/leaf/Music",
+		StatesRoot:  "/leaf/States",
+	})
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 func TestScoreUpload(t *testing.T) {
 	tests := []struct {
@@ -43,20 +61,20 @@ func TestDestinationDir(t *testing.T) {
 		core string
 		want string
 	}{
-		{".gbc", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
-		{".GBC", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
-		{".gb", "fakeo8", "/mnt/SDCARD/Roms/Game Boy (GB)/"},
-		{".gba", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Advance (GBA)/"},
-		{".nes", "fakeo8", "/mnt/SDCARD/Roms/Nintendo Entertainment System (FC)/"},
-		{".md", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".gen", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".smd", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".p8", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".P8", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".p8.png", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".p8", "pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{".p8.png", "pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{".zip", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
+		{".gbc", "fakeo8", "/leaf/Roms/GBC/"},
+		{".GBC", "fakeo8", "/leaf/Roms/GBC/"},
+		{".gb", "fakeo8", "/leaf/Roms/GB/"},
+		{".gba", "fakeo8", "/leaf/Roms/GBA/"},
+		{".nes", "fakeo8", "/leaf/Roms/NES/"},
+		{".md", "fakeo8", "/leaf/Roms/GENESIS/"},
+		{".gen", "fakeo8", "/leaf/Roms/GENESIS/"},
+		{".smd", "fakeo8", "/leaf/Roms/GENESIS/"},
+		{".p8", "fakeo8", "/leaf/Roms/PICO8/"},
+		{".P8", "fakeo8", "/leaf/Roms/PICO8/"},
+		{".p8.png", "fakeo8", "/leaf/Roms/PICO8/"},
+		{".p8", "pico8", "/leaf/Roms/PICO8/"},
+		{".p8.png", "pico8", "/leaf/Roms/PICO8/"},
+		{".zip", "fakeo8", "/leaf/Roms/GBC/"},
 		{".unknown", "fakeo8", ""},
 	}
 	for _, tt := range tests {
@@ -72,10 +90,10 @@ func TestPico8ROMDir(t *testing.T) {
 		core string
 		want string
 	}{
-		{"fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{"pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{"", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{"other", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
+		{"fakeo8", "/leaf/Roms/PICO8/"},
+		{"pico8", "/leaf/Roms/PICO8/"},
+		{"", "/leaf/Roms/PICO8/"},
+		{"other", "/leaf/Roms/PICO8/"},
 	}
 	for _, tc := range cases {
 		got := roms.Pico8ROMDir(tc.core)
@@ -91,9 +109,9 @@ func TestPico8GameSubDir(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"fakeo8", "Poom", "/mnt/SDCARD/Roms/Pico-8 (P8)/Poom/"},
-		{"pico8", "Poom", "/mnt/SDCARD/Roms/Pico-8 (PICO)/Poom/"},
-		{"fakeo8", "Celeste", "/mnt/SDCARD/Roms/Pico-8 (P8)/Celeste/"},
+		{"fakeo8", "Poom", "/leaf/Roms/PICO8/Poom/"},
+		{"pico8", "Poom", "/leaf/Roms/PICO8/Poom/"},
+		{"fakeo8", "Celeste", "/leaf/Roms/PICO8/Celeste/"},
 	}
 	for _, tc := range cases {
 		got := roms.Pico8GameSubDir(tc.core, tc.title)
@@ -130,9 +148,9 @@ func TestMusicDestinationDir(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"Solastra", "/mnt/SDCARD/Music/Solastra/"},
-		{"Game: Title?", "/mnt/SDCARD/Music/Game Title/"},
-		{"", "/mnt/SDCARD/Music/Unknown/"},
+		{"Solastra", "/leaf/Music/Solastra/"},
+		{"Game: Title?", "/leaf/Music/Game Title/"},
+		{"", "/leaf/Music/Unknown/"},
 	}
 	for _, tt := range tests {
 		got := roms.MusicDestinationDir(tt.title)
@@ -147,9 +165,9 @@ func TestPico8GameSubDirLegacy(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"Celeste Classic", "/mnt/SDCARD/Roms/Pico-8 (P8)/Celeste Classic/"},
-		{"Game: Title?", "/mnt/SDCARD/Roms/Pico-8 (P8)/Game Title/"},
-		{"", "/mnt/SDCARD/Roms/Pico-8 (P8)/Unknown/"},
+		{"Celeste Classic", "/leaf/Roms/PICO8/Celeste Classic/"},
+		{"Game: Title?", "/leaf/Roms/PICO8/Game Title/"},
+		{"", "/leaf/Roms/PICO8/Unknown/"},
 	}
 	for _, tt := range tests {
 		got := roms.Pico8GameSubDir("fakeo8", tt.title)

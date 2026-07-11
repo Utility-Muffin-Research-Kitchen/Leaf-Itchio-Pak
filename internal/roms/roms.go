@@ -1,8 +1,10 @@
 package roms
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // ROMExt returns the effective ROM extension for filename.
@@ -34,43 +36,138 @@ func ScoreUpload(filename string) int {
 	}
 }
 
-// GBADir is the default NextUI GBA ROM directory (uses the built-in GBA emulator).
-const GBADir = "/mnt/SDCARD/Roms/Game Boy Advance (GBA)/"
-
-// GBAMGBADir is the alternative NextUI GBA ROM directory (uses the MGBA emulator).
-const GBAMGBADir = "/mnt/SDCARD/Roms/Game Boy Advance (MGBA)/"
-
-// NESDir is the NextUI NES/Famicom ROM directory.
-const NESDir = "/mnt/SDCARD/Roms/Nintendo Entertainment System (FC)/"
-
-// GenesisDir is the NextUI Sega Genesis/Mega Drive ROM directory.
-const GenesisDir = "/mnt/SDCARD/Roms/Sega Genesis (MD)/"
-
-// Pico8ROMDir returns the Pico-8 ROM directory for the given core.
-// core: "fakeo8" | "pico8" — any other value falls back to "fakeo8".
-func Pico8ROMDir(core string) string {
-	if core == "pico8" {
-		return "/mnt/SDCARD/Roms/Pico-8 (PICO)/"
-	}
-	return "/mnt/SDCARD/Roms/Pico-8 (P8)/"
+type PathConfig struct {
+	SystemDirs  map[string]string
+	SourceID    string
+	PrimaryRoot string
+	MusicRoot   string
+	StatesRoot  string
 }
 
-func DestinationDir(ext, pico8Core string) string {
+var pathConfig atomic.Pointer[PathConfig]
+
+func withTrailingSlash(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path) + string(filepath.Separator)
+}
+
+// ConfigurePaths installs the source-local paths resolved from Leaf's runtime
+// environment and canonical systems catalog. It must run before UI workers.
+func ConfigurePaths(config PathConfig) error {
+	required := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"}
+	copyConfig := &PathConfig{SystemDirs: make(map[string]string, len(config.SystemDirs))}
+	for _, id := range required {
+		path := config.SystemDirs[id]
+		if path == "" {
+			return fmt.Errorf("missing Leaf destination for system %s", id)
+		}
+		copyConfig.SystemDirs[id] = withTrailingSlash(path)
+	}
+	if config.MusicRoot == "" {
+		return fmt.Errorf("missing Leaf music root")
+	}
+	if config.PrimaryRoot == "" {
+		return fmt.Errorf("missing Leaf primary root")
+	}
+	if config.SourceID == "" {
+		return fmt.Errorf("missing Leaf source id")
+	}
+	copyConfig.SourceID = config.SourceID
+	if config.StatesRoot == "" {
+		return fmt.Errorf("missing Leaf states root")
+	}
+	copyConfig.PrimaryRoot = withTrailingSlash(config.PrimaryRoot)
+	copyConfig.MusicRoot = withTrailingSlash(config.MusicRoot)
+	copyConfig.StatesRoot = withTrailingSlash(config.StatesRoot)
+	pathConfig.Store(copyConfig)
+	return nil
+}
+
+type PathIdentity struct {
+	SourceID        string
+	RelativePath    string
+	CanonicalSystem string
+}
+
+// DescribeDestination converts a configured primary-source path to stable
+// inventory identity. Paths outside the source are rejected without guessing.
+func DescribeDestination(path string) (PathIdentity, bool) {
+	config := pathConfig.Load()
+	if config == nil || path == "" {
+		return PathIdentity{}, false
+	}
+	rel, err := filepath.Rel(filepath.Clean(config.PrimaryRoot), filepath.Clean(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return PathIdentity{}, false
+	}
+	identity := PathIdentity{SourceID: config.SourceID, RelativePath: filepath.ToSlash(rel)}
+	cleanPath := filepath.Clean(path)
+	for id, dir := range config.SystemDirs {
+		systemRel, systemErr := filepath.Rel(filepath.Clean(dir), cleanPath)
+		if systemErr == nil && systemRel != ".." && !strings.HasPrefix(systemRel, ".."+string(filepath.Separator)) {
+			identity.CanonicalSystem = id
+			break
+		}
+	}
+	return identity, true
+}
+
+func PrimaryRoot() string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	return config.PrimaryRoot
+}
+
+func MusicRoot() string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	return config.MusicRoot
+}
+
+func StatesRoot() string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	return config.StatesRoot
+}
+
+func SystemDir(id string) string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	return config.SystemDirs[id]
+}
+
+// Pico8ROMDir returns Leaf's single canonical PICO8 directory. core remains in
+// the signature until the legacy settings screen is removed.
+func Pico8ROMDir(_ string) string {
+	return SystemDir("PICO8")
+}
+
+func DestinationDir(ext, _ string) string {
 	switch strings.ToLower(ext) {
 	case ".gbc":
-		return "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"
+		return SystemDir("GBC")
 	case ".gb":
-		return "/mnt/SDCARD/Roms/Game Boy (GB)/"
+		return SystemDir("GB")
 	case ".gba":
-		return GBADir
+		return SystemDir("GBA")
 	case ".nes":
-		return NESDir
+		return SystemDir("FC")
 	case ".md", ".gen", ".smd":
-		return GenesisDir
+		return SystemDir("MD")
 	case ".p8", ".p8.png":
-		return Pico8ROMDir(pico8Core)
+		return SystemDir("PICO8")
 	case ".zip":
-		return "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"
+		return SystemDir("GBC")
 	default:
 		return ""
 	}
@@ -89,16 +186,17 @@ func SelectBest(uploads []Upload) *Upload {
 	return best
 }
 
-// MusicBaseDir is the root directory for all extracted game soundtracks.
-const MusicBaseDir = "/mnt/SDCARD/Music/"
-
 // MusicDestinationDir returns the target directory for a game's music files.
 func MusicDestinationDir(gameTitle string) string {
 	safe := SanitiseFilename(gameTitle, "")
 	if safe == "" {
 		safe = "Unknown"
 	}
-	return MusicBaseDir + safe + "/"
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	return config.MusicRoot + safe + "/"
 }
 
 // Pico8GameSubDir returns the subdirectory for a Pico-8 game that ships with

@@ -55,7 +55,7 @@ func main() {
 	logger.Info("git commit: %s", gitCommit)
 	p := readPlatform()
 	logger.Info("platform:   %s (%s)", p, platformDescription(p))
-	logger.Info("nextui:     %s", readNextUIVersion())
+	logger.Info("leaf:       %s", readLeafVersion())
 	profilingDesc := "off"
 	if *cpuProfile != "" || *memProfile != "" || *pprofAddr != "" {
 		var parts []string
@@ -151,16 +151,13 @@ func main() {
 	}
 }
 
-// logFilePath returns the path for the log file.
-// On device, NextUI sets PLATFORM (e.g. "tg5040") and logs are written to the
-// conventional location used by other Paks:
-//
-//	/mnt/SDCARD/.userdata/<PLATFORM>/logs/itchio-pak.log
-//
-// When PLATFORM is unset (development / CI), it falls back to $HOME/itchio-pak.log.
+// logFilePath uses Leaf's public log root. Development/CI falls back to HOME.
 func logFilePath() string {
-	if platform := os.Getenv("PLATFORM"); platform != "" {
-		return filepath.Join("/mnt/SDCARD/.userdata", platform, "logs", "itchio-pak.log")
+	if logs := os.Getenv("LOGS_PATH"); logs != "" {
+		return filepath.Join(logs, "itchio-pak.log")
+	}
+	if userdata := os.Getenv("USERDATA_PATH"); userdata != "" {
+		return filepath.Join(userdata, "logs", "itchio-pak.log")
 	}
 	return filepath.Join(os.Getenv("HOME"), "itchio-pak.log")
 }
@@ -173,32 +170,21 @@ func readPlatform() string {
 	return "unknown"
 }
 
-// platformDescription returns a human-readable device name for a NextUI platform code.
+// platformDescription returns the supported Leaf device name.
 func platformDescription(platform string) string {
 	switch platform {
-	case "tg5040":
-		return "TrimUI Brick / Smart Pro"
-	case "tg5050":
-		return "TrimUI Smart Pro S"
-	case "my355":
-		return "Miyoo Flip"
+	case "mlp1":
+		return "Miniloong Pocket 1"
 	default:
 		return "unknown device"
 	}
 }
 
-// readNextUIVersion reads the first non-empty line of the NextUI version file.
-// Returns "unknown" if the file is absent, empty, or unreadable — absence is
-// expected when running outside NextUI (dev machine, other launchers).
-func readNextUIVersion() string {
-	data, err := os.ReadFile("/mnt/SDCARD/.system/version.txt")
-	if err != nil {
-		return "unknown"
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
+// readLeafVersion returns a launcher-provided release identifier when present.
+func readLeafVersion() string {
+	for _, name := range []string{"LEAF_VERSION", "UMRK_RELEASE_ID"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
 		}
 	}
 	return "unknown"

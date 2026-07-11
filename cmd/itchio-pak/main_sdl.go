@@ -9,9 +9,11 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/theme"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
@@ -25,7 +27,46 @@ const (
 )
 
 func runSDL() {
-	cfgPath := os.Getenv("HOME") + "/config.json"
+	runtimeEnv, err := leaf.LoadEnvironment()
+	if err != nil {
+		logger.Error("leaf runtime: %v", err)
+		os.Exit(1)
+	}
+	if err := runtimeEnv.EnsureAppDirs(); err != nil {
+		logger.Error("leaf runtime: %v", err)
+		os.Exit(1)
+	}
+	catalog, err := leaf.LoadCatalog(runtimeEnv)
+	if err != nil {
+		logger.Error("leaf systems: %v", err)
+		os.Exit(1)
+	}
+	primary, ok := runtimeEnv.Sources.Primary()
+	if !ok {
+		logger.Error("leaf runtime: no primary content source")
+		os.Exit(1)
+	}
+	systemDirs := make(map[string]string, 6)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+		dir, resolveErr := catalog.ROMDir(primary, id)
+		if resolveErr != nil {
+			logger.Error("leaf systems: %v", resolveErr)
+			os.Exit(1)
+		}
+		systemDirs[id] = dir
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs:  systemDirs,
+		SourceID:    primary.ID,
+		PrimaryRoot: primary.Root,
+		MusicRoot:   primary.MusicPath,
+		StatesRoot:  primary.StatesPath,
+	}); err != nil {
+		logger.Error("leaf destinations: %v", err)
+		os.Exit(1)
+	}
+
+	cfgPath := filepath.Join(runtimeEnv.StateDir(), "config.json")
 	cachePath := filepath.Join(filepath.Dir(cfgPath), "games_cache.json")
 	ownedCachePath := filepath.Join(filepath.Dir(cfgPath), "owned_cache.json")
 	cfg, _ := settings.Load(cfgPath)
@@ -40,7 +81,10 @@ func runSDL() {
 	logger.RegisterSecret(cfg.APIKey, "[API-KEY]")
 
 	inventoryPath := filepath.Join(filepath.Dir(cfgPath), "inventory.json")
-	inv, _ := inventory.Load(inventoryPath)
+	inv, inventoryErr := inventory.Load(inventoryPath)
+	if inventoryErr != nil {
+		logger.Warn("inventory reset: %v", inventoryErr)
+	}
 	inv.VerifyAndClean(inventoryPath)
 
 	level := cfg.LogLevel
@@ -78,8 +122,9 @@ func runSDL() {
 	}
 	logger.Info("display: %dx%d", w, h)
 
-	const miniSettingsPath = "/mnt/SDCARD/.userdata/shared/minuisettings.txt"
-	nextUITheme, themeAvailable := theme.Load(miniSettingsPath)
+	// Leaf appearance will be inherited through Catastrophe. Until that bridge
+	// lands, keep the default legacy palette without reading NextUI settings.
+	nextUITheme, themeAvailable := theme.Defaults(), false
 	defaultTheme := theme.Defaults()
 
 	activeTheme := defaultTheme

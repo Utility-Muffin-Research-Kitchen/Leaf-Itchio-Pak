@@ -24,7 +24,7 @@ type ZIPPlan struct {
 	CDNURL   string
 	Manifest roms.ZIPManifest
 
-	DownloadROMs bool
+	DownloadROMs  bool
 	DownloadMusic bool
 	// Pico8GameDir, when non-empty, triggers path-preserving extraction of all
 	// .p8/.p8.png/.lua files from the ZIP into this directory.
@@ -136,7 +136,7 @@ func (s *ZIPInspectScreen) runInspect() {
 	s.storeState(zipInspectDone)
 }
 
-func (s *ZIPInspectScreen) NeedsRedraw() bool        { return true }
+func (s *ZIPInspectScreen) NeedsRedraw() bool         { return true }
 func (s *ZIPInspectScreen) HasPendingAnimation() bool { return false }
 
 func (s *ZIPInspectScreen) Draw(r *renderer.Renderer) {
@@ -243,15 +243,6 @@ func (s *ZIPInspectScreen) route() Screen {
 		return s.prev
 	}
 
-	manifestHasGBA := len(m.ROMsByExt()[".gba"]) > 0
-
-	// GBA + "ask": route through contents screen before anything else so the
-	// user can choose between Game Boy Advance (GBA) and Game Boy Advance (MGBA).
-	if manifestHasGBA && s.cfg.ROMLocation == "ask" {
-		return NewZIPContentsScreen(s.client, s.cfg, s.cfgPath, s.cache,
-			s.game, s.detail, s.plan, s.inv, s.invPath, s.prev)
-	}
-
 	// Single ROM, no music, no extra files.
 	if m.IsSingleROMOnly() && !m.HasOtherFiles() {
 		// Use the inner ROM's extension to route to the correct destination directory
@@ -330,8 +321,8 @@ func (s *ZIPInspectScreen) route() Screen {
 		return NewZIPDownloadScreen(s.client, s.cfg, s.game, s.detail, plan, s.inv, s.invPath, s.prev)
 	}
 
-	// Multiple ROMs of same extension, GBA present, or music choice needed → picker.
-	if m.HasDuplicateROMExt() || (s.cfg.MusicDownload == "ask" && m.HasMusic()) || manifestHasGBA {
+	// Multiple ROMs of the same extension or an explicit music choice needs a picker.
+	if m.HasDuplicateROMExt() || (s.cfg.MusicDownload == "ask" && m.HasMusic()) {
 		return NewZIPContentsScreen(s.client, s.cfg, s.cfgPath, s.cache,
 			s.game, s.detail, s.plan, s.inv, s.invPath, s.prev)
 	}

@@ -102,7 +102,7 @@ func (s *ManageDownloadsScreen) processAutoRepeat() {
 	s.lastRepeat = now
 }
 
-func (s *ManageDownloadsScreen) NeedsRedraw() bool        { return s.heldDir != 0 }
+func (s *ManageDownloadsScreen) NeedsRedraw() bool         { return s.heldDir != 0 }
 func (s *ManageDownloadsScreen) HasPendingAnimation() bool { return false }
 
 func hasFileType(files []inventory.DownloadedFile, ft string) bool {
@@ -608,7 +608,7 @@ func (s *ManageDownloadsScreen) startUnifiedNamingMigration(entry inventory.Entr
 	}
 	newDisabled := !entry.UnifiedNamingDisabled
 	s.inv.SetUnifiedNamingDisabled(s.gameURL, newDisabled)
-	formats := inventory.ReadMigrateFormats(inventory.NXSettingsPath)
+	formats := inventory.ReadMigrateFormats("")
 	return NewMigrateFlowScreen(s.inv, s.inventoryPath, s.gameURL, entry.Title,
 		entry.Files[0], !newDisabled, formats, s)
 }

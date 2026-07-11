@@ -1,13 +1,29 @@
 package inventory_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func TestMain(m *testing.M) {
+	err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: map[string]string{
+			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+		},
+		SourceID: "primary", PrimaryRoot: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+	})
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 func TestLoad_MissingFile_ReturnsEmpty(t *testing.T) {
 	inv, err := inventory.Load("/nonexistent/path/inventory.json")
@@ -26,11 +42,14 @@ func TestLoad_CorruptFile_ReturnsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv, err := inventory.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if !errors.Is(err, inventory.ErrUnsupportedSchema) {
+		t.Fatalf("Load error = %v, want ErrUnsupportedSchema", err)
 	}
 	if len(inv.Entries) != 0 {
 		t.Errorf("expected empty entries on corrupt file, got %d", len(inv.Entries))
+	}
+	if _, err := os.Stat(path + ".corrupt.bak"); err != nil {
+		t.Fatalf("corrupt backup: %v", err)
 	}
 }
 
@@ -105,6 +124,24 @@ func TestAdd_NewEntry(t *testing.T) {
 	}
 	if len(e.Files) != 1 {
 		t.Errorf("Files len = %d, want 1", len(e.Files))
+	}
+}
+
+func TestAdd_PopulatesLeafPathIdentity(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("https://dev.itch.io/game", inventory.Entry{GameID: "42", Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb", DownloadedAt: time.Now(),
+	})
+	entry, ok := inv.Lookup("https://dev.itch.io/game")
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("expected one inventory file")
+	}
+	file := entry.Files[0]
+	if entry.GameID != "42" || file.SourceID != "primary" || file.RelativePath != "Roms/GB/game.gb" || file.CanonicalSystem != "GB" {
+		t.Fatalf("unexpected Leaf identity: entry=%+v file=%+v", entry, file)
+	}
+	if file.ContentKind != inventory.FileTypeROM || file.OriginalUpload != "game.gb" || file.InstalledName != "game.gb" {
+		t.Fatalf("missing normalized inventory fields: %+v", file)
 	}
 }
 
@@ -712,8 +749,8 @@ func TestDownloadedFileFileType_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDownloadedFileFileType_BackwardCompat(t *testing.T) {
-	// Old JSON without file_type field
+func TestLoad_OldSchema_BacksUpWithoutPartialImport(t *testing.T) {
+	// Versionless NextUI inventory is deliberately not interpreted as Leaf data.
 	raw := `{"entries":{"http://example.com/game":{"game_url":"http://example.com/game","title":"Game","author":"","cover_url":"","files":[{"filename":"game.gbc","dest_path":"/mnt/SDCARD/Roms/Game Boy Color (GBC)/Game.gbc","downloaded_at":"2024-01-01T00:00:00Z"}]}}}`
 	dir := t.TempDir()
 	path := filepath.Join(dir, "inv.json")
@@ -721,19 +758,14 @@ func TestDownloadedFileFileType_BackwardCompat(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv, err := inventory.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if !errors.Is(err, inventory.ErrUnsupportedSchema) {
+		t.Fatalf("Load error = %v, want ErrUnsupportedSchema", err)
 	}
-	entry, ok := inv.Lookup("http://example.com/game")
-	if !ok {
-		t.Fatal("entry not found")
+	if len(inv.Entries) != 0 {
+		t.Fatalf("old inventory was partially imported: %d entries", len(inv.Entries))
 	}
-	if len(entry.Files) != 1 {
-		t.Fatalf("files len = %d, want 1", len(entry.Files))
-	}
-	// Empty FileType is valid ("" == rom for display purposes)
-	if entry.Files[0].FileType != "" {
-		t.Errorf("old entry FileType = %q, want \"\" (backward compat)", entry.Files[0].FileType)
+	if _, err := os.Stat(path + ".schema-0.bak"); err != nil {
+		t.Fatalf("schema backup: %v", err)
 	}
 }
 

@@ -16,9 +16,6 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// locationRoot is the highest directory the user can navigate to.
-const locationRoot = "/mnt/SDCARD"
-
 type rowKind int
 
 const (
@@ -85,10 +82,13 @@ func NewLocationPickerScreen(
 // If the remembered path for ext no longer exists on disk it is removed from
 // cfg and cfg is saved before returning the default destination.
 func resolveStartDir(cfg *settings.Config, ext, cfgPath string) string {
+	root := roms.PrimaryRoot()
 	if cfg.LastROMDirs != nil {
 		if dir, ok := cfg.LastROMDirs[ext]; ok && dir != "" {
-			if _, err := os.Stat(dir); err == nil {
-				return dir // remembered path is valid — use it
+			if pathWithin(root, dir) {
+				if _, err := os.Stat(dir); err == nil {
+					return dir // remembered path is valid — use it
+				}
 			}
 			// Stale path — forget it and fall through to default
 			delete(cfg.LastROMDirs, ext)
@@ -104,11 +104,15 @@ func resolveStartDir(cfg *settings.Config, ext, cfgPath string) string {
 // loadDir switches the browser to dir, rebuilds the row list, and resets the
 // cursor to "Save here" (index 0).
 func (s *LocationPickerScreen) loadDir(dir string) {
+	root := roms.PrimaryRoot()
+	if !pathWithin(root, dir) {
+		dir = root
+	}
 	if !strings.HasSuffix(dir, "/") {
 		dir += "/"
 	}
 	s.currentDir = dir
-	s.rows = buildRows(dir, locationRoot)
+	s.rows = buildRows(dir, root)
 	s.cursor = 0
 	s.scrollOffset = 0
 }
@@ -144,9 +148,17 @@ func buildRows(dir, root string) []pickerRow {
 	return rows
 }
 
-// atRoot reports whether the browser is already at locationRoot.
+// atRoot reports whether the browser is already at Leaf's primary source root.
 func (s *LocationPickerScreen) atRoot() bool {
-	return strings.TrimRight(s.currentDir, "/") == locationRoot
+	return strings.TrimRight(s.currentDir, "/") == strings.TrimRight(roms.PrimaryRoot(), "/")
+}
+
+func pathWithin(root, target string) bool {
+	if root == "" || target == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // clampScroll adjusts scrollOffset so that cursor is always visible.
@@ -167,7 +179,7 @@ func (s *LocationPickerScreen) clampScroll(visibleCount int) {
 	}
 }
 
-func (s *LocationPickerScreen) NeedsRedraw() bool { return false }
+func (s *LocationPickerScreen) NeedsRedraw() bool         { return false }
 func (s *LocationPickerScreen) HasPendingAnimation() bool { return false }
 
 func (s *LocationPickerScreen) Draw(r *renderer.Renderer) {

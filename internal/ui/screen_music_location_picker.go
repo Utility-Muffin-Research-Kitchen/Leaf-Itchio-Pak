@@ -16,10 +16,8 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-const musicLocationRoot = "/mnt/SDCARD/Music"
-
 // MusicLocationPickerScreen lets the user choose where to save a game soundtrack.
-// It mirrors LocationPickerScreen but is rooted at /mnt/SDCARD/Music and
+// It mirrors LocationPickerScreen but is rooted at Leaf's primary Music path and
 // routes to ZIPDownloadScreen on confirmation.
 type MusicLocationPickerScreen struct {
 	client  *itchio.Client
@@ -46,7 +44,7 @@ func NewMusicLocationPickerScreen(
 ) *MusicLocationPickerScreen {
 	startDir := roms.MusicDestinationDir(game.Title)
 	if _, err := os.Stat(startDir); err != nil {
-		startDir = musicLocationRoot + "/"
+		startDir = roms.MusicRoot()
 	}
 	s := &MusicLocationPickerScreen{
 		client: client, cfg: cfg, cfgPath: cfgPath,
@@ -58,20 +56,24 @@ func NewMusicLocationPickerScreen(
 }
 
 func (s *MusicLocationPickerScreen) loadDir(dir string) {
+	root := roms.MusicRoot()
+	if !pathWithin(root, dir) {
+		dir = root
+	}
 	if !strings.HasSuffix(dir, "/") {
 		dir += "/"
 	}
 	s.currentDir = dir
-	s.rows = buildRows(dir, musicLocationRoot)
+	s.rows = buildRows(dir, root)
 	s.cursor = 0
 	s.scrollOffset = 0
 }
 
 func (s *MusicLocationPickerScreen) atRoot() bool {
-	return strings.TrimRight(s.currentDir, "/") == musicLocationRoot
+	return strings.TrimRight(s.currentDir, "/") == strings.TrimRight(roms.MusicRoot(), "/")
 }
 
-func (s *MusicLocationPickerScreen) NeedsRedraw() bool        { return false }
+func (s *MusicLocationPickerScreen) NeedsRedraw() bool         { return false }
 func (s *MusicLocationPickerScreen) HasPendingAnimation() bool { return false }
 
 func (s *MusicLocationPickerScreen) Draw(r *renderer.Renderer) {

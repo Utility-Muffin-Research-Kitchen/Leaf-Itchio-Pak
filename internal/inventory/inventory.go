@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,13 +11,22 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 const (
-	FileTypeROM   = "rom"
-	FileTypeMusic = "music"
-	FileTypeM3U   = "m3u"
+	ContentKindROM     = "rom"
+	ContentKindMusic   = "music"
+	ContentKindArtwork = "artwork"
+
+	FileTypeROM   = ContentKindROM
+	FileTypeMusic = ContentKindMusic
+	FileTypeM3U   = "m3u" // legacy UI subtype; inventory content_kind remains ROM
+
+	SchemaVersion = 2
 )
+
+var ErrUnsupportedSchema = errors.New("unsupported inventory schema")
 
 // romFileExt returns the effective file extension for a ROM filename, treating
 // ".p8.png" as a single compound extension rather than just ".png".
@@ -45,12 +55,26 @@ func romFileExt(filename string) string {
 }
 
 type DownloadedFile struct {
-	Filename      string    `json:"filename"`
-	DestPath      string    `json:"dest_path"`
-	DownloadedAt  time.Time `json:"downloaded_at"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	ContentKind     string    `json:"content_kind"`
+	SourceID        string    `json:"source_id,omitempty"`
+	RelativePath    string    `json:"relative_path,omitempty"`
+	CanonicalSystem string    `json:"canonical_system,omitempty"`
+	OriginalUpload  string    `json:"original_upload,omitempty"`
+	InstalledName   string    `json:"installed_name,omitempty"`
+	UploadID        string    `json:"upload_id,omitempty"`
+	PurchaseID      string    `json:"purchase_id,omitempty"`
+	ContentHash     string    `json:"content_hash,omitempty"`
+	ArtworkCreated  bool      `json:"artwork_created,omitempty"`
+
+	// Legacy compatibility fields remain available to the existing UI while its
+	// callers move to source-relative Leaf paths during later port phases.
+	Filename      string    `json:"filename,omitempty"`
+	DestPath      string    `json:"dest_path,omitempty"`
+	DownloadedAt  time.Time `json:"downloaded_at,omitempty"`
 	UnifiedName   bool      `json:"unified_name,omitempty"`
-	FileType      string    `json:"file_type,omitempty"`      // "rom" | "music"; empty == "rom"
-	SourceArchive string    `json:"source_archive,omitempty"` // upload filename when extracted from ZIP/7z
+	FileType      string    `json:"file_type,omitempty"`
+	SourceArchive string    `json:"source_archive,omitempty"`
 }
 
 type UpstreamFile struct {
@@ -61,28 +85,52 @@ type UpstreamFile struct {
 }
 
 type Entry struct {
-	GameURL            string         `json:"game_url"`
-	Title              string         `json:"title"`
-	Author             string         `json:"author"`
-	CoverURL           string         `json:"cover_url"`
-	Files              []DownloadedFile `json:"files"`
-	VerifiedAt         time.Time      `json:"verified_at,omitempty"`
-	IsFree             bool           `json:"is_free,omitempty"`
-	KnownUpstreamFiles []UpstreamFile `json:"known_upstream_files,omitempty"`
-	UpdateCheckedAt    time.Time      `json:"update_checked_at,omitempty"`
-	UpdateDismissedAt  time.Time      `json:"update_dismissed_at,omitempty"`
-	GameRemovedAt      time.Time      `json:"game_removed_at,omitempty"`
-	RemovalDismissedAt time.Time      `json:"removal_dismissed_at,omitempty"`
-	UnifiedNamingDisabled bool           `json:"unified_naming_disabled,omitempty"`
+	GameID                string           `json:"game_id,omitempty"`
+	GameURL               string           `json:"game_url"`
+	Title                 string           `json:"title"`
+	Author                string           `json:"author"`
+	CoverURL              string           `json:"cover_url"`
+	Files                 []DownloadedFile `json:"files"`
+	VerifiedAt            time.Time        `json:"verified_at,omitempty"`
+	IsFree                bool             `json:"is_free,omitempty"`
+	KnownUpstreamFiles    []UpstreamFile   `json:"known_upstream_files,omitempty"`
+	UpdateCheckedAt       time.Time        `json:"update_checked_at,omitempty"`
+	UpdateDismissedAt     time.Time        `json:"update_dismissed_at,omitempty"`
+	GameRemovedAt         time.Time        `json:"game_removed_at,omitempty"`
+	RemovalDismissedAt    time.Time        `json:"removal_dismissed_at,omitempty"`
+	UnifiedNamingDisabled bool             `json:"unified_naming_disabled,omitempty"`
 }
 
 type Inventory struct {
 	mu      sync.Mutex
+	Version int               `json:"version"`
 	Entries map[string]*Entry `json:"entries"`
 }
 
-// Load reads the inventory from path. Returns an empty inventory if the file
-// is missing or unparseable — never returns an error for those cases.
+func emptyInventory() *Inventory {
+	return &Inventory{Version: SchemaVersion, Entries: make(map[string]*Entry)}
+}
+
+func backupInventory(path, label string) (string, error) {
+	base := path + "." + label + ".bak"
+	backup := base
+	for n := 1; ; n++ {
+		if _, err := os.Stat(backup); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			return "", fmt.Errorf("inspect inventory backup: %w", err)
+		}
+		backup = fmt.Sprintf("%s.%d", base, n)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("backup inventory: %w", err)
+	}
+	return backup, nil
+}
+
+// Load reads a current-schema inventory. Older, unknown, and malformed files
+// are moved aside without partial interpretation so a fresh Leaf inventory can
+// start safely.
 func Load(path string) (*Inventory, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -91,12 +139,27 @@ func Load(path string) (*Inventory, error) {
 		} else {
 			logger.Warn("inventory: read error at %s: %v, starting empty", path, err)
 		}
-		return &Inventory{Entries: make(map[string]*Entry)}, nil
+		if os.IsNotExist(err) {
+			return emptyInventory(), nil
+		}
+		return emptyInventory(), fmt.Errorf("read inventory: %w", err)
 	}
 	var inv Inventory
 	if err := json.Unmarshal(data, &inv); err != nil {
-		logger.Warn("inventory: corrupt file at %s: %v, starting empty", path, err)
-		return &Inventory{Entries: make(map[string]*Entry)}, nil
+		backup, backupErr := backupInventory(path, "corrupt")
+		if backupErr != nil {
+			return emptyInventory(), fmt.Errorf("%w: malformed inventory (%v); %v", ErrUnsupportedSchema, err, backupErr)
+		}
+		logger.Warn("inventory: moved malformed file to %s: %v", backup, err)
+		return emptyInventory(), fmt.Errorf("%w: malformed inventory backed up to %s", ErrUnsupportedSchema, backup)
+	}
+	if inv.Version != SchemaVersion {
+		backup, backupErr := backupInventory(path, fmt.Sprintf("schema-%d", inv.Version))
+		if backupErr != nil {
+			return emptyInventory(), fmt.Errorf("%w: version %d; %v", ErrUnsupportedSchema, inv.Version, backupErr)
+		}
+		logger.Warn("inventory: moved schema %d file to %s", inv.Version, backup)
+		return emptyInventory(), fmt.Errorf("%w: version %d backed up to %s", ErrUnsupportedSchema, inv.Version, backup)
 	}
 	if inv.Entries == nil {
 		inv.Entries = make(map[string]*Entry)
@@ -108,6 +171,7 @@ func Load(path string) (*Inventory, error) {
 // Save writes the inventory to path atomically (write to .tmp then rename).
 func (inv *Inventory) Save(path string) error {
 	inv.mu.Lock()
+	inv.Version = SchemaVersion
 	data, err := json.MarshalIndent(inv, "", "  ")
 	count := len(inv.Entries)
 	inv.mu.Unlock()
@@ -130,9 +194,39 @@ func (inv *Inventory) Save(path string) error {
 func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
+	inv.Version = SchemaVersion
+	if file.ContentKind == "" {
+		switch file.FileType {
+		case FileTypeMusic:
+			file.ContentKind = ContentKindMusic
+		default:
+			file.ContentKind = ContentKindROM
+		}
+	}
+	if file.OriginalUpload == "" {
+		file.OriginalUpload = file.Filename
+	}
+	if file.InstalledName == "" && file.DestPath != "" {
+		file.InstalledName = filepath.Base(file.DestPath)
+	}
+	if file.UpdatedAt.IsZero() {
+		file.UpdatedAt = file.DownloadedAt
+	}
+	if identity, ok := roms.DescribeDestination(file.DestPath); ok {
+		if file.SourceID == "" {
+			file.SourceID = identity.SourceID
+		}
+		if file.RelativePath == "" {
+			file.RelativePath = identity.RelativePath
+		}
+		if file.CanonicalSystem == "" {
+			file.CanonicalSystem = identity.CanonicalSystem
+		}
+	}
 	existing, ok := inv.Entries[gameURL]
 	if !ok {
 		entry := &Entry{
+			GameID:   e.GameID,
 			GameURL:  gameURL,
 			Title:    e.Title,
 			Author:   e.Author,
@@ -142,6 +236,9 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 		inv.Entries[gameURL] = entry
 		existing = entry
 	} else {
+		if e.GameID != "" {
+			existing.GameID = e.GameID
+		}
 		existing.Title = e.Title
 		existing.Author = e.Author
 		existing.CoverURL = e.CoverURL

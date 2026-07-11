@@ -11,16 +11,13 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
-// MigrateFormats carries the user's configured save and state format indices,
-// read from /mnt/SDCARD/.userdata/shared/minuisettings.txt before calling MigrateFile.
+// MigrateFormats carries legacy save and state format indices used by the
+// pre-port rename flow. Leaf owns these formats; no NextUI file is imported.
 type MigrateFormats struct {
 	SaveFormat           int  // 0=MinUI, 1=Retroarch SRM compressed, 2=Generic, 3=Retroarch SRM uncompressed
 	StateFormat          int  // 0=MinUI, 1/2=Retroarch-ish (legacy), 3/4=Retroarch
 	UseExtractedFileName bool // mirrors useExtractedFileName from minuisettings.txt
 }
-
-// NXSettingsPath is the on-device path to NextUI's shared settings file.
-const NXSettingsPath = "/mnt/SDCARD/.userdata/shared/minuisettings.txt"
 
 // ReadMigrateFormats reads saveFormat, stateFormat, and useExtractedFileName
 // from path. Missing or unreadable file returns all-zero (MinUI defaults).
