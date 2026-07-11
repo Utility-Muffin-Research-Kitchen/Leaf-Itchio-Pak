@@ -157,6 +157,7 @@ type DownloadProgressModel struct {
 	FileIndex, FileCount    int
 	SavedPaths              []string
 	Locked                  bool // protected operation cannot be cancelled mid-transaction
+	LibraryStatus           string
 }
 
 func (m *DownloadProgressModel) Handle(event InputEvent) DownloadProgressIntent {

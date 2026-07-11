@@ -14,6 +14,7 @@ import (
 
 type CatDownloadBackend interface {
 	CatSnapshot() appui.DownloadProgressModel
+	CatNeedsLibraryScan() bool
 	CatContinueWithoutProtection()
 	CatCancel()
 }
@@ -69,6 +70,8 @@ func (s *DownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 
 func (s *DownloadScreen) CatCancel() { s.Cancel() }
 
+func (s *DownloadScreen) CatNeedsLibraryScan() bool { return true }
+
 func (s *DownloadScreen) CatContinueWithoutProtection() {
 	if s.loadState() != dlError || !s.inhibitBlocked.Load() {
 		return
@@ -116,6 +119,8 @@ func (s *MultiROMDownloadScreen) CatContinueWithoutProtection() {
 
 func (s *MultiROMDownloadScreen) CatCancel() { s.Cancel() }
 
+func (s *MultiROMDownloadScreen) CatNeedsLibraryScan() bool { return true }
+
 func (s *ZIPDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.plan.Upload.Filename,
@@ -146,6 +151,8 @@ func (s *ZIPDownloadScreen) CatContinueWithoutProtection() {
 	s.storeState(zipDLDownloading)
 	go s.run(true)
 }
+
+func (s *ZIPDownloadScreen) CatNeedsLibraryScan() bool { return s.plan.DownloadROMs }
 
 // Archive extraction cannot safely stop halfway through a file set. Cancel is
 // therefore a no-op while busy and the progress screen keeps the operation

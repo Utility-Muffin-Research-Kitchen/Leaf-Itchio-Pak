@@ -79,3 +79,18 @@ func TestCatDownloadFlowManualUnknownFormat(t *testing.T) {
 		t.Fatalf("manual format plan = %#v", plan)
 	}
 }
+
+func TestCatDownloadBackendsRequestRescanOnlyForROMInstalls(t *testing.T) {
+	if !(&DownloadScreen{}).CatNeedsLibraryScan() {
+		t.Fatal("direct ROM download did not request a library rescan")
+	}
+	if !(&MultiROMDownloadScreen{}).CatNeedsLibraryScan() {
+		t.Fatal("multi-ROM download did not request a library rescan")
+	}
+	if (&ZIPDownloadScreen{plan: ZIPPlan{DownloadMusic: true}}).CatNeedsLibraryScan() {
+		t.Fatal("music-only archive requested a game-library rescan")
+	}
+	if !(&ZIPDownloadScreen{plan: ZIPPlan{DownloadROMs: true, DownloadMusic: true}}).CatNeedsLibraryScan() {
+		t.Fatal("ROM archive did not request a library rescan")
+	}
+}

@@ -117,3 +117,47 @@ func TestDaemonUnavailableRequiresExplicitContinue(t *testing.T) {
 	}
 	lease.Release()
 }
+
+func TestDaemonClientRequestsLibraryScan(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "leaf-scan-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "jawakad.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	requestType := make(chan string, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		var header [4]byte
+		_, _ = io.ReadFull(conn, header[:])
+		body := make([]byte, binary.BigEndian.Uint32(header[:]))
+		_, _ = io.ReadFull(conn, body)
+		var request map[string]any
+		_ = json.Unmarshal(body, &request)
+		requestType <- request["type"].(string)
+		encoded, _ := json.Marshal(map[string]any{"type": "ok", "message": "scan-library queued"})
+		binary.BigEndian.PutUint32(header[:], uint32(len(encoded)))
+		_, _ = conn.Write(header[:])
+		_, _ = conn.Write(encoded)
+	}()
+
+	client := NewDaemonClient(socket)
+	client.timeout = time.Second
+	message, err := client.ScanLibrary(context.Background())
+	if err != nil || message != "scan-library queued" {
+		t.Fatalf("ScanLibrary = %q, %v", message, err)
+	}
+	if got := <-requestType; got != "scan-library" {
+		t.Fatalf("request type = %q", got)
+	}
+}

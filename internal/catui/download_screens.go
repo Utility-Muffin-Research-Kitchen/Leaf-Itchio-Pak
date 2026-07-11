@@ -160,11 +160,15 @@ func (screen *DownloadProgressScreen) Draw() error {
 				paths = append(paths, filepath.Base(path))
 			}
 		}
-		detail := "The download was saved and added to the Leaf library."
+		detail := "The download was saved successfully."
 		if len(paths) > 0 {
 			detail = "Saved: " + strings.Join(paths, ", ")
 		}
-		err = screen.ui.DrawState(body, StateEmpty, "Download complete", detail)
+		lines := []string{detail}
+		if screen.model.LibraryStatus != "" {
+			lines = append(lines, screen.model.LibraryStatus)
+		}
+		err = screen.ui.DrawScrollingBody(body, "Download complete", lines, 0)
 	case appui.DownloadProgressInhibitBlocked:
 		err = screen.ui.DrawScrollingBody(body, "Suspend protection unavailable", []string{screen.model.Detail}, 0)
 	case appui.DownloadProgressCancelled:

@@ -102,6 +102,22 @@ func (c *DaemonClient) Begin(ctx context.Context, reason string, allowUninhibite
 	return &OperationLease{client: c, Protected: true}, nil
 }
 
+// ScanLibrary asks Jawaka to start or queue its canonical non-destructive
+// library scan. The pak never opens library.db directly.
+func (c *DaemonClient) ScanLibrary(ctx context.Context) (string, error) {
+	if c == nil || c.socketPath == "" {
+		return "", ErrDaemonUnavailable
+	}
+	response, err := c.request(ctx, map[string]any{"type": "scan-library"})
+	if err != nil {
+		return "", fmt.Errorf("request library rescan: %w", err)
+	}
+	if response.Type != "ok" {
+		return "", fmt.Errorf("request library rescan: malformed reply %q", response.Type)
+	}
+	return response.Message, nil
+}
+
 func (lease *OperationLease) Release() {
 	if lease == nil || lease.client == nil {
 		return
@@ -204,4 +220,14 @@ func BeginOperation(ctx context.Context, reason string, allowUninhibited bool) (
 		return &OperationLease{}, nil
 	}
 	return client.Begin(ctx, reason, allowUninhibited)
+}
+
+func RequestLibraryScan(ctx context.Context) (string, error) {
+	appDaemonMu.RLock()
+	client := appDaemon
+	appDaemonMu.RUnlock()
+	if client == nil {
+		return "", ErrDaemonUnavailable
+	}
+	return client.ScanLibrary(ctx)
 }

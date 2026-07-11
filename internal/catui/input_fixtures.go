@@ -109,6 +109,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "download-done":
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
+			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
 			model.Detail = "The signed download URL expired before the transfer completed. Return to Detail and try again."
