@@ -266,6 +266,14 @@ func TestFetchAllGames(t *testing.T) {
   <price>0.0</price>
 </item>
 </channel></rss>`
+	psxPage1XML := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item>
+  <title>A PSX Homebrew Game</title>
+  <link>https://psxdev.itch.io/psx-game</link>
+  <description></description>
+  <price>0.0</price>
+</item>
+</channel></rss>`
 
 	emptyFeed := `<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`
 
@@ -280,6 +288,8 @@ func TestFetchAllGames(t *testing.T) {
 			w.Write([]byte(page2XML))
 		case slug == "/games/tag-nes-rom.xml" && page == "1":
 			w.Write([]byte(nesPage1XML))
+		case slug == "/games/tag-homebrew/tag-psx.xml" && page == "1":
+			w.Write([]byte(psxPage1XML))
 		default:
 			w.Write([]byte(emptyFeed))
 		}
@@ -296,17 +306,25 @@ func TestFetchAllGames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
-	// rss_page1.xml has 36 items; page2 has 2 GB games; 1 NES game → total 39.
-	if len(games) != 39 {
-		t.Errorf("got %d games, want 39", len(games))
+	// rss_page1.xml has 36 items; page2 has 2 GB games; the NES and nested-path
+	// PSX feeds contribute one each → total 40.
+	if len(games) != 40 {
+		t.Errorf("got %d games, want 40", len(games))
 	}
 	// Progress fires at least once per slug that adds new games (and additionally
 	// per page via the live-count ping channel — exact count is nondeterministic).
 	if progressCalls < 1 {
 		t.Errorf("progress calls = %d, want >= 1", progressCalls)
 	}
-	if lastFetched != 39 {
-		t.Errorf("last fetched = %d, want 39", lastFetched)
+	if lastFetched != 40 {
+		t.Errorf("last fetched = %d, want 40", lastFetched)
+	}
+	foundPSX := false
+	for _, game := range games {
+		foundPSX = foundPSX || game.URL == "https://psxdev.itch.io/psx-game" && game.Platform == "PSX"
+	}
+	if !foundPSX {
+		t.Fatal("nested Homebrew + PSX feed was not fetched or classified as PSX")
 	}
 }
 

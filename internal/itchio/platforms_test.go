@@ -9,13 +9,13 @@ import (
 
 func TestFeedCodesAndSlugs(t *testing.T) {
 	want := []itchio.FeedPlatform{
+		{Code: "PSX", Name: "Sony PlayStation", FeedSlugs: []string{"tag-homebrew/tag-psx"}},
 		{Code: "GBC", Name: "Game Boy Color", FeedSlugs: []string{"tag-gameboy-color", "tag-gbc"}},
 		{Code: "GB", Name: "Game Boy", FeedSlugs: []string{"made-with-gb-studio", "tag-gbstudio", "tag-gameboy-rom"}},
 		{Code: "GBA", Name: "Game Boy Advance", FeedSlugs: []string{"tag-gba"}},
 		{Code: "NES", Name: "Nintendo Entertainment System", FeedSlugs: []string{"tag-nes-rom"}},
 		{Code: "MD", Name: "Sega Genesis", FeedSlugs: []string{"tag-sega-mega-drive", "tag-genesis-rom"}},
 		{Code: "P8", Name: "Pico-8", FeedSlugs: []string{"tag-pico-8"}},
-		{Code: "PSX", Name: "Sony PlayStation", FeedSlugs: []string{"tag-ps1"}},
 	}
 
 	if !reflect.DeepEqual(itchio.AllPlatforms, want) {

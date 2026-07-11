@@ -274,8 +274,14 @@ func NewListScreen(
 		s.cachedGames = gameCache.Games
 		s.cacheReady = true
 		s.rebuildView()
-		// Refresh in background if stale.
-		go s.refreshCacheIfStale(gameCache.Meta.FetchedAt)
+		if !gameCache.CurrentRevision() {
+			logger.Info("cache: catalogue revision %d is older than %d; refreshing platform coverage in background",
+				gameCache.Meta.Revision, itchio.GamesCacheRevision)
+			go s.buildCache()
+		} else {
+			// Refresh in background if stale.
+			go s.refreshCacheIfStale(gameCache.Meta.FetchedAt)
+		}
 	} else {
 		// No cache: live fetch page 1 (existing behaviour) + build cache in background.
 		if err != nil {
