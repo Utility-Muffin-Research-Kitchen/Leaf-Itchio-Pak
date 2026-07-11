@@ -49,7 +49,7 @@ func appButton(button Button) appui.Button {
 		return appui.ButtonRight
 	case ButtonA:
 		return appui.ButtonA
-	case ButtonB, ButtonMenu:
+	case ButtonB:
 		return appui.ButtonB
 	case ButtonX:
 		return appui.ButtonX
@@ -78,11 +78,9 @@ func (screen *MainListScreen) Draw() error {
 		footer = append(footer, FooterHint{Button: ButtonA, Label: "Retry", IsConfirm: true})
 	case appui.ListReady, appui.ListEmpty:
 		footer = []FooterHint{
-			{Button: ButtonB, Label: "Exit"},
 			{Button: ButtonSelect, Label: "Filter"},
-			{Button: ButtonL1, Label: "Previous sort", NarrowLabel: "Sort -"},
-			{Button: ButtonR1, Label: "Next sort", NarrowLabel: "Sort +"},
-			{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"},
+			{Button: ButtonL1, Label: "Sort -/+", NarrowLabel: "Sort"},
+			{Button: ButtonStart, Label: "Set"},
 			{Button: ButtonA, Label: "Open", IsConfirm: true},
 		}
 	}

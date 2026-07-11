@@ -435,6 +435,12 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	screenshotPath := os.Getenv("ITCHIO_CAT_LIVE_LIST_SCREENSHOT")
 	drawn := 0
 	for running {
+		// cat_present() blocks on the raw evdev wake fd. A release or noisy
+		// analog sample can wake it without producing a normalized app event.
+		// SDL does not preserve backbuffer contents across RenderPresent, so a
+		// second present without a complete draw can flash an undefined frame.
+		// Always rebuild one complete frame after every wake before presenting.
+		redraw = true
 		list.SyncCatModel(model)
 		if uploaded, processErr := imageCache.ProcessPending(ctx); processErr != nil {
 			return processErr

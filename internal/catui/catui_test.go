@@ -3,6 +3,8 @@ package catui
 import (
 	"errors"
 	"testing"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 )
 
 func TestBoxProofGeometry960x720(t *testing.T) {
@@ -54,5 +56,14 @@ func TestClosedContextRejectsCommands(t *testing.T) {
 	}
 	if _, err := ctx.LoadTexture("unused.png"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("LoadTexture error = %v, want %v", err, ErrClosed)
+	}
+}
+
+func TestMenuIsNotApplicationBack(t *testing.T) {
+	if got := appButton(ButtonMenu); got != appui.ButtonNone {
+		t.Fatalf("Menu maps to %v, want no application action", got)
+	}
+	if got := appButton(ButtonB); got != appui.ButtonB {
+		t.Fatalf("B maps to %v, want app back", got)
 	}
 }

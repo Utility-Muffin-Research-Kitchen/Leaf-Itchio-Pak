@@ -30,6 +30,7 @@ capture() {
 }
 
 capture ready-dark-hints-bump0 ready 960 720 1 0 '#141827' '#f7f2e8'
+capture ready-dark-hints-bump5 ready 960 720 1 5 '#141827' '#f7f2e8'
 capture loading-dark-hints-bump0 loading 960 720 1 0 '#141827' '#f7f2e8'
 capture error-dark-hints-bump0 error 960 720 1 0 '#141827' '#f7f2e8'
 capture empty-dark-hints-bump0 empty 960 720 1 0 '#141827' '#f7f2e8'
@@ -43,6 +44,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 expected = {
     "ready-dark-hints-bump0.png": (960, 720),
+    "ready-dark-hints-bump5.png": (960, 720),
     "loading-dark-hints-bump0.png": (960, 720),
     "error-dark-hints-bump0.png": (960, 720),
     "empty-dark-hints-bump0.png": (960, 720),
