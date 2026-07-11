@@ -150,7 +150,7 @@ func (screen *DownloadProgressScreen) Draw() error {
 		if screen.model.FileCount > 1 {
 			detail = fmt.Sprintf("File %d of %d  ·  %s", screen.model.FileIndex+1, screen.model.FileCount, detail)
 		}
-		err = screen.drawProgress(body, screen.model.Filename, detail, progress)
+		err = screen.ui.DrawProgressView(body, screen.model.Filename, detail, progress)
 	case appui.DownloadProgressDone:
 		paths := make([]string, 0, len(screen.model.SavedPaths))
 		for _, path := range screen.model.SavedPaths {
@@ -174,40 +174,6 @@ func (screen *DownloadProgressScreen) Draw() error {
 		return err
 	}
 	return frame.Finish()
-}
-
-// drawProgress deliberately uses a text meter. Catastrophe's shared rounded
-// progress sprite and forced app-texture flushes can retain queued state on
-// this unusual async screen; keeping the workaround in the pak prevents
-// changes to the shared toolkit used by Leaf core and other apps.
-func (screen *DownloadProgressScreen) drawProgress(bounds Rect, title, detail string, progress float32) error {
-	inner := insetRect(bounds, screen.ui.ModalPadding, screen.ui.ModalPadding)
-	totalHeight := screen.ctx.FontHeight(FontLarge) + screen.ui.BasePadding/2 +
-		screen.ctx.FontHeight(FontSmall)*2 + screen.ui.BasePadding
-	y := inner.Y + maxInt(0, (inner.H-totalHeight)/2)
-	titleY := y
-	detailY := titleY + screen.ctx.FontHeight(FontLarge) + screen.ui.BasePadding/2
-	if progress < 0 {
-		progress = 0
-	}
-	if progress > 1 {
-		progress = 1
-	}
-	if _, err := screen.ctx.DrawFallbackText(FontLarge, title, inner.X, titleY,
-		screen.ctx.ThemeColor(RoleEmphasis), inner.W); err != nil {
-		return err
-	}
-	if _, err := screen.ctx.DrawFallbackText(FontSmall, detail, inner.X, detailY,
-		screen.ctx.ThemeColor(RoleHint), inner.W); err != nil {
-		return err
-	}
-	const cells = 28
-	filled := int(progress * cells)
-	meter := "[" + strings.Repeat("=", filled) + strings.Repeat("-", cells-filled) + "]"
-	_, err := screen.ctx.DrawFallbackText(FontSmall, meter, inner.X,
-		detailY+screen.ctx.FontHeight(FontSmall)+screen.ui.BasePadding/2,
-		screen.ctx.ThemeColor(RoleHighlight), inner.W)
-	return err
 }
 
 func humanDownloadBytes(value int64) string {

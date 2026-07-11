@@ -486,8 +486,19 @@ int catui_draw_pill(int x, int y, int w, int h, uint32_t color) {
 int catui_draw_progress(int x, int y, int w, int h, float progress,
                         uint32_t foreground, uint32_t background) {
     int guard = catui__guard(); if (guard != CATUI_OK) return guard;
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* The rounded progress bar and footer share Cat's reusable pill sprite.
+       Finish earlier title/text copies before the bar mutates that sprite, and
+       finish the bar before footer composition reuses it. Keep this isolation
+       local to the pak's async download screen. */
+    SDL_RenderFlush(cat_get_renderer());
+#endif
     cat_draw_progress_bar(x, y, w, h, progress, catui__color(foreground),
-                          catui__color(background)); return CATUI_OK;
+                          catui__color(background));
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    SDL_RenderFlush(cat_get_renderer());
+#endif
+    return CATUI_OK;
 }
 int catui_draw_triangle(int x, int y, int w, int h, int direction,
                         uint32_t color) {
