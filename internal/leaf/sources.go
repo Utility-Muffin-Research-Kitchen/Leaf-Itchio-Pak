@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -19,11 +20,39 @@ type Source struct {
 	SavesPath  string
 	StatesPath string
 	CheatsPath string
+
+	// MustBeMounted distinguishes an actual removable source from the empty
+	// mount-point directories shipped by the MLP1 root filesystem.
+	MustBeMounted bool
 }
 
 func (s Source) Available() bool {
 	info, err := os.Stat(s.Root)
-	return err == nil && info.IsDir()
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if !s.MustBeMounted || runtime.GOOS != "linux" {
+		return true
+	}
+	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
+	return err == nil && mountInfoHasRoot(mountInfo, s.Root)
+}
+
+func mountInfoHasRoot(mountInfo []byte, root string) bool {
+	want := filepath.Clean(root)
+	for _, line := range strings.Split(string(mountInfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		mountPoint := strings.NewReplacer(
+			`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`,
+		).Replace(fields[4])
+		if filepath.Clean(mountPoint) == want {
+			return true
+		}
+	}
+	return false
 }
 
 type SourceList []Source
@@ -141,6 +170,7 @@ func resolveSources(getenv getenvFunc, roots []string, secondary string) (Source
 			MusicPath: resolved[2][i], AppsPath: resolved[3][i],
 			BIOSPath: resolved[4][i], SavesPath: resolved[5][i],
 			StatesPath: resolved[6][i], CheatsPath: resolved[7][i],
+			MustBeMounted: i > 0,
 		}
 	}
 	return sources, nil

@@ -3,6 +3,7 @@ package leaf
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,29 @@ func TestMissingSecondaryRemainsIdentifiable(t *testing.T) {
 	}
 	if env.Sources[1].ID != "secondary_sd" || env.Sources[1].Available() {
 		t.Fatalf("secondary source = %#v, want identifiable and unavailable", env.Sources[1])
+	}
+}
+
+func TestExistingMLP1MountpointDirectoryIsNotAvailableWithoutMount(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("MLP1 mount verification is Linux-specific")
+	}
+	source := Source{Root: t.TempDir(), MustBeMounted: true}
+	if source.Available() {
+		t.Fatal("plain directory was mistaken for a mounted removable source")
+	}
+}
+
+func TestMountInfoHasRoot(t *testing.T) {
+	mountInfo := []byte("33 18 179:97 / /mnt/sdcard rw - vfat /dev/mmcblk1p1 rw\n" +
+		"34 18 179:98 / /media/card\\040two rw - vfat /dev/mmcblk2p1 rw\n")
+	for _, root := range []string{"/mnt/sdcard", "/media/card two"} {
+		if !mountInfoHasRoot(mountInfo, root) {
+			t.Errorf("mount %q not detected", root)
+		}
+	}
+	if mountInfoHasRoot(mountInfo, "/media/sdcard1") {
+		t.Fatal("unmounted root was reported available")
 	}
 }
 
