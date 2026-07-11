@@ -38,7 +38,7 @@ func main() {
 	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, or empty")
 	catMainListFrames := flag.Int("cat-main-list-frames", 0, "exit Catastrophe main-list fixture after N frames")
 	catMainListScreenshot := flag.String("cat-main-list-screenshot", "", "save the final Catastrophe main-list frame as PNG")
-	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture: filter")
+	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture: filter, detail, or warning")
 	catInputFrames := flag.Int("cat-input-frames", 0, "exit Catastrophe input fixture after N frames")
 	catInputScreenshot := flag.String("cat-input-screenshot", "", "save the final Catastrophe input fixture as PNG")
 	catLiveList := flag.Bool("cat-live-list", false, "run the Catastrophe main list against the real Leaf cache/feed")

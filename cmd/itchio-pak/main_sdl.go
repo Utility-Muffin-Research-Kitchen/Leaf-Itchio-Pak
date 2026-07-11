@@ -416,15 +416,21 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	const (
 		catRouteList catRoute = iota
 		catRouteFilter
+		catRouteDetail
 	)
 	route := catRouteList
 	var filterModel *appui.FilterModel
 	var filterScreen *catui.FilterScreen
+	var detailModel *appui.DetailModel
+	var detailScreen *catui.DetailScreen
+	var detailLoader *ui.CatDetailLoader
 	drawCurrent := func() error {
 		switch route {
 		case catRouteFilter:
 			imageCache.BeginFrame()
 			return filterScreen.Draw()
+		case catRouteDetail:
+			return detailScreen.Draw()
 		default:
 			return screen.Draw()
 		}
@@ -442,6 +448,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		// Always rebuild one complete frame after every wake before presenting.
 		redraw = true
 		list.SyncCatModel(model)
+		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
+			redraw = true
+		}
 		if uploaded, processErr := imageCache.ProcessPending(ctx); processErr != nil {
 			return processErr
 		} else if uploaded {
@@ -476,6 +485,15 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 				case appui.FilterIntentCancel:
 					route = catRouteList
 				}
+			case catRouteDetail:
+				switch detailScreen.HandleInput(event) {
+				case appui.DetailIntentBack:
+					detailScreen.Close()
+					detailScreen, detailModel, detailLoader = nil, nil, nil
+					route = catRouteList
+				case appui.DetailIntentSettings:
+					logger.Debug("cat detail: settings destination is scheduled for a later slice")
+				}
 			default:
 				switch screen.HandleInput(event) {
 				case appui.ListIntentExit:
@@ -494,8 +512,23 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 						return err
 					}
 					route = catRouteFilter
-				case appui.ListIntentOpen, appui.ListIntentSettings:
-					logger.Debug("cat live list: destination screen is not migrated yet")
+				case appui.ListIntentOpen:
+					game, ok := list.CatSelected(model.Cursor)
+					if !ok {
+						break
+					}
+					detailModel = appui.NewDetailModel(appui.DetailGame{
+						Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
+						Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
+					})
+					detailScreen, err = catui.NewDetailScreen(ctx, detailModel, imageCache)
+					if err != nil {
+						return err
+					}
+					detailLoader = ui.NewCatDetailLoader(client, cfg, game, func() { _ = ctx.Wake() })
+					route = catRouteDetail
+				case appui.ListIntentSettings:
+					logger.Debug("cat live list: settings destination is scheduled for a later slice")
 				}
 			}
 			redraw = true
@@ -504,6 +537,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			break
 		}
 		list.SyncCatModel(model)
+		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
+			redraw = true
+		}
 		if redraw {
 			if err := drawCurrent(); err != nil {
 				return err
@@ -546,6 +582,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			ctx.RequestFrameIn(50)
 			redraw = true
 		} else if route == catRouteList && model.State == appui.ListLoading {
+			ctx.RequestFrameIn(100)
+			redraw = true
+		} else if route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading {
 			ctx.RequestFrameIn(100)
 			redraw = true
 		} else if list.IsBusy() {

@@ -517,6 +517,15 @@ func (s *ListScreen) SyncCatModel(model *appui.MainListModel) {
 	model.SetItems(items)
 }
 
+// CatSelected maps the migrated list cursor back to the real catalogue item.
+func (s *ListScreen) CatSelected(index int) (itchio.Game, bool) {
+	if index < 0 || index >= len(s.viewGames) {
+		return itchio.Game{}, false
+	}
+	s.cursor = index
+	return s.viewGames[index], true
+}
+
 func (s *ListScreen) RetryCatLoad() { go s.loadPage(1, "") }
 
 func (s *ListScreen) CatFilter() (platform, sort, query string) {
