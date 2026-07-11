@@ -148,7 +148,7 @@ func runSDL() {
 	if inventoryErr != nil {
 		logger.Warn("inventory reset: %v", inventoryErr)
 	}
-	inv.VerifyAndClean(inventoryPath)
+	inv.VerifyAndCleanWithSources(inventoryPath, runtimeEnv.Sources)
 	client := itchio.NewClient()
 	if os.Getenv("ITCHIO_CAT_LIVE_LIST") == "1" {
 		if err := runCatLiveList(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
@@ -438,6 +438,8 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteDownloadSelect
 		catRouteDestination
 		catRouteDownloadProgress
+		catRouteManage
+		catRouteRename
 	)
 	route := catRouteList
 	var filterModel *appui.FilterModel
@@ -457,6 +459,25 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var destinationScreen *catui.DestinationScreen
 	var destinationFlow *ui.CatDestinationFlow
 	var destinationPlan *ui.CatDownloadPlan
+	var manageModel *appui.ManageModel
+	var manageScreen *catui.ManageScreen
+	var manageFlow *ui.CatManageFlow
+	var renameModel *appui.RenameModel
+	var renameScreen *catui.RenameScreen
+	var renameFlow *ui.CatRenameFlow
+	openManage := func() error {
+		var flowErr error
+		manageFlow, manageModel, flowErr = ui.NewCatManageFlow(inv, inventoryPath, activeGame.URL, sources, catalog)
+		if flowErr != nil {
+			return flowErr
+		}
+		manageScreen, flowErr = catui.NewManageScreen(ctx, manageModel)
+		if flowErr != nil {
+			return flowErr
+		}
+		route = catRouteManage
+		return nil
+	}
 	startDownloadPlan := func(plan *ui.CatDownloadPlan) error {
 		if plan == nil {
 			return nil
@@ -512,6 +533,10 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return destinationScreen.Draw()
 		case catRouteDownloadProgress:
 			return downloadProgressScreen.Draw()
+		case catRouteManage:
+			return manageScreen.Draw()
+		case catRouteRename:
+			return renameScreen.Draw()
 		default:
 			return screen.Draw()
 		}
@@ -599,6 +624,12 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					downloadFlow = ui.NewCatDownloadFlow(client, cfg, activeGame, activeDetail, inv,
 						func() { _ = ctx.Wake() })
 					route = catRouteDownloadSelect
+				case appui.DetailIntentManage:
+					if err := openManage(); err != nil {
+						logger.Warn("cat manage: %v", err)
+						detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
+						list.ScheduleRebuild()
+					}
 				}
 			case catRouteDownloadSelect:
 				switch downloadSelectScreen.HandleInput(event) {
@@ -659,6 +690,58 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					downloadBackend, downloadProgressModel, downloadProgressScreen = nil, nil, nil
 					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
 					route = catRouteDetail
+				}
+			case catRouteManage:
+				switch manageScreen.HandleInput(event) {
+				case appui.ManageIntentBack:
+					if manageFlow.Back(manageModel) {
+						manageFlow, manageModel, manageScreen = nil, nil, nil
+						entry, present := inv.Lookup(activeGame.URL)
+						detailModel.Game.Downloaded = present && len(entry.Files) > 0
+						list.ScheduleRebuild()
+						route = catRouteDetail
+					}
+				case appui.ManageIntentCancel:
+					manageFlow.Cancel(manageModel)
+				case appui.ManageIntentActivate:
+					var flowErr error
+					renameFlow, renameModel, flowErr = manageFlow.Activate(manageModel)
+					if flowErr != nil {
+						manageModel.SetError(flowErr.Error())
+						break
+					}
+					if renameFlow != nil {
+						renameScreen, flowErr = catui.NewRenameScreen(ctx, renameModel)
+						if flowErr != nil {
+							return flowErr
+						}
+						route = catRouteRename
+					}
+				case appui.ManageIntentConfirm:
+					if _, flowErr := manageFlow.Confirm(manageModel); flowErr != nil {
+						manageModel.SetError(flowErr.Error())
+					}
+					list.ScheduleRebuild()
+				}
+			case catRouteRename:
+				switch renameScreen.HandleInput(event) {
+				case appui.RenameIntentBack:
+					renameFlow, renameModel, renameScreen = nil, nil, nil
+					if err := openManage(); err != nil {
+						logger.Warn("cat manage after rename: %v", err)
+						manageFlow, manageModel, manageScreen = nil, nil, nil
+						detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
+						route = catRouteDetail
+					}
+					list.ScheduleRebuild()
+				case appui.RenameIntentConfirm:
+					if flowErr := renameFlow.Confirm(renameModel); flowErr != nil {
+						renameModel.SetError(flowErr.Error())
+					}
+				case appui.RenameIntentSkip:
+					if flowErr := renameFlow.Skip(renameModel); flowErr != nil {
+						renameModel.SetError(flowErr.Error())
+					}
 				}
 			default:
 				switch screen.HandleInput(event) {

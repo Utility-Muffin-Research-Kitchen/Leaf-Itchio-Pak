@@ -224,6 +224,11 @@ int catui_draw_title(const char *title) {
     cat_status_bar_opts *status_ptr = cat_status_bar_from_env(&status) ? &status : NULL;
     cat_draw_screen_title(title ? title : "", status_ptr);
     if (status_ptr) cat_draw_status_bar(status_ptr);
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* A dense fallback-text list can otherwise outlive Cat's queued title and
+       background texture copies before the footer presents them. */
+    SDL_RenderFlush(cat_get_renderer());
+#endif
     return CATUI_OK;
 }
 
@@ -481,7 +486,16 @@ int catui_draw_rect(int x, int y, int w, int h, uint32_t color) {
 }
 int catui_draw_pill(int x, int y, int w, int h, uint32_t color) {
     int guard = catui__guard(); if (guard != CATUI_OK) return guard;
-    cat_draw_pill(x, y, w, h, catui__color(color)); return CATUI_OK;
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* Dense list rows can queue Cat's reusable rounded sprite until the footer
+       mutates it. Bound the selected-row copy inside this pak's bridge. */
+    SDL_RenderFlush(cat_get_renderer());
+#endif
+    cat_draw_pill(x, y, w, h, catui__color(color));
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    SDL_RenderFlush(cat_get_renderer());
+#endif
+    return CATUI_OK;
 }
 int catui_draw_progress(int x, int y, int w, int h, float progress,
                         uint32_t foreground, uint32_t background) {

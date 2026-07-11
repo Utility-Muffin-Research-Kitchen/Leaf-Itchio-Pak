@@ -337,6 +337,17 @@ func (inv *Inventory) RemoveFile(gameURL, destPath string) bool {
 // most recently downloaded), removes Entry values with no remaining files, saves
 // if any changes were made, and returns the count of removed DownloadedFile rows.
 func (inv *Inventory) VerifyAndClean(path string) int {
+	return inv.verifyAndClean(path, nil)
+}
+
+// VerifyAndCleanWithSources keeps entries that live on a currently unavailable
+// removable source. Absence of a card is not evidence that its files were
+// deleted; those rows remain visible but immutable until the source returns.
+func (inv *Inventory) VerifyAndCleanWithSources(path string, sources leaf.SourceList) int {
+	return inv.verifyAndClean(path, sources)
+}
+
+func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 	removed := 0
 	changed := false
 	inv.mu.Lock()
@@ -344,6 +355,10 @@ func (inv *Inventory) VerifyAndClean(path string) int {
 		// Pass 1: drop files missing from disk.
 		var present []DownloadedFile
 		for _, f := range entry.Files {
+			if sourceUnavailableForFile(f, sources) {
+				present = append(present, f)
+				continue
+			}
 			if _, err := os.Stat(f.DestPath); err == nil {
 				present = append(present, f)
 			} else {
@@ -387,6 +402,23 @@ func (inv *Inventory) VerifyAndClean(path string) int {
 		}
 	}
 	return removed
+}
+
+func sourceUnavailableForFile(file DownloadedFile, sources leaf.SourceList) bool {
+	if len(sources) == 0 {
+		return false
+	}
+	sourceID := file.SourceID
+	if sourceID == "" {
+		if identity, ok := roms.DescribeDestination(file.DestPath); ok {
+			sourceID = identity.SourceID
+		}
+	}
+	if sourceID == "" {
+		return false
+	}
+	source, ok := sources.ByID(sourceID)
+	return !ok || !source.Available()
 }
 
 // HasPendingUpdates returns true when any UpstreamFile for gameURL is marked
@@ -596,6 +628,28 @@ func (inv *Inventory) UpdateFile(gameURL, oldDestPath string, file DownloadedFil
 		if f.DestPath == oldDestPath {
 			e.Files[i] = file
 			return true
+		}
+	}
+	return false
+}
+
+// ArtworkReferencedOutside reports whether another managed file still owns the
+// same artwork path after excluding a pending deletion set.
+func (inv *Inventory) ArtworkReferencedOutside(artPath string, excluding []DownloadedFile) bool {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	excluded := make(map[string]bool, len(excluding))
+	for _, file := range excluding {
+		excluded[filepath.Clean(file.DestPath)] = true
+	}
+	for _, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			if excluded[filepath.Clean(file.DestPath)] || !file.ArtworkCreated {
+				continue
+			}
+			if filepath.Clean(CoverArtPath(entry.CoverURL, file.DestPath)) == filepath.Clean(artPath) {
+				return true
+			}
 		}
 	}
 	return false

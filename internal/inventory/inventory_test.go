@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
@@ -173,6 +174,57 @@ func TestAdd_PreservesSecondaryLeafPathIdentity(t *testing.T) {
 	file := entry.Files[0]
 	if file.SourceID != "secondary_sd" || file.RelativePath != "Roms/GBC/RPG/game.gbc" || file.CanonicalSystem != "GBC" {
 		t.Fatalf("unexpected secondary identity: %+v", file)
+	}
+}
+
+func TestArtworkReferencedOutsideExcludesPendingDeletion(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	artPath := "/leaf/Roms/GB/.media/Game.png"
+	first := inventory.DownloadedFile{Filename: "Game.gb", DestPath: "/leaf/Roms/GB/Game.gb", ArtworkCreated: true}
+	second := inventory.DownloadedFile{Filename: "Game.zip", DestPath: "/leaf/Roms/GB/Game.zip", ArtworkCreated: true}
+	inv.Add("one", inventory.Entry{CoverURL: "cover"}, first)
+	inv.Add("two", inventory.Entry{CoverURL: "cover"}, second)
+	if !inv.ArtworkReferencedOutside(artPath, []inventory.DownloadedFile{first}) {
+		t.Fatal("remaining artwork owner was not detected")
+	}
+	if inv.ArtworkReferencedOutside(artPath, []inventory.DownloadedFile{first, second}) {
+		t.Fatal("pending deletion set still counted as an artwork owner")
+	}
+}
+
+func TestVerifyAndCleanKeepsFileOnUnavailableSource(t *testing.T) {
+	root := t.TempDir()
+	missingSecondary := filepath.Join(root, "removed-secondary")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: filepath.Join(missingSecondary, "Roms", "GBC", "game.gbc"),
+		SourceID: "secondary_sd", RelativePath: "Roms/GBC/game.gbc", CanonicalSystem: "GBC",
+	})
+	sources := leaf.SourceList{
+		{ID: "primary", Root: root, Primary: true},
+		{ID: "secondary_sd", Root: missingSecondary},
+	}
+	if removed := inv.VerifyAndCleanWithSources(filepath.Join(root, "inventory.json"), sources); removed != 0 {
+		t.Fatalf("removed %d unavailable-source files", removed)
+	}
+	if entry, ok := inv.Lookup("game"); !ok || len(entry.Files) != 1 {
+		t.Fatal("unavailable-source inventory row was discarded")
+	}
+}
+
+func TestVerifyAndCleanRemovesMissingFileOnAvailableSource(t *testing.T) {
+	root := t.TempDir()
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: filepath.Join(root, "Roms", "GBC", "game.gbc"),
+		SourceID: "primary", RelativePath: "Roms/GBC/game.gbc", CanonicalSystem: "GBC",
+	})
+	if removed := inv.VerifyAndCleanWithSources(filepath.Join(root, "inventory.json"),
+		leaf.SourceList{{ID: "primary", Root: root, Primary: true}}); removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	if _, ok := inv.Lookup("game"); ok {
+		t.Fatal("missing file on mounted source remained in inventory")
 	}
 }
 

@@ -335,8 +335,8 @@ func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []stri
 		}
 		for i := offset; i < len(lines) && y+lineHeight <= rect.Y+rect.H; i++ {
 			if lines[i] != "" {
-				if _, err := ui.ctx.DrawText(FontSmall, lines[i], x, y,
-					ui.ctx.ThemeColor(RoleText), rect.W, false); err != nil {
+				if _, err := ui.ctx.DrawFallbackText(FontSmall, lines[i], x, y,
+					ui.ctx.ThemeColor(RoleText), rect.W); err != nil {
 					return err
 				}
 			}

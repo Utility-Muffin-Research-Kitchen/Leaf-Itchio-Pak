@@ -21,14 +21,16 @@ func destinationFixture(t *testing.T) (leaf.SourceList, *leaf.Catalog, string) {
 	for _, path := range []string{
 		primary, secondary, filepath.Join(primary, "Roms"), filepath.Join(secondary, "Roms", "GBC", "RPG"),
 		filepath.Join(primary, "Music"), filepath.Join(secondary, "Music", "Albums"),
+		filepath.Join(primary, "Saves"), filepath.Join(secondary, "Saves"),
+		filepath.Join(primary, "States"), filepath.Join(secondary, "States"),
 	} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	sources := leaf.SourceList{
-		{ID: "primary", Root: primary, Primary: true, RomsPath: filepath.Join(primary, "Roms"), MusicPath: filepath.Join(primary, "Music")},
-		{ID: "secondary_sd", Root: secondary, RomsPath: filepath.Join(secondary, "Roms"), MusicPath: filepath.Join(secondary, "Music")},
+		{ID: "primary", Root: primary, Primary: true, RomsPath: filepath.Join(primary, "Roms"), MusicPath: filepath.Join(primary, "Music"), SavesPath: filepath.Join(primary, "Saves"), StatesPath: filepath.Join(primary, "States")},
+		{ID: "secondary_sd", Root: secondary, RomsPath: filepath.Join(secondary, "Roms"), MusicPath: filepath.Join(secondary, "Music"), SavesPath: filepath.Join(secondary, "Saves"), StatesPath: filepath.Join(secondary, "States")},
 	}
 	platform := filepath.Join(root, "platform")
 	if err := os.MkdirAll(filepath.Join(platform, "defaults"), 0o755); err != nil {

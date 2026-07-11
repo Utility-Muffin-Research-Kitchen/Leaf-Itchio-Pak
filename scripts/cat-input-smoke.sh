@@ -46,6 +46,11 @@ capture destination-source 1280 800 0 5
 capture destination-folder 960 720 1 0
 capture destination-folder 1280 800 0 5
 capture destination-music 960 720 1 0
+capture manage-list 960 720 1 0
+capture manage-list 1280 800 0 5
+capture manage-confirm 960 720 1 0
+capture rename-saves 960 720 1 0
+capture rename-states 1280 800 0 5
 
 python3 - "$OUT" <<'PY'
 import pathlib

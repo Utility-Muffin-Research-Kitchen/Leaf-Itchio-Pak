@@ -41,6 +41,7 @@ const (
 	DetailIntentBack
 	DetailIntentSettings
 	DetailIntentDownload
+	DetailIntentManage
 )
 
 func NewDetailModel(game DetailGame) *DetailModel {
@@ -102,6 +103,10 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonA:
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
+		}
+	case ButtonX:
+		if m.Game.Downloaded {
+			return DetailIntentManage
 		}
 	}
 	return DetailIntentNone

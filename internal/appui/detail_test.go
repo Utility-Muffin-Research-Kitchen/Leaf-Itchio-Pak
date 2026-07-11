@@ -46,3 +46,15 @@ func TestDetailDownloadIntentHonorsCapabilityAndBrowserOnly(t *testing.T) {
 		t.Fatalf("browser-only A intent = %v, want none", got)
 	}
 }
+
+func TestDetailManageIntentRequiresDownloadedGame(t *testing.T) {
+	model := NewDetailModel(DetailGame{Title: "Game", Downloaded: true})
+	model.SetReady("", nil, nil, false, false)
+	if got := model.Handle(InputEvent{Button: ButtonX, Pressed: true}); got != DetailIntentManage {
+		t.Fatalf("X intent = %v, want manage", got)
+	}
+	model.Game.Downloaded = false
+	if got := model.Handle(InputEvent{Button: ButtonX, Pressed: true}); got != DetailIntentNone {
+		t.Fatalf("not-downloaded X intent = %v, want none", got)
+	}
+}

@@ -61,7 +61,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "detail", "warning":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
-			Platform: "GBC", IsFree: true, CanDownload: true,
+			Platform: "GBC", IsFree: true, CanDownload: true, Downloaded: config.Screen == "detail",
 		})
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
@@ -152,6 +152,48 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
+		}
+	case "manage-list", "manage-confirm":
+		model := appui.NewManageModel("Leafbound 葉")
+		model.SetItems("3 managed files · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "bonus.gb", Badge: "UNAVAILABLE", Detail: "Secondary SD / Roms/GB/bonus.gb", Enabled: false},
+			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "MUSIC", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "2 ROM", Enabled: false},
+			{Kind: appui.ManageItemDeleteMusic, Label: "Delete soundtrack", Badge: "1 MUSIC", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "3 FILES", Enabled: false},
+			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
+		})
+		if config.Screen == "manage-confirm" {
+			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+		}
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
+	case "rename-saves", "rename-states":
+		model := appui.NewRenameModel("Leafbound 葉")
+		state, subtitle, heading := appui.RenameConfirmSaves, "Save files", "Rename these save files?"
+		lines := []string{"Saves/GBC/leafbound.srm", "→ Saves/GBC/Leafbound 葉.srm"}
+		if config.Screen == "rename-states" {
+			state, subtitle, heading = appui.RenameConfirmStates, "Save states", "Rename these state files?"
+			lines = []string{
+				"States/GBC-gambatte/leafbound.state1", "→ States/GBC-gambatte/Leafbound 葉.state1",
+				"States/GBC-gambatte/leafbound.state1.png", "→ States/GBC-gambatte/Leafbound 葉.state1.png",
+			}
+		}
+		model.SetPrompt(state, subtitle, heading, lines)
+		screen, screenErr := NewRenameScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)

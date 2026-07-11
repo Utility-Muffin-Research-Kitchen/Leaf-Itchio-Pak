@@ -64,6 +64,9 @@ func (screen *DetailScreen) Draw() error {
 			// state on MLP1; the action and visual label remain unchanged.
 			footer = append(footer, FooterHint{Button: ButtonA, Label: label})
 		}
+		if screen.model.Game.Downloaded {
+			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage", NarrowLabel: "Files"})
+		}
 	} else if screen.model.State == appui.DetailWarning {
 		footer = append(footer, FooterHint{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"})
 	}
