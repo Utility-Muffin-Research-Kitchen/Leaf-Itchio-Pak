@@ -176,15 +176,10 @@ int catui_poll_input(catui_input_event *out) {
     if (!out) return CATUI_ERROR;
     memset(out, 0, sizeof(*out));
 
-    unsigned pending = atomic_load_explicit(&catui__state.wake_count, memory_order_acquire);
-    while (pending > 0) {
-        if (atomic_compare_exchange_weak_explicit(&catui__state.wake_count,
-                                                  &pending, pending - 1,
-                                                  memory_order_acq_rel,
-                                                  memory_order_acquire)) {
-            out->wake = 1;
-            return 1;
-        }
+    if (atomic_exchange_explicit(&catui__state.wake_count, 0,
+                                 memory_order_acq_rel) > 0) {
+        out->wake = 1;
+        return 1;
     }
 
     cat_input_event event;
@@ -197,8 +192,14 @@ int catui_poll_input(catui_input_event *out) {
 
 int catui_wake(void) {
     if (!catui__state.initialized) return CATUI_CLOSED;
-    atomic_fetch_add_explicit(&catui__state.wake_count, 1, memory_order_release);
-    cat_wake();
+    atomic_store_explicit(&catui__state.wake_count, 1, memory_order_release);
+    /* Desktop cat_present() pumps SDL while idle, so a user event wakes it
+       immediately. MLP1 polling is bounded by the app while workers are busy;
+       keeping that policy here avoids changing Catastrophe's global waiter. */
+    SDL_Event event;
+    memset(&event, 0, sizeof(event));
+    event.type = SDL_USEREVENT;
+    SDL_PushEvent(&event);
     return CATUI_OK;
 }
 
@@ -392,11 +393,32 @@ static TTF_Font *catui__font_for_codepoint(int tier, uint32_t codepoint) {
     return NULL;
 }
 
+static int catui__draw_transient_text(TTF_Font *font, const char *text,
+                                      int x, int y, cat_draw_color color) {
+    if (!font || !text || !text[0]) return 0;
+    SDL_Surface *surface = TTF_RenderUTF8_Blended(font, text, color);
+    if (!surface) return 0;
+    int width = surface->w, height = surface->h;
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(cat_get_renderer(), surface);
+    SDL_FreeSurface(surface);
+    if (!texture) return 0;
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureColorMod(texture, 255, 255, 255);
+    SDL_SetTextureAlphaMod(texture, 255);
+    SDL_Rect destination = {x, y, width, height};
+    SDL_RenderCopy(cat_get_renderer(), texture, NULL, &destination);
+#if defined(PLATFORM_MLP1) && SDL_VERSION_ATLEAST(2, 0, 10)
+    SDL_RenderFlush(cat_get_renderer());
+#endif
+    SDL_DestroyTexture(texture);
+    return width;
+}
+
 static int catui__flush_run(TTF_Font *font, char *run, int *used,
                             int draw, int x, int y, cat_draw_color color) {
     if (!font || !run || !used || *used <= 0) return 0;
     run[*used] = '\0';
-    int width = draw ? cat_draw_text(font, run, x, y, color)
+    int width = draw ? catui__draw_transient_text(font, run, x, y, color)
                      : cat_measure_text(font, run);
     *used = 0;
     return width;

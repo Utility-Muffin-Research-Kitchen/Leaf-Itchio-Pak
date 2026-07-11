@@ -542,8 +542,14 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			}
 			ctx.RequestFrameIn(uint32(milliseconds))
 			redraw = true
+		} else if imageCache.Busy() {
+			ctx.RequestFrameIn(50)
+			redraw = true
 		} else if route == catRouteList && model.State == appui.ListLoading {
 			ctx.RequestFrameIn(100)
+			redraw = true
+		} else if list.IsBusy() {
+			ctx.RequestFrameIn(250)
 			redraw = true
 		}
 		if err := ctx.Present(); err != nil {

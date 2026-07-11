@@ -34,3 +34,20 @@ func TestImageCacheSchedulesOnlyVisibleAnimations(t *testing.T) {
 	cache.items = make(map[string]*list.Element)
 	cache.lru.Init()
 }
+
+func TestImageCacheBusyCoversFetchAndPendingUpload(t *testing.T) {
+	cache := NewImageCache(1, nil)
+	cache.fetching["cover"] = struct{}{}
+	if !cache.Busy() {
+		t.Fatal("active fetch was not busy")
+	}
+	delete(cache.fetching, "cover")
+	cache.ready <- decodedImage{key: "cover"}
+	if !cache.Busy() {
+		t.Fatal("pending owner-thread upload was not busy")
+	}
+	<-cache.ready
+	if cache.Busy() {
+		t.Fatal("idle cache remained busy")
+	}
+}

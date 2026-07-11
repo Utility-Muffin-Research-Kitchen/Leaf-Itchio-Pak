@@ -232,6 +232,12 @@ func (c *ImageCache) NextFrameIn() (time.Duration, bool) {
 	return minimum, found
 }
 
+func (c *ImageCache) Busy() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.fetching) > 0 || len(c.ready) > 0
+}
+
 func (c *ImageCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
