@@ -16,7 +16,7 @@ func TestMain(m *testing.M) {
 	err := roms.ConfigurePaths(roms.PathConfig{
 		SystemDirs: map[string]string{
 			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
-			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 		},
 		SourceID: "primary", PrimaryRoot: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
 		Sources: []roms.SourcePathConfig{
@@ -24,14 +24,14 @@ func TestMain(m *testing.M) {
 				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
 				SystemDirs: map[string]string{
 					"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
-					"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+					"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 				},
 			},
 			{
 				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
 				SystemDirs: map[string]string{
 					"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA",
-					"FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8",
+					"FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX",
 				},
 			},
 		},

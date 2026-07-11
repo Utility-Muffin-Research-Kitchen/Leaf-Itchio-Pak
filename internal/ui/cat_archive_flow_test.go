@@ -17,7 +17,7 @@ func archiveFlowFixture(t *testing.T, cfg *settings.Config, manifest roms.ZIPMan
 	t.Helper()
 	root := t.TempDir()
 	systems := make(map[string]string)
-	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		systems[id] = filepath.Join(root, "Roms", id) + string(filepath.Separator)
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{SystemDirs: systems, SourceID: "primary",
@@ -124,5 +124,20 @@ func TestZIPSelectionDistinguishesNestedEntries(t *testing.T) {
 	}
 	if !screen.shouldExtractROM("v2/game.gbc") {
 		t.Fatal("selected nested ROM was rejected")
+	}
+}
+
+func TestCatArchiveTreatsPSXCueBinAsOneExtractedBundle(t *testing.T) {
+	manifest := roms.ZIPManifest{Entries: []roms.ZIPEntry{
+		{Name: "game/disc.cue", Kind: roms.KindROM},
+		{Name: "game/disc.bin", Kind: roms.KindROMSupport},
+	}}
+	flow := archiveFlowFixture(t, &settings.Config{ROMLocation: "ask", MusicDownload: "off"}, manifest)
+	flow.prepareInitialAction()
+	if action := flow.TakeAction(); action != CatArchiveChooseROMDestination {
+		t.Fatalf("PSX archive action = %v", action)
+	}
+	if got := flow.ROMExtensions(); len(got) != 2 || got[0] != ".bin" || got[1] != ".cue" {
+		t.Fatalf("PSX archive extensions = %v", got)
 	}
 }

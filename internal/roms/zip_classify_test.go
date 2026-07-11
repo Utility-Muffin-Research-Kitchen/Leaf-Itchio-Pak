@@ -21,6 +21,11 @@ func TestClassifyEntry(t *testing.T) {
 		{"game.md", roms.KindROM},
 		{"game.gen", roms.KindROM},
 		{"game.smd", roms.KindROM},
+		{"game.chd", roms.KindROM},
+		{"game.pbp", roms.KindROM},
+		{"game.cue", roms.KindROM},
+		{"disc.m3u", roms.KindROM},
+		{"track01.bin", roms.KindROMSupport},
 		{"track01.mp3", roms.KindMusic},
 		{"track01.MP3", roms.KindMusic},
 		{"track01.ogg", roms.KindMusic},
@@ -55,6 +60,21 @@ func TestClassifyEntry(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("ClassifyEntry(%q) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestPSXArchiveManifestIncludesCompanionTracks(t *testing.T) {
+	m := roms.ZIPManifest{Entries: []roms.ZIPEntry{
+		{Name: "game/disc.cue", Kind: roms.KindROM},
+		{Name: "game/disc.bin", Kind: roms.KindROMSupport},
+		{Name: "readme.txt", Kind: roms.KindOther},
+	}}
+	if !m.HasROMs() || !m.HasPSXFiles() || m.ROMCount() != 1 {
+		t.Fatalf("PSX manifest classification = %#v", m)
+	}
+	exts := m.InstallROMExts()
+	if len(exts) != 2 || exts[0] != ".cue" || exts[1] != ".bin" {
+		t.Fatalf("install extensions = %v", exts)
 	}
 }
 

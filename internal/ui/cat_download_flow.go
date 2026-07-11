@@ -260,6 +260,10 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		}
 	}
 	if len(known) == 1 {
+		if roms.IsPSXSupportExt(roms.ROMExt(known[0].Filename)) {
+			model.SetError("A PlayStation BIN track requires its matching CUE descriptor. Download a CUE/BIN archive or upload set instead.")
+			return
+		}
 		flow.plan = flow.planForUpload(known[0])
 		return
 	}
@@ -341,7 +345,8 @@ func formatBadge(filename string) string {
 }
 
 func allFormatLabels() []string {
-	return []string{"AUTO", "P8.PNG", "P8", "GBC", "GB", "GBA", "NES", "MD", "ZIP"}
+	return []string{"AUTO", "P8.PNG", "P8", "GBC", "GB", "GBA", "NES", "MD",
+		"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U", "ZIP"}
 }
 
 func manualFormatLabels() []string { return allFormatLabels()[1:] }

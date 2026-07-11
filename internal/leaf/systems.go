@@ -25,7 +25,7 @@ type Catalog struct {
 
 var feedSystems = map[string]string{
 	"GB": "GB", "GBC": "GBC", "GBA": "GBA",
-	"NES": "FC", "MD": "MD", "P8": "PICO8",
+	"NES": "FC", "MD": "MD", "P8": "PICO8", "PSX": "PS",
 }
 
 func LoadCatalog(env Environment) (*Catalog, error) {
@@ -122,6 +122,8 @@ func CanonicalSystemForExtension(ext string) (string, bool) {
 		return "MD", true
 	case ".p8", ".p8.png":
 		return "PICO8", true
+	case ".cbn", ".chd", ".cue", ".img", ".iso", ".mdf", ".pbp", ".toc", ".m3u", ".bin":
+		return "PS", true
 	default:
 		return "", false
 	}

@@ -108,3 +108,10 @@ func TestRomCoreInfo_Genesis(t *testing.T) {
 		t.Errorf("RomCoreInfo Genesis: got (%q, %q), want (MD, picodrive)", tag, core)
 	}
 }
+
+func TestRomCoreInfo_PlayStation(t *testing.T) {
+	tag, core := roms.RomCoreInfo("/leaf/Roms/PSX/game.chd")
+	if tag != "PS" || core != "pcsx_rearmed" {
+		t.Errorf("RomCoreInfo PlayStation: got (%q, %q), want (PS, pcsx_rearmed)", tag, core)
+	}
+}

@@ -234,7 +234,7 @@ func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
 		kind, baseName := classifyWithMagic(baseName, f.Open)
 
 		switch kind {
-		case roms.KindROM:
+		case roms.KindROM, roms.KindROMSupport:
 			if !s.shouldExtractROM(f.Name) {
 				continue
 			}
@@ -316,7 +316,7 @@ func (s *ZIPDownloadScreen) run7z(tmpPath string) {
 		}
 		kind, baseName := classifyWithMagic(baseName, f.Open)
 		switch kind {
-		case roms.KindROM:
+		case roms.KindROM, roms.KindROMSupport:
 			if !s.shouldExtractROM(filepath.ToSlash(strings.ReplaceAll(f.Name, "\\", "/"))) {
 				continue
 			}
@@ -483,7 +483,7 @@ func (s *ZIPDownloadScreen) extractROMFromOpener(open func() (io.ReadCloser, err
 
 	finalDest := dest
 	unifiedName := false
-	if s.cfg.UnifiedNaming {
+	if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(baseName) {
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
@@ -512,8 +512,10 @@ func (s *ZIPDownloadScreen) extractROMFromOpener(open func() (io.ReadCloser, err
 		UnifiedName:   unifiedName,
 		SourceArchive: s.plan.Upload.Filename,
 	})
-	if artErr := s.client.DownloadCoverArt(s.game.CoverURL, finalDest); artErr != nil {
-		logger.Warn("7z-download: cover art: %v", artErr)
+	if !roms.IsPSXSupportExt(ext) {
+		if artErr := s.client.DownloadCoverArt(s.game.CoverURL, finalDest); artErr != nil {
+			logger.Warn("7z-download: cover art: %v", artErr)
+		}
 	}
 	return finalDest, nil
 }
@@ -674,7 +676,7 @@ func (s *ZIPDownloadScreen) extractROM(f *zip.File, baseName string, now time.Ti
 
 	finalDest := dest
 	unifiedName := false
-	if s.cfg.UnifiedNaming {
+	if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(baseName) {
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
@@ -692,7 +694,9 @@ func (s *ZIPDownloadScreen) extractROM(f *zip.File, baseName string, now time.Ti
 		}
 	}
 
-	if ext == ".p8.png" {
+	if roms.IsPSXSupportExt(ext) {
+		// Companion tracks are not launcher entries and do not own artwork.
+	} else if ext == ".p8.png" {
 		if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
 			logger.Warn("zip-download: cover art copy: %v", artErr)
 		}

@@ -154,7 +154,7 @@ func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibi
 
 		finalDest := dl.DestPath
 		unifiedName := false
-		if s.cfg.UnifiedNaming {
+		if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(dl.Upload.Filename) {
 			entry, entryExists := s.inv.Lookup(s.game.URL)
 			disabled := entryExists && entry.UnifiedNamingDisabled
 			if !disabled {
@@ -173,7 +173,9 @@ func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibi
 			}
 		}
 
-		if roms.ROMExt(dl.Upload.Filename) == ".p8.png" {
+		if roms.IsPSXSupportExt(roms.ROMExt(dl.Upload.Filename)) {
+			// BIN tracks are companion data and do not own launcher artwork.
+		} else if roms.ROMExt(dl.Upload.Filename) == ".p8.png" {
 			if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
 				logger.Warn("cover-art: game=%q: %v", s.game.Title, artErr)
 			}

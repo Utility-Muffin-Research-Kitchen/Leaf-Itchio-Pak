@@ -11,7 +11,7 @@ func TestMain(m *testing.M) {
 	err := roms.ConfigurePaths(roms.PathConfig{
 		SystemDirs: map[string]string{
 			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
-			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 		},
 		SourceID:    "primary",
 		PrimaryRoot: "/leaf",
@@ -20,11 +20,11 @@ func TestMain(m *testing.M) {
 		Sources: []roms.SourcePathConfig{
 			{
 				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
-				SystemDirs: map[string]string{"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA", "FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8"},
+				SystemDirs: map[string]string{"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA", "FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX"},
 			},
 			{
 				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
-				SystemDirs: map[string]string{"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA", "FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8"},
+				SystemDirs: map[string]string{"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA", "FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX"},
 			},
 		},
 	})
@@ -63,6 +63,9 @@ func TestScoreUpload(t *testing.T) {
 		{"game.P8.PNG", 2},
 		{"game.p8", 1},
 		{"game.P8", 1},
+		{"game.chd", 1},
+		{"game.pbp", 1},
+		{"game.cue", 1},
 		{"game.zip", 0},
 		{"game.pocket", 0},
 		{"game.pdf", 0},
@@ -95,12 +98,34 @@ func TestDestinationDir(t *testing.T) {
 		{".p8", "pico8", "/leaf/Roms/PICO8/"},
 		{".p8.png", "pico8", "/leaf/Roms/PICO8/"},
 		{".zip", "fakeo8", "/leaf/Roms/GBC/"},
+		{".chd", "fakeo8", "/leaf/Roms/PSX/"},
+		{".cue", "fakeo8", "/leaf/Roms/PSX/"},
+		{".bin", "fakeo8", "/leaf/Roms/PSX/"},
+		{".m3u", "fakeo8", "/leaf/Roms/PSX/"},
 		{".unknown", "fakeo8", ""},
 	}
 	for _, tt := range tests {
 		got := roms.DestinationDir(tt.ext, tt.core)
 		if got != tt.want {
 			t.Errorf("DestinationDir(%q, %q) = %q, want %q", tt.ext, tt.core, got, tt.want)
+		}
+	}
+}
+
+func TestPSXFormatPolicy(t *testing.T) {
+	for _, ext := range []string{".cbn", ".chd", ".cue", ".img", ".iso", ".mdf", ".pbp", ".toc", ".m3u", ".bin"} {
+		if !roms.IsSupportedUploadExt(ext) || !roms.IsPSXExt(ext) {
+			t.Errorf("PSX extension %q is not supported", ext)
+		}
+	}
+	for _, name := range []string{"disc.cue", "track.bin", "set.m3u", "disc.img", "disc.iso", "disc.cbn", "disc.mdf"} {
+		if roms.SupportsUnifiedNaming(name) {
+			t.Errorf("reference-sensitive %q allowed unified naming", name)
+		}
+	}
+	for _, name := range []string{"game.chd", "eboot.pbp"} {
+		if !roms.SupportsUnifiedNaming(name) {
+			t.Errorf("standalone %q rejected unified naming", name)
 		}
 	}
 }

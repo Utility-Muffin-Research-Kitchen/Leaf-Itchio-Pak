@@ -125,7 +125,7 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 				// Apply unified naming if enabled for this game.
 				finalDest := dest
 				unifiedName := false
-				if cfg.UnifiedNaming {
+				if cfg.UnifiedNaming && roms.SupportsUnifiedNaming(upload.Filename) {
 					entry, entryExists := inv.Lookup(game.URL)
 					disabled := entryExists && entry.UnifiedNamingDisabled
 					if !disabled {
@@ -144,7 +144,9 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 					}
 				}
 
-				if roms.ROMExt(upload.Filename) == ".p8.png" {
+				if roms.IsPSXSupportExt(roms.ROMExt(upload.Filename)) {
+					// BIN tracks are companion data and do not own launcher artwork.
+				} else if roms.ROMExt(upload.Filename) == ".p8.png" {
 					if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
 						logger.Warn("cover-art: game=%q: %v", game.Title, artErr)
 					}

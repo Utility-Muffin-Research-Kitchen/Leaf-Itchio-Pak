@@ -137,7 +137,8 @@ func TestCatalogUsesCanonicalSourceLocalRoots(t *testing.T) {
 		{"id":"GBA","name":"GBA","rom_root":"Roms/GBA","image_root":"Images/GBA"},
 		{"id":"FC","name":"NES","rom_root":"Roms/NES","image_root":"Images/NES"},
 		{"id":"MD","name":"Genesis","rom_root":"Roms/GENESIS","image_root":"Images/GENESIS"},
-		{"id":"PICO8","name":"Pico-8","rom_root":"Roms/PICO8","image_root":"Images/PICO8"}
+		{"id":"PICO8","name":"Pico-8","rom_root":"Roms/PICO8","image_root":"Images/PICO8"},
+		{"id":"PS","name":"PlayStation","rom_root":"Roms/PSX","image_root":"Images/PSX"}
 	]}`
 	if err := os.WriteFile(filepath.Join(defaults, "systems.json"), []byte(json), 0o644); err != nil {
 		t.Fatal(err)
@@ -156,7 +157,7 @@ func TestCatalogUsesCanonicalSourceLocalRoots(t *testing.T) {
 	if err != nil || imageDir != "/secondary/Images/PICO8" {
 		t.Fatalf("ImageDir = %q, %v", imageDir, err)
 	}
-	for code, id := range map[string]string{"GB": "GB", "GBC": "GBC", "GBA": "GBA", "NES": "FC", "MD": "MD", "P8": "PICO8"} {
+	for code, id := range map[string]string{"GB": "GB", "GBC": "GBC", "GBA": "GBA", "NES": "FC", "MD": "MD", "P8": "PICO8", "PSX": "PS"} {
 		system, ok := catalog.SystemForFeedCode(code)
 		if !ok || system.ID != id {
 			t.Errorf("feed %s mapped to %#v, want %s", code, system, id)

@@ -47,8 +47,12 @@ func RunInputFixture(config InputFixtureConfig) error {
 	var handleIntent func(InputEvent) bool
 	var closeScreen func()
 	switch config.Screen {
-	case "filter":
-		model := appui.NewFilterModel("GBC", "paid", "leaf 葉")
+	case "filter", "filter-psx":
+		platform := "GBC"
+		if config.Screen == "filter-psx" {
+			platform = "PSX"
+		}
+		model := appui.NewFilterModel(platform, "paid", "leaf 葉")
 		model.Section = appui.FilterPlatform
 		screen, screenErr := NewFilterScreen(ctx, model)
 		if screenErr != nil {

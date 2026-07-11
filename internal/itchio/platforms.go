@@ -46,4 +46,9 @@ var AllPlatforms = []FeedPlatform{
 		Name:      "Pico-8",
 		FeedSlugs: []string{"tag-pico-8"},
 	},
+	{
+		Code:      "PSX",
+		Name:      "Sony PlayStation",
+		FeedSlugs: []string{"tag-ps1"},
+	},
 }

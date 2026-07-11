@@ -301,7 +301,7 @@ func TestFetchOwnedKeys_Pagination(t *testing.T) {
 	}
 }
 
-// TestFetchUploadsForKey_ROM verifies that .gbc files are included, known
+// TestFetchUploadsForKey_ROM verifies that ROM/disc files are included, known
 // non-ROMs are skipped, and unknown extensions are returned with NeedsFormat=true.
 func TestFetchUploadsForKey_ROM(t *testing.T) {
 	mux := http.NewServeMux()
@@ -317,6 +317,9 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 				{"id": 2, "filename": "manual.pdf"},  // skipped
 				{"id": 3, "filename": "game.gb"},
 				{"id": 4, "filename": "patch.ips"},   // NeedsFormat=true
+				{"id": 5, "filename": "disc.chd"},
+				{"id": 6, "filename": "disc.cue"},
+				{"id": 7, "filename": "disc.bin"},
 			},
 		})
 	})
@@ -328,8 +331,8 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchUploadsForKey: %v", err)
 	}
-	if len(uploads) != 3 {
-		t.Fatalf("expected 3 uploads (gbc, gb, ips), got %d", len(uploads))
+	if len(uploads) != 6 {
+		t.Fatalf("expected 6 ROM/disc/unknown uploads, got %d", len(uploads))
 	}
 	byName := map[string]itchio.Upload{}
 	for _, u := range uploads {
@@ -340,6 +343,11 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 	}
 	if _, ok := byName["game.gb"]; !ok {
 		t.Error("game.gb should be included")
+	}
+	for _, name := range []string{"disc.chd", "disc.cue", "disc.bin"} {
+		if upload, ok := byName[name]; !ok || upload.NeedsFormat {
+			t.Errorf("%s should be included as a known PlayStation file", name)
+		}
 	}
 	if u, ok := byName["patch.ips"]; !ok || !u.NeedsFormat {
 		t.Error("patch.ips should be included with NeedsFormat=true")

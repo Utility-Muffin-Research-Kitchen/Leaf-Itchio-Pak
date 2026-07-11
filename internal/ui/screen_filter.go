@@ -18,8 +18,8 @@ const (
 
 // filterPlatforms is the ordered list of platform codes shown in the overlay.
 // "" is "All platforms".
-var filterPlatforms = []string{"", "GB", "GBC", "GBA", "NES", "MD", "P8"}
-var filterPlatformLabels = []string{"All", "GB", "GBC", "GBA", "NES", "MD", "P8"}
+var filterPlatforms = []string{"", "GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
+var filterPlatformLabels = []string{"All", "GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
 
 // filterSortValues and filterSortLabels define the available sort modes.
 var filterSortValues = []string{"", "az", "za", "new", "free", "paid", "dl", "owned"}

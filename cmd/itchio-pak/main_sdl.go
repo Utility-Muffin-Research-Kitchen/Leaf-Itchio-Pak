@@ -87,8 +87,8 @@ func runSDL() {
 		logger.Error("leaf runtime: no primary content source")
 		os.Exit(1)
 	}
-	systemDirs := make(map[string]string, 6)
-	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+	systemDirs := make(map[string]string, 7)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		dir, resolveErr := catalog.ROMDir(primary, id)
 		if resolveErr != nil {
 			logger.Error("leaf systems: %v", resolveErr)
@@ -98,8 +98,8 @@ func runSDL() {
 	}
 	sourcePaths := make([]roms.SourcePathConfig, 0, len(runtimeEnv.Sources))
 	for _, source := range runtimeEnv.Sources {
-		dirs := make(map[string]string, 6)
-		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+		dirs := make(map[string]string, 7)
+		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 			dir, resolveErr := catalog.ROMDir(source, id)
 			if resolveErr != nil {
 				logger.Error("leaf systems: source %s: %v", source.ID, resolveErr)

@@ -36,14 +36,18 @@ func destinationFixture(t *testing.T) (leaf.SourceList, *leaf.Catalog, string) {
 	if err := os.MkdirAll(filepath.Join(platform, "defaults"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ids := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"}
+	ids := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"}
 	json := `{"version":1,"platform":"mlp1","systems":[`
 	for index, id := range ids {
 		if index > 0 {
 			json += ","
 		}
+		folder := id
+		if id == "PS" {
+			folder = "PSX"
+		}
 		json += fmt.Sprintf(`{"id":%q,"name":%q,"rom_root":%q,"image_root":%q}`,
-			id, id, "Roms/"+id, "Images/"+id)
+			id, id, "Roms/"+folder, "Images/"+folder)
 	}
 	json += `]}`
 	if err := os.WriteFile(filepath.Join(platform, "defaults", "systems.json"), []byte(json), 0o644); err != nil {
@@ -233,5 +237,27 @@ func TestCatArchiveDestinationReturnsInnerExtensionMap(t *testing.T) {
 	dirs := flow.ArchiveROMDirs()
 	if dirs[".gb"] == "" || dirs[".gbc"] == "" || dirs[".gb"] == dirs[".gbc"] {
 		t.Fatalf("archive dirs = %#v", dirs)
+	}
+}
+
+func TestCatPSXArchiveDestinationKeepsCueAndBinOnSecondary(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	flow, model, err := NewCatArchiveROMDestinationFlow(sources, catalog, &settings.Config{}, cfgPath,
+		"PSX Archive", []string{".cue", ".bin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 1
+	if _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || !complete {
+		t.Fatalf("save PSX destination = %v, %v", complete, err)
+	}
+	want := filepath.Join(sources[1].RomsPath, "PSX")
+	dirs := flow.ArchiveROMDirs()
+	if dirs[".cue"] != want || dirs[".bin"] != want {
+		t.Fatalf("PSX archive dirs = %#v, want %q", dirs, want)
 	}
 }

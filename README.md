@@ -12,6 +12,12 @@ storage and runtime integration for Leaf. The active target is the Miniloong
 Pocket 1 (`mlp1`) only. NextUI and the former TrimUI/Miyoo package lanes are not
 supported.
 
+Supported feeds include GB, GBC, GBA, NES, Mega Drive, Pico-8, and Sony
+PlayStation (`PSX`). PlayStation downloads accept Leaf's canonical CHD, PBP,
+CUE/BIN, ISO, IMG, MDF, TOC, CBN, and M3U formats. ZIP/7z disc sets are
+inspected and extracted together so descriptor and companion files land on the
+same selected SD card under Leaf's `PS` system (`Roms/PSX`).
+
 The Catastrophe CGo bridge and shared Leaf-native screen graph are implemented.
 Normal launch, developer start routes, and visual fixtures all use Catastrophe
 as the sole GUI owner. The retained inherited download workers are headless

@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // OwnedKey represents one purchase granting download access to a game.
@@ -227,8 +227,8 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 
 	var uploads []Upload
 	for _, u := range items {
-		ext := strings.ToLower(filepath.Ext(u.Filename))
-		if ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".nes" || ext == ".md" || ext == ".gen" || ext == ".smd" || ext == ".zip" {
+		ext := strings.ToLower(roms.ROMExt(u.Filename))
+		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, Upload{
 				Filename: u.Filename,
 				UploadID: fmt.Sprintf("%d", u.ID),

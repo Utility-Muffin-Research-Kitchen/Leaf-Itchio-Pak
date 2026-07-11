@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkCachedCataloguePipeline5000(b *testing.B) {
-	platforms := []string{"GB", "GBC", "GBA", "NES", "MD", "P8"}
+	platforms := []string{"GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
 	games := make([]itchio.Game, 5000)
 	for i := range games {
 		games[i] = itchio.Game{

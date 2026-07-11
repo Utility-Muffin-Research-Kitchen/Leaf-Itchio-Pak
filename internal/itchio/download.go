@@ -16,7 +16,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
-// knownNonROMExts lists extensions that are definitely not GB/GBC ROM files.
+// knownNonROMExts lists extensions that are definitely not supported ROM/disc files.
 // Uploads with these extensions are silently dropped when scanning a game's
 // upload list. Anything not in this map (including no extension, version-number
 // suffixes like ".0", and ".zip") is returned with NeedsFormat=true so the
@@ -44,7 +44,8 @@ func presentAbsent(s string) string {
 	return "absent"
 }
 
-// FetchUploads returns the list of .gb/.gbc files available for free download.
+// FetchUploads returns the supported ROM, disc-image, and archive files
+// available for free download.
 //
 // Flow:
 //  1. GET game page → CSRF token

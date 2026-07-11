@@ -26,3 +26,10 @@ func TestFilterModelClear(t *testing.T) {
 		t.Fatalf("clear left values: %#v", m)
 	}
 }
+
+func TestFilterIncludesPlayStation(t *testing.T) {
+	m := NewFilterModel("PSX", "", "")
+	if m.Platform != "PSX" || m.PlatformLabel() != "PlayStation" {
+		t.Fatalf("PlayStation filter = %q/%q", m.Platform, m.PlatformLabel())
+	}
+}

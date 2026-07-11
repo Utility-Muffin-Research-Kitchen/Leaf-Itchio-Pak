@@ -8,9 +8,10 @@ import (
 type FileKind int
 
 const (
-	KindOther FileKind = iota
-	KindROM            // .gb .gbc .gba
-	KindMusic          // .mp3 .ogg .flac .wav .opus .mod .xm .s3m .it
+	KindOther      FileKind = iota
+	KindROM                 // directly launchable ROM/disc descriptor
+	KindROMSupport          // required companion data such as a PSX .bin track
+	KindMusic               // .mp3 .ogg .flac .wav .opus .mod .xm .s3m .it
 )
 
 // ZIPEntry is one file from a ZIP's central directory.
@@ -28,8 +29,10 @@ type ZIPManifest struct {
 var romExts = map[string]bool{
 	".gb": true, ".gbc": true, ".gba": true,
 	".nes": true,
-	".md": true, ".gen": true, ".smd": true,
+	".md":  true, ".gen": true, ".smd": true,
 	".p8": true, ".p8.png": true,
+	".cbn": true, ".chd": true, ".cue": true, ".img": true, ".iso": true,
+	".mdf": true, ".pbp": true, ".toc": true, ".m3u": true,
 }
 
 var musicExts = map[string]bool{
@@ -45,6 +48,9 @@ func ClassifyEntry(name string) FileKind {
 	ext := strings.ToLower(ROMExt(name))
 	if romExts[ext] {
 		return KindROM
+	}
+	if IsPSXSupportExt(ext) {
+		return KindROMSupport
 	}
 	if musicExts[ext] {
 		return KindMusic
@@ -68,6 +74,33 @@ func (m ZIPManifest) HasMusic() bool {
 		}
 	}
 	return false
+}
+
+func (m ZIPManifest) HasPSXFiles() bool {
+	for _, entry := range m.Entries {
+		if (entry.Kind == KindROM || entry.Kind == KindROMSupport) && IsPSXExt(ROMExt(entry.Name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// InstallROMExts returns every launchable or companion extension that must use
+// the same source-aware destination during archive extraction.
+func (m ZIPManifest) InstallROMExts() []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, entry := range m.Entries {
+		if entry.Kind != KindROM && entry.Kind != KindROMSupport {
+			continue
+		}
+		ext := strings.ToLower(ROMExt(entry.Name))
+		if !seen[ext] {
+			seen[ext] = true
+			result = append(result, ext)
+		}
+	}
+	return result
 }
 
 func (m ZIPManifest) ROMCount() int {

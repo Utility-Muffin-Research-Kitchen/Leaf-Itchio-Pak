@@ -146,8 +146,8 @@ func (flow *CatArchiveFlow) TakeDirectPlan() *CatDownloadPlan {
 func (flow *CatArchiveFlow) ExtractionPlan() ZIPPlan { return flow.plan }
 
 func (flow *CatArchiveFlow) ROMExtensions() []string {
-	exts := make([]string, 0, len(flow.plan.Manifest.ROMsByExt()))
-	for ext := range flow.plan.Manifest.ROMsByExt() {
+	exts := make([]string, 0, len(flow.plan.Manifest.InstallROMExts()))
+	for _, ext := range flow.plan.Manifest.InstallROMExts() {
 		if flow.plan.SelectedROMs != nil {
 			if selected, ok := flow.plan.SelectedROMs[ext]; ok && selected == "" {
 				continue
@@ -246,6 +246,17 @@ func (flow *CatArchiveFlow) SetMusicDir(dir string) {
 
 func (flow *CatArchiveFlow) prepareInitialAction() {
 	m := flow.plan.Manifest
+	if m.HasPSXFiles() {
+		flow.plan.DownloadROMs = true
+		flow.skipROMChoices = true
+		if m.HasMusic() && flow.cfg.MusicDownload == "ask" {
+			flow.action = CatArchiveChooseContents
+			return
+		}
+		flow.plan.DownloadMusic = m.HasMusic() && flow.cfg.MusicDownload == "auto"
+		flow.finishDestinations()
+		return
+	}
 	if m.IsSingleROMOnly() && !m.HasOtherFiles() {
 		ext := flow.firstROMExt()
 		if ext != ".p8" && ext != ".p8.png" && !strings.EqualFold(filepath.Ext(flow.upload.Filename), ".7z") {

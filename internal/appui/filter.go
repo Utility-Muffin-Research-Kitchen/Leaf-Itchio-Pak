@@ -9,8 +9,8 @@ const (
 	FilterSort
 )
 
-var FilterPlatforms = []string{"", "GB", "GBC", "GBA", "NES", "MD", "P8"}
-var FilterPlatformLabels = []string{"All platforms", "GB", "GBC", "GBA", "NES", "Mega Drive", "Pico-8"}
+var FilterPlatforms = []string{"", "GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
+var FilterPlatformLabels = []string{"All platforms", "GB", "GBC", "GBA", "NES", "Mega Drive", "Pico-8", "PlayStation"}
 var FilterSortValues = []string{"", "az", "za", "new", "free", "paid", "dl", "owned"}
 var FilterSortLabels = []string{"RSS", "A-Z", "Z-A", "Newest", "Free", "Paid", "Downloaded", "Owned"}
 

@@ -22,14 +22,40 @@ type Upload struct {
 	URL           string
 	UploadID      string // itch.io upload ID (API-based paid download)
 	DownloadKeyID string // itch.io download key ID (API-based paid download)
-	NeedsFormat   bool   // true if user must choose the format (GB, GBC, or ZIP)
+	NeedsFormat   bool   // true if the user must choose a supported format
+}
+
+var psxLaunchExts = map[string]bool{
+	".cbn": true, ".chd": true, ".cue": true, ".img": true, ".iso": true,
+	".mdf": true, ".pbp": true, ".toc": true, ".m3u": true,
+}
+
+func IsPSXLaunchExt(ext string) bool { return psxLaunchExts[strings.ToLower(ext)] }
+
+func IsPSXSupportExt(ext string) bool { return strings.EqualFold(ext, ".bin") }
+
+func IsPSXExt(ext string) bool { return IsPSXLaunchExt(ext) || IsPSXSupportExt(ext) }
+
+// IsSupportedUploadExt reports whether a filename can be routed without a
+// manual format choice. BIN is accepted as PSX companion data; a bin-only
+// install remains harmless because Leaf indexes descriptors/images, not BIN.
+func IsSupportedUploadExt(ext string) bool {
+	ext = strings.ToLower(ext)
+	switch ext {
+	case ".gb", ".gbc", ".gba", ".nes", ".md", ".gen", ".smd",
+		".p8", ".p8.png", ".zip", ".7z":
+		return true
+	default:
+		return IsPSXExt(ext)
+	}
 }
 
 func ScoreUpload(filename string) int {
 	switch strings.ToLower(ROMExt(filename)) {
 	case ".gbc", ".p8.png":
 		return 2
-	case ".gb", ".gba", ".nes", ".md", ".gen", ".smd", ".p8":
+	case ".gb", ".gba", ".nes", ".md", ".gen", ".smd", ".p8",
+		".cbn", ".chd", ".cue", ".img", ".iso", ".mdf", ".pbp", ".toc", ".m3u":
 		return 1
 	default:
 		return 0
@@ -62,7 +88,7 @@ func withTrailingSlash(path string) string {
 // ConfigurePaths installs the source-local paths resolved from Leaf's runtime
 // environment and canonical systems catalog. It must run before UI workers.
 func ConfigurePaths(config PathConfig) error {
-	required := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"}
+	required := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"}
 	copyConfig := &PathConfig{SystemDirs: make(map[string]string, len(config.SystemDirs))}
 	for _, id := range required {
 		path := config.SystemDirs[id]
@@ -200,10 +226,25 @@ func DestinationDir(ext, _ string) string {
 		return SystemDir("MD")
 	case ".p8", ".p8.png":
 		return SystemDir("PICO8")
+	case ".cbn", ".chd", ".cue", ".img", ".iso", ".mdf", ".pbp", ".toc", ".m3u", ".bin":
+		return SystemDir("PS")
 	case ".zip":
 		return SystemDir("GBC")
 	default:
 		return ""
+	}
+}
+
+// SupportsUnifiedNaming reports whether a ROM can be renamed without
+// invalidating references inside a descriptor or playlist. PSX descriptor,
+// playlist, companion, and raw-image formats conservatively retain their
+// upload names; self-contained CHD and PBP images are safe to rename.
+func SupportsUnifiedNaming(filename string) bool {
+	switch strings.ToLower(ROMExt(filename)) {
+	case ".cue", ".toc", ".m3u", ".bin", ".mdf", ".img", ".iso", ".cbn":
+		return false
+	default:
+		return true
 	}
 }
 

@@ -4,6 +4,7 @@ package ui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
@@ -17,7 +18,7 @@ func newCatDownloadFlowForTest(t *testing.T) (*CatDownloadFlow, *appui.DownloadS
 	t.Helper()
 	root := t.TempDir()
 	systems := map[string]string{}
-	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		systems[id] = filepath.Join(root, "Roms", id)
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
@@ -43,6 +44,23 @@ func TestCatDownloadFlowClassifiesDirectAndMulti(t *testing.T) {
 	plan := flow.TakePlan()
 	if plan == nil || plan.Kind != CatDownloadPlanDirect || len(plan.DestPaths) != 1 {
 		t.Fatalf("direct plan = %#v", plan)
+	}
+
+	flow.setUploads(model, []roms.Upload{{Filename: "game.chd"}})
+	plan = flow.TakePlan()
+	if plan == nil || plan.Kind != CatDownloadPlanDirect || filepath.Base(plan.DestPaths[0]) != "game.chd" {
+		t.Fatalf("PSX CHD plan = %#v", plan)
+	}
+
+	flow.setUploads(model, []roms.Upload{{Filename: "disc.cue"}, {Filename: "disc.bin"}})
+	plan = flow.TakePlan()
+	if plan == nil || plan.Kind != CatDownloadPlanMulti || len(plan.DestPaths) != 2 {
+		t.Fatalf("PSX cue/bin plan = %#v", plan)
+	}
+
+	flow.setUploads(model, []roms.Upload{{Filename: "orphan.bin"}})
+	if plan = flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectError {
+		t.Fatalf("orphan BIN was accepted: plan=%#v model=%#v", plan, model)
 	}
 
 	flow.setUploads(model, []roms.Upload{{Filename: "one.gb"}, {Filename: "two.gbc"}})
@@ -77,6 +95,19 @@ func TestCatDownloadFlowManualUnknownFormat(t *testing.T) {
 	plan := flow.TakePlan()
 	if plan == nil || plan.Kind != CatDownloadPlanDirect || plan.Uploads[0].Filename != "mystery.p8.png" {
 		t.Fatalf("manual format plan = %#v", plan)
+	}
+}
+
+func TestCatDownloadFlowOffersPlayStationManualFormats(t *testing.T) {
+	labels := allFormatLabels()
+	for _, want := range []string{"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U"} {
+		found := false
+		for _, label := range labels {
+			found = found || label == want
+		}
+		if !found || formatExtension(want) != "."+strings.ToLower(want) {
+			t.Errorf("manual PSX format %s missing or incorrectly mapped", want)
+		}
 	}
 }
 

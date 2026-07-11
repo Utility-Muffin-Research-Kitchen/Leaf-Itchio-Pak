@@ -263,3 +263,41 @@ func TestInspectRemoteZIP_MacOSMetaDirExcluded(t *testing.T) {
 		t.Errorf("p8.png name = %q, want %q", p8png[0].Name, "moss_moss.p8.png")
 	}
 }
+
+func TestInspectRemoteZIP_PSXCueBinBundle(t *testing.T) {
+	data := buildTestZIP(t, map[string]string{
+		"game/disc.cue": "FILE \"disc.bin\" BINARY\n  TRACK 01 MODE2/2352\n",
+		"game/disc.bin": "track data",
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "game.zip", time.Time{}, bytes.NewReader(data))
+	}))
+	defer srv.Close()
+
+	manifest, err := roms.InspectRemoteZIP(srv.Client(), srv.URL+"/game.zip", nil)
+	if err != nil {
+		t.Fatalf("InspectRemoteZIP: %v", err)
+	}
+	if !manifest.HasPSXFiles() {
+		t.Fatal("HasPSXFiles() = false, want true")
+	}
+	if manifest.ROMCount() != 1 {
+		t.Fatalf("ROMCount = %d, want 1 cue descriptor", manifest.ROMCount())
+	}
+	supportCount := 0
+	for _, entry := range manifest.Entries {
+		if entry.Kind == roms.KindROMSupport {
+			supportCount++
+		}
+	}
+	if supportCount != 1 {
+		t.Fatalf("KindROMSupport count = %d, want 1 bin track", supportCount)
+	}
+	wantExts := map[string]bool{".cue": true, ".bin": true}
+	for _, ext := range manifest.InstallROMExts() {
+		delete(wantExts, ext)
+	}
+	if len(wantExts) != 0 {
+		t.Fatalf("InstallROMExts missing extensions: %v", wantExts)
+	}
+}

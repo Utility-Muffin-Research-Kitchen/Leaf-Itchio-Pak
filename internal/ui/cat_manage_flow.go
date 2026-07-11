@@ -88,6 +88,9 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	})
 	for _, index := range romIndices {
 		file := entry.Files[index]
+		if !roms.SupportsUnifiedNaming(file.DestPath) {
+			continue
+		}
 		label := "Use title for " + filepath.Base(file.DestPath)
 		if file.UnifiedName {
 			label = "Restore upload name for " + filepath.Base(file.DestPath)
@@ -364,6 +367,9 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 		return nil, nil, fmt.Errorf("managed ROM is no longer in the inventory")
 	}
 	file := entry.Files[fileIndex]
+	if !roms.SupportsUnifiedNaming(file.DestPath) {
+		return nil, nil, fmt.Errorf("this PlayStation descriptor or companion file must keep its original name")
+	}
 	if managedContentKind(file) != inventory.ContentKindROM {
 		return nil, nil, fmt.Errorf("only ROM files can be renamed")
 	}

@@ -18,7 +18,7 @@ func configureManageFixture(t *testing.T, sources leaf.SourceList, catalog *leaf
 	configs := make([]roms.SourcePathConfig, 0, len(sources))
 	for _, source := range sources {
 		dirs := make(map[string]string)
-		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 			dir, err := catalog.ROMDir(source, id)
 			if err != nil {
 				t.Fatal(err)
@@ -117,6 +117,24 @@ func TestCatManageRechecksCardBeforeDeletion(t *testing.T) {
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || len(entry.Files) != 1 {
 		t.Fatal("blocked deletion changed the inventory")
+	}
+}
+
+func TestCatManageDoesNotOfferUnsafePSXDescriptorRename(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	configureManageFixture(t, sources, catalog)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := "https://example.invalid/psx"
+	addManagedROM(t, inv, gameURL, "PSX Game", filepath.Join(sources[0].RomsPath, "PSX", "disc.cue"))
+	addManagedROM(t, inv, gameURL, "PSX Game", filepath.Join(sources[0].RomsPath, "PSX", "disc.bin"))
+	_, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range model.Items {
+		if item.Kind == appui.ManageItemRename {
+			t.Fatalf("unsafe PSX rename row exposed: %#v", item)
+		}
 	}
 }
 

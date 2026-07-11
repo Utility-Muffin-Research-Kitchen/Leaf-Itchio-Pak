@@ -75,6 +75,8 @@ func RomCoreInfo(romDestPath string) (coreTag, coreName string) {
 		return "FC", "fceumm"
 	case SystemDir("MD"):
 		return "MD", "picodrive"
+	case SystemDir("PS"):
+		return "PS", "pcsx_rearmed"
 	default:
 		return "", ""
 	}

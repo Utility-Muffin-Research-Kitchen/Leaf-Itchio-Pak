@@ -15,6 +15,7 @@ func TestFeedCodesAndSlugs(t *testing.T) {
 		{Code: "NES", Name: "Nintendo Entertainment System", FeedSlugs: []string{"tag-nes-rom"}},
 		{Code: "MD", Name: "Sega Genesis", FeedSlugs: []string{"tag-sega-mega-drive", "tag-genesis-rom"}},
 		{Code: "P8", Name: "Pico-8", FeedSlugs: []string{"tag-pico-8"}},
+		{Code: "PSX", Name: "Sony PlayStation", FeedSlugs: []string{"tag-ps1"}},
 	}
 
 	if !reflect.DeepEqual(itchio.AllPlatforms, want) {
