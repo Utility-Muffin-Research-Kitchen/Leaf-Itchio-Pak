@@ -41,6 +41,11 @@ capture download-error 960 720 1 0
 capture download-inhibit 960 720 1 0
 capture download-cancelled 960 720 1 0
 capture download-handoff 960 720 1 0
+capture destination-source 960 720 1 0
+capture destination-source 1280 800 0 5
+capture destination-folder 960 720 1 0
+capture destination-folder 1280 800 0 5
+capture destination-music 960 720 1 0
 
 python3 - "$OUT" <<'PY'
 import pathlib

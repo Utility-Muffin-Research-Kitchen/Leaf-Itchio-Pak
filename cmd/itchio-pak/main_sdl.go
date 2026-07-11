@@ -101,12 +101,29 @@ func runSDL() {
 		}
 		systemDirs[id] = dir
 	}
+	sourcePaths := make([]roms.SourcePathConfig, 0, len(runtimeEnv.Sources))
+	for _, source := range runtimeEnv.Sources {
+		dirs := make(map[string]string, 6)
+		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8"} {
+			dir, resolveErr := catalog.ROMDir(source, id)
+			if resolveErr != nil {
+				logger.Error("leaf systems: source %s: %v", source.ID, resolveErr)
+				os.Exit(1)
+			}
+			dirs[id] = dir
+		}
+		sourcePaths = append(sourcePaths, roms.SourcePathConfig{
+			SourceID: source.ID, Root: source.Root, MusicRoot: source.MusicPath,
+			StatesRoot: source.StatesPath, SystemDirs: dirs,
+		})
+	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
 		SystemDirs:  systemDirs,
 		SourceID:    primary.ID,
 		PrimaryRoot: primary.Root,
 		MusicRoot:   primary.MusicPath,
 		StatesRoot:  primary.StatesPath,
+		Sources:     sourcePaths,
 	}); err != nil {
 		logger.Error("leaf destinations: %v", err)
 		os.Exit(1)
@@ -134,7 +151,8 @@ func runSDL() {
 	inv.VerifyAndClean(inventoryPath)
 	client := itchio.NewClient()
 	if os.Getenv("ITCHIO_CAT_LIVE_LIST") == "1" {
-		if err := runCatLiveList(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath); err != nil {
+		if err := runCatLiveList(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
+			runtimeEnv.Sources, catalog); err != nil {
 			logger.Error("Catastrophe live main list: %v", err)
 			os.Exit(1)
 		}
@@ -383,7 +401,7 @@ loop:
 }
 
 func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, ownedCachePath string,
-	inv *inventory.Inventory, inventoryPath string) error {
+	inv *inventory.Inventory, inventoryPath string, sources leaf.SourceList, catalog *leaf.Catalog) error {
 	resourceDir := os.Getenv("ITCHIO_RES_DIR")
 	fontPath := os.Getenv("CAT_FONT_PATH")
 	if fontPath == "" && resourceDir != "" {
@@ -418,6 +436,7 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteFilter
 		catRouteDetail
 		catRouteDownloadSelect
+		catRouteDestination
 		catRouteDownloadProgress
 	)
 	route := catRouteList
@@ -434,6 +453,10 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var downloadProgressModel *appui.DownloadProgressModel
 	var downloadProgressScreen *catui.DownloadProgressScreen
 	var downloadBackend ui.CatDownloadBackend
+	var destinationModel *appui.DestinationModel
+	var destinationScreen *catui.DestinationScreen
+	var destinationFlow *ui.CatDestinationFlow
+	var destinationPlan *ui.CatDownloadPlan
 	startDownloadPlan := func(plan *ui.CatDownloadPlan) error {
 		if plan == nil {
 			return nil
@@ -443,7 +466,19 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			downloadSelectModel.SetHandoff("ZIP/7z inspection must classify ROM and music contents before writing files. That Cat route is scheduled with the archive/destination slice.")
 			return nil
 		case ui.CatDownloadPlanDestination:
-			downloadSelectModel.SetHandoff("This configuration requires choosing an SD card or folder. The Cat dual-SD destination browser is the next planned slice; no destination was selected automatically.")
+			var flowErr error
+			destinationFlow, destinationModel, flowErr = ui.NewCatROMDestinationFlow(
+				sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
+			if flowErr != nil {
+				downloadSelectModel.SetError(flowErr.Error())
+				return nil
+			}
+			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
+			if flowErr != nil {
+				return flowErr
+			}
+			destinationPlan = plan
+			route = catRouteDestination
 			return nil
 		case ui.CatDownloadPlanDirect:
 			downloadBackend = ui.NewCatDirectDownloadBackend(client, cfg, activeGame, activeDetail,
@@ -473,6 +508,8 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return detailScreen.Draw()
 		case catRouteDownloadSelect:
 			return downloadSelectScreen.Draw()
+		case catRouteDestination:
+			return destinationScreen.Draw()
 		case catRouteDownloadProgress:
 			return downloadProgressScreen.Draw()
 		default:
@@ -572,6 +609,41 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					downloadFlow.Choose(downloadSelectModel)
 					if err := startDownloadPlan(downloadFlow.TakePlan()); err != nil {
 						return err
+					}
+				}
+			case catRouteDestination:
+				switch destinationScreen.HandleInput(event) {
+				case appui.DestinationIntentBack:
+					if destinationFlow.Back(destinationModel) {
+						destinationFlow, destinationModel, destinationScreen, destinationPlan = nil, nil, nil, nil
+						downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+						route = catRouteDetail
+					}
+				case appui.DestinationIntentActivate:
+					complete, destinationErr := destinationFlow.Activate(destinationModel)
+					if destinationErr != nil {
+						destinationModel.SetError(destinationErr.Error())
+						break
+					}
+					if complete {
+						dirs := destinationFlow.DestPaths()
+						resolved := &ui.CatDownloadPlan{Uploads: append([]roms.Upload(nil), destinationPlan.Uploads...)}
+						if len(resolved.Uploads) == 1 {
+							resolved.Kind = ui.CatDownloadPlanDirect
+						} else {
+							resolved.Kind = ui.CatDownloadPlanMulti
+						}
+						for index, upload := range resolved.Uploads {
+							dest := filepath.Join(dirs[index], upload.Filename)
+							if existing := inv.ExistingDestPath(activeGame.URL, upload.Filename); existing != "" {
+								dest = existing
+							}
+							resolved.DestPaths = append(resolved.DestPaths, dest)
+						}
+						destinationFlow, destinationModel, destinationScreen, destinationPlan = nil, nil, nil, nil
+						if err := startDownloadPlan(resolved); err != nil {
+							return err
+						}
 					}
 				}
 			case catRouteDownloadProgress:

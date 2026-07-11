@@ -122,6 +122,37 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadProgressIntentBack
 		}
+	case "destination-source", "destination-folder", "destination-music":
+		model := appui.NewDestinationModel("Leafbound 葉")
+		switch config.Screen {
+		case "destination-source":
+			model.SetSources([]appui.DestinationItem{
+				{Kind: appui.DestinationItemSource, Label: "Primary SD", Detail: "Available", Enabled: true},
+				{Kind: appui.DestinationItemSource, Label: "Secondary SD", Detail: "Available", Enabled: true},
+				{Kind: appui.DestinationItemSource, Label: "SD card 3", Detail: "Not mounted", Enabled: false},
+			})
+		case "destination-folder":
+			model.SetFolders("Choose GBC folder (1/2)", "Secondary SD / RPG", []appui.DestinationItem{
+				{Kind: appui.DestinationItemSave, Label: "Save here", Detail: "Use this folder", Enabled: true},
+				{Kind: appui.DestinationItemUp, Label: "..", Detail: "Parent folder", Enabled: true},
+				{Kind: appui.DestinationItemFolder, Label: "Action", Detail: "Folder", Value: "Action", Enabled: true},
+				{Kind: appui.DestinationItemFolder, Label: "日本語", Detail: "Folder", Value: "日本語", Enabled: true},
+			})
+		case "destination-music":
+			model.SetFolders("Choose Music folder", "Primary SD / Albums", []appui.DestinationItem{
+				{Kind: appui.DestinationItemSave, Label: "Save here", Detail: "Use this folder", Enabled: true},
+				{Kind: appui.DestinationItemUp, Label: "..", Detail: "Parent folder", Enabled: true},
+				{Kind: appui.DestinationItemFolder, Label: "Game Soundtracks", Detail: "Folder", Value: "Game Soundtracks", Enabled: true},
+			})
+		}
+		screen, screenErr := NewDestinationScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.DestinationIntentBack
+		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
 	}

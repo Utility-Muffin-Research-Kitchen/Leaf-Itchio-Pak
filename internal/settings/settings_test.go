@@ -86,7 +86,7 @@ func TestContentFilterRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 
 	cfg := &settings.Config{
-		APIKey:       "",
+		APIKey:      "",
 		ROMLocation: "auto",
 		Filter: settings.ContentFilter{
 			AdultContent: settings.CategoryFilter{Enabled: true, Disabled: []string{"ecchi", "suggestive"}},
@@ -209,6 +209,29 @@ func TestLastROMDirsOmittedWhenNil(t *testing.T) {
 	}
 	if bytes.Contains(data, []byte("last_rom_dirs")) {
 		t.Errorf("last_rom_dirs should be omitted when nil, found in JSON:\n%s", data)
+	}
+}
+
+func TestRememberedDestinationsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := &settings.Config{
+		ROMDestinations: map[string]settings.RememberedDestination{
+			"GBC": {SourceID: "secondary_sd", RelativePath: "RPG"},
+		},
+		MusicDestination: &settings.RememberedDestination{SourceID: "primary", RelativePath: "Albums"},
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := settings.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.ROMDestinations["GBC"]; got.SourceID != "secondary_sd" || got.RelativePath != "RPG" {
+		t.Fatalf("ROM destination = %#v", got)
+	}
+	if loaded.MusicDestination == nil || loaded.MusicDestination.SourceID != "primary" || loaded.MusicDestination.RelativePath != "Albums" {
+		t.Fatalf("music destination = %#v", loaded.MusicDestination)
 	}
 }
 

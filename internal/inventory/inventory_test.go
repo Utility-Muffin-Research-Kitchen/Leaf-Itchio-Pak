@@ -18,6 +18,22 @@ func TestMain(m *testing.M) {
 			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
 		},
 		SourceID: "primary", PrimaryRoot: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+		Sources: []roms.SourcePathConfig{
+			{
+				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+				SystemDirs: map[string]string{
+					"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+					"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8",
+				},
+			},
+			{
+				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
+				SystemDirs: map[string]string{
+					"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA",
+					"FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8",
+				},
+			},
+		},
 	})
 	if err != nil {
 		panic(err)
@@ -142,6 +158,21 @@ func TestAdd_PopulatesLeafPathIdentity(t *testing.T) {
 	}
 	if file.ContentKind != inventory.FileTypeROM || file.OriginalUpload != "game.gb" || file.InstalledName != "game.gb" {
 		t.Fatalf("missing normalized inventory fields: %+v", file)
+	}
+}
+
+func TestAdd_PreservesSecondaryLeafPathIdentity(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("https://dev.itch.io/game", inventory.Entry{GameID: "42", Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: "/secondary/Roms/GBC/RPG/game.gbc", DownloadedAt: time.Now(),
+	})
+	entry, ok := inv.Lookup("https://dev.itch.io/game")
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("expected one inventory file")
+	}
+	file := entry.Files[0]
+	if file.SourceID != "secondary_sd" || file.RelativePath != "Roms/GBC/RPG/game.gbc" || file.CanonicalSystem != "GBC" {
+		t.Fatalf("unexpected secondary identity: %+v", file)
 	}
 }
 

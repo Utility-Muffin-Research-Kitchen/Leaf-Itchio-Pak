@@ -17,11 +17,31 @@ func TestMain(m *testing.M) {
 		PrimaryRoot: "/leaf",
 		MusicRoot:   "/leaf/Music",
 		StatesRoot:  "/leaf/States",
+		Sources: []roms.SourcePathConfig{
+			{
+				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+				SystemDirs: map[string]string{"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA", "FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8"},
+			},
+			{
+				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
+				SystemDirs: map[string]string{"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA", "FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8"},
+			},
+		},
 	})
 	if err != nil {
 		panic(err)
 	}
 	os.Exit(m.Run())
+}
+
+func TestDescribeDestinationPreservesSecondarySource(t *testing.T) {
+	got, ok := roms.DescribeDestination("/secondary/Roms/GBC/RPG/game.gbc")
+	if !ok {
+		t.Fatal("secondary destination was not described")
+	}
+	if got.SourceID != "secondary_sd" || got.RelativePath != "Roms/GBC/RPG/game.gbc" || got.CanonicalSystem != "GBC" {
+		t.Fatalf("identity = %#v", got)
+	}
 }
 
 func TestScoreUpload(t *testing.T) {

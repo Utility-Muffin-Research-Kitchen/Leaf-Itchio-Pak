@@ -42,6 +42,12 @@ type PathConfig struct {
 	PrimaryRoot string
 	MusicRoot   string
 	StatesRoot  string
+	Sources     []SourcePathConfig
+}
+
+type SourcePathConfig struct {
+	SourceID, Root, MusicRoot, StatesRoot string
+	SystemDirs                            map[string]string
 }
 
 var pathConfig atomic.Pointer[PathConfig]
@@ -81,6 +87,31 @@ func ConfigurePaths(config PathConfig) error {
 	copyConfig.PrimaryRoot = withTrailingSlash(config.PrimaryRoot)
 	copyConfig.MusicRoot = withTrailingSlash(config.MusicRoot)
 	copyConfig.StatesRoot = withTrailingSlash(config.StatesRoot)
+	if len(config.Sources) == 0 {
+		config.Sources = []SourcePathConfig{{
+			SourceID: config.SourceID, Root: config.PrimaryRoot, MusicRoot: config.MusicRoot,
+			StatesRoot: config.StatesRoot, SystemDirs: config.SystemDirs,
+		}}
+	}
+	seenSources := make(map[string]bool, len(config.Sources))
+	for _, source := range config.Sources {
+		if source.SourceID == "" || source.Root == "" || seenSources[source.SourceID] {
+			return fmt.Errorf("invalid Leaf source path configuration %q", source.SourceID)
+		}
+		seenSources[source.SourceID] = true
+		copySource := SourcePathConfig{
+			SourceID: source.SourceID, Root: withTrailingSlash(source.Root),
+			MusicRoot: withTrailingSlash(source.MusicRoot), StatesRoot: withTrailingSlash(source.StatesRoot),
+			SystemDirs: make(map[string]string, len(source.SystemDirs)),
+		}
+		for _, id := range required {
+			if source.SystemDirs[id] == "" {
+				return fmt.Errorf("missing Leaf destination for source %s system %s", source.SourceID, id)
+			}
+			copySource.SystemDirs[id] = withTrailingSlash(source.SystemDirs[id])
+		}
+		copyConfig.Sources = append(copyConfig.Sources, copySource)
+	}
 	pathConfig.Store(copyConfig)
 	return nil
 }
@@ -91,27 +122,30 @@ type PathIdentity struct {
 	CanonicalSystem string
 }
 
-// DescribeDestination converts a configured primary-source path to stable
-// inventory identity. Paths outside the source are rejected without guessing.
+// DescribeDestination converts a configured content-source path to stable
+// inventory identity. Paths outside every source are rejected without guessing.
 func DescribeDestination(path string) (PathIdentity, bool) {
 	config := pathConfig.Load()
 	if config == nil || path == "" {
 		return PathIdentity{}, false
 	}
-	rel, err := filepath.Rel(filepath.Clean(config.PrimaryRoot), filepath.Clean(path))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return PathIdentity{}, false
-	}
-	identity := PathIdentity{SourceID: config.SourceID, RelativePath: filepath.ToSlash(rel)}
 	cleanPath := filepath.Clean(path)
-	for id, dir := range config.SystemDirs {
-		systemRel, systemErr := filepath.Rel(filepath.Clean(dir), cleanPath)
-		if systemErr == nil && systemRel != ".." && !strings.HasPrefix(systemRel, ".."+string(filepath.Separator)) {
-			identity.CanonicalSystem = id
-			break
+	for _, source := range config.Sources {
+		rel, err := filepath.Rel(filepath.Clean(source.Root), cleanPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
 		}
+		identity := PathIdentity{SourceID: source.SourceID, RelativePath: filepath.ToSlash(rel)}
+		for id, dir := range source.SystemDirs {
+			systemRel, systemErr := filepath.Rel(filepath.Clean(dir), cleanPath)
+			if systemErr == nil && systemRel != ".." && !strings.HasPrefix(systemRel, ".."+string(filepath.Separator)) {
+				identity.CanonicalSystem = id
+				break
+			}
+		}
+		return identity, true
 	}
-	return identity, true
+	return PathIdentity{}, false
 }
 
 func PrimaryRoot() string {
