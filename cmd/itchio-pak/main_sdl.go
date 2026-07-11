@@ -45,6 +45,18 @@ func runSDL() {
 		}
 		return
 	}
+	if os.Getenv("ITCHIO_CAT_MAIN_LIST") == "1" {
+		frames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_MAIN_LIST_FRAMES"))
+		if err := catui.RunMainListFixture(catui.MainListFixtureConfig{
+			State:          os.Getenv("ITCHIO_CAT_MAIN_LIST_STATE"),
+			Frames:         frames,
+			ScreenshotPath: os.Getenv("ITCHIO_CAT_MAIN_LIST_SCREENSHOT"),
+		}); err != nil {
+			logger.Error("Catastrophe main-list slice: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	runtimeEnv, err := leaf.LoadEnvironment()
 	if err != nil {
 		logger.Error("leaf runtime: %v", err)

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
@@ -33,12 +34,12 @@ const (
 
 // Auto-repeat timing for held D-pad buttons
 const (
-	repeatDelay           = 300 * time.Millisecond  // initial delay before repeating
-	accelStart            = 180 * time.Millisecond  // repeat interval when acceleration begins
-	accelMin              = 30 * time.Millisecond   // repeat interval at full speed
-	accelRamp             = 1500 * time.Millisecond // time to reach accelMin from accelStart
-	shoulderAccelMin      = 15 * time.Millisecond  // minimum repeat interval for D-pad page-scroll
-	cacheTTL              = 24 * time.Hour
+	repeatDelay      = 300 * time.Millisecond  // initial delay before repeating
+	accelStart       = 180 * time.Millisecond  // repeat interval when acceleration begins
+	accelMin         = 30 * time.Millisecond   // repeat interval at full speed
+	accelRamp        = 1500 * time.Millisecond // time to reach accelMin from accelStart
+	shoulderAccelMin = 15 * time.Millisecond   // minimum repeat interval for D-pad page-scroll
+	cacheTTL         = 24 * time.Hour
 
 	// coverSettleDelay is how long the cursor must be stationary before cover
 	// art fetches are initiated. Below accelStart (180 ms) so normal browsing
@@ -86,15 +87,15 @@ type truncCacheKey struct {
 }
 
 type ListScreen struct {
-	client     *itchio.Client
-	cfg        *settings.Config
-	cache      *renderer.ImageCache
-	cursor      int
-	loading     atomic.Bool
-	err         error
-	cfgPath     string
-	totalGames  atomic.Int32 // 0 = not yet known
-	totalPages  atomic.Int32 // 0 = not yet known
+	client       *itchio.Client
+	cfg          *settings.Config
+	cache        *renderer.ImageCache
+	cursor       int
+	loading      atomic.Bool
+	err          error
+	cfgPath      string
+	totalGames   atomic.Int32 // 0 = not yet known
+	totalPages   atomic.Int32 // 0 = not yet known
 	pageUpdateCh chan pageResult
 
 	// Held-button auto-repeat state
@@ -155,10 +156,10 @@ type ListScreen struct {
 
 	// Sort/filter state
 	sortMode       itchio.SortMode
-	platformFilter string          // "" = All; persisted to config.json
-	searchQuery    string          // "" = no filter; session-only, not persisted
-	viewGames      []itchio.Game   // sorted/filtered view; paging operates on this
-	needsRebuild   bool            // set by ScheduleRebuild; consumed at next Draw
+	platformFilter string        // "" = All; persisted to config.json
+	searchQuery    string        // "" = no filter; session-only, not persisted
+	viewGames      []itchio.Game // sorted/filtered view; paging operates on this
+	needsRebuild   bool          // set by ScheduleRebuild; consumed at next Draw
 
 	nextUITheme    theme.Theme
 	defaultTheme   theme.Theme
@@ -368,7 +369,6 @@ func (s *ListScreen) jumpCursor(n int) {
 	s.warmedGameURL = ""
 }
 
-
 func (s *ListScreen) NeedsRedraw() bool {
 	if s.heldDir != 0 || s.heldShoulderDir != 0 {
 		return true
@@ -468,8 +468,8 @@ func (s *ListScreen) Draw(r *renderer.Renderer) {
 	// This is 3 draw calls, far cheaper than the previous 36-dot approach.
 	if s.cacheBuilding.Load() || (s.updateSvc != nil && s.updateSvc.IsRunning()) {
 		titleW, _ := r.BoldTextSize("Itch.io")
-		outerR := fontH * 2 / 5       // diameter ≈ 80% of font height
-		innerR := outerR * 7 / 10     // ~3px ring at typical sizes
+		outerR := fontH * 2 / 5   // diameter ≈ 80% of font height
+		innerR := outerR * 7 / 10 // ~3px ring at typical sizes
 		cx := int32(12) + titleW + 18 + outerR
 		cy := headerTextY + fontH/2
 
@@ -485,8 +485,8 @@ func (s *ListScreen) Draw(r *renderer.Renderer) {
 		// the anti-aliased fringe and eliminate tip artefacts. Arms use the header bar
 		// colour so they blend seamlessly with the header background.
 		offset := float64(time.Now().UnixMilli()) / 3000.0 * 2.0 * math.Pi
-		hw := float64(outerR) / 2.0      // arm half-width
-		R := float64(outerR) + 3.0       // extend past outer edge to cover fringe
+		hw := float64(outerR) / 2.0 // arm half-width
+		R := float64(outerR) + 3.0  // extend past outer edge to cover fringe
 		hBG := r.Theme.HeaderBG
 		fcx, fcy := float64(cx), float64(cy)
 		for i := 0; i < 3; i++ {
@@ -996,7 +996,6 @@ func (s *ListScreen) Draw(r *renderer.Renderer) {
 	r.Present()
 }
 
-
 func (s *ListScreen) cachedPageInfo() string {
 	cp := s.cursor/itchio.PerPage + 1
 	tp := s.totalPages.Load()
@@ -1059,188 +1058,186 @@ func (s *ListScreen) SetFilter(platform, sort, query string) {
 }
 
 func (s *ListScreen) HandleEvent(e sdl.Event) Screen {
-	switch ev := e.(type) {
-	case *sdl.KeyboardEvent:
-		switch ev.Keysym.Sym {
-		case sdl.K_DOWN:
-			if ev.Type == sdl.KEYDOWN {
-				s.startHold(1)
-			} else {
-				s.stopHold(1)
-			}
-			return s
-		case sdl.K_UP:
-			if ev.Type == sdl.KEYDOWN {
-				s.startHold(-1)
-			} else {
-				s.stopHold(-1)
-			}
-			return s
-		case sdl.K_RIGHT:
-			if ev.Type == sdl.KEYDOWN {
-				if s.isAlphaJumpMode() && s.cacheReady {
-					s.jumpCursor(alphaJumpIndex(s.viewGames, s.cursor, 1) - s.cursor)
-				} else {
-					s.startShoulderHold(1)
-				}
-			} else {
-				s.stopShoulderHold(1)
-			}
-			return s
-		case sdl.K_LEFT:
-			if ev.Type == sdl.KEYDOWN {
-				if s.isAlphaJumpMode() && s.cacheReady {
-					s.jumpCursor(alphaJumpIndex(s.viewGames, s.cursor, -1) - s.cursor)
-				} else {
-					s.startShoulderHold(-1)
-				}
-			} else {
-				s.stopShoulderHold(-1)
-			}
-			return s
+	event, ok := listAppEvent(e)
+	if !ok {
+		return s
+	}
+	switch s.handleAppInput(event) {
+	case appui.ListIntentOpen:
+		if s.cursor < len(s.viewGames) {
+			return NewDetailScreen(s.client, s.cfg, s.cfgPath, s.cache, s.viewGames[s.cursor], s.inv, s.inventoryPath, s, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle)
 		}
-		if ev.Type != sdl.KEYDOWN {
-			return s
+	case appui.ListIntentExit:
+		return nil
+	case appui.ListIntentRetry:
+		go s.loadPage(1, "")
+	case appui.ListIntentFilter:
+		return NewFilterScreen(s, s.platformFilter, string(s.sortMode), s.searchQuery,
+			func(platform, sort, query string) { s.SetFilter(platform, sort, query) })
+	case appui.ListIntentSettings:
+		return NewSettingsScreen(s.client, s.cfg, s.cfgPath, s.inv, s.inventoryPath, s.cache, s, s.newCacheRefreshScreen, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle, s.onOwnedReady)
+	case appui.ListIntentPreviousSort:
+		if s.cacheReady {
+			s.SetFilter(s.platformFilter, string(s.prevSortModeSimple()), s.searchQuery)
 		}
-		switch ev.Keysym.Sym {
-		case sdl.K_ESCAPE:
-			return nil
-		case sdl.K_RETURN:
-			if s.cursor < len(s.viewGames) {
-				return NewDetailScreen(s.client, s.cfg, s.cfgPath, s.cache, s.viewGames[s.cursor], s.inv, s.inventoryPath, s, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle)
-			}
-		case sdl.K_s:
-			return NewSettingsScreen(s.client, s.cfg, s.cfgPath, s.inv, s.inventoryPath, s.cache, s, s.newCacheRefreshScreen, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle, s.onOwnedReady)
-		case sdl.K_TAB: // SELECT → filter overlay
-			return NewFilterScreen(s, s.platformFilter, string(s.sortMode), s.searchQuery,
-				func(platform, sort, query string) {
-					s.SetFilter(platform, sort, query)
-				})
-		case sdl.K_PAGEDOWN: // R shoulder — cycle sort forward
-			if s.cacheReady {
-				s.SetFilter(s.platformFilter, string(s.nextSortModeSimple()), s.searchQuery)
-			}
-			return s
-		case sdl.K_PAGEUP: // L shoulder — cycle sort backward
-			if s.cacheReady {
-				s.SetFilter(s.platformFilter, string(s.prevSortModeSimple()), s.searchQuery)
-			}
-			return s
-		case sdl.K_x:
-			if s.cursor < len(s.viewGames) {
-				g := s.viewGames[s.cursor]
-				if s.inv.HasPendingUpdates(g.URL) {
-					s.inv.DismissUpdate(g.URL)
-					if err := s.inv.Save(s.inventoryPath); err != nil {
-						logger.Warn("inventory: save after dismiss: %v", err)
-					}
-					s.rebuildView()
-				} else if s.inv.IsRemoved(g.URL) {
-					s.inv.DismissRemoval(g.URL)
-					if err := s.inv.Save(s.inventoryPath); err != nil {
-						logger.Warn("inventory: save after dismiss: %v", err)
-					}
-					s.rebuildView()
-				}
-			}
-			return s
+	case appui.ListIntentNextSort:
+		if s.cacheReady {
+			s.SetFilter(s.platformFilter, string(s.nextSortModeSimple()), s.searchQuery)
 		}
-	case *sdl.ControllerButtonEvent:
-		switch ev.Button {
-		case sdl.CONTROLLER_BUTTON_DPAD_DOWN:
-			if ev.Type == sdl.CONTROLLERBUTTONDOWN {
-				s.startHold(1)
-			} else {
-				s.stopHold(1)
-			}
-			return s
-		case sdl.CONTROLLER_BUTTON_DPAD_UP:
-			if ev.Type == sdl.CONTROLLERBUTTONDOWN {
-				s.startHold(-1)
-			} else {
-				s.stopHold(-1)
-			}
-			return s
-		case sdl.CONTROLLER_BUTTON_DPAD_RIGHT:
-			if ev.Type == sdl.CONTROLLERBUTTONDOWN {
-				if s.isAlphaJumpMode() && s.cacheReady {
-					s.jumpCursor(alphaJumpIndex(s.viewGames, s.cursor, 1) - s.cursor)
-				} else {
-					s.startShoulderHold(1)
-				}
-			} else {
-				s.stopShoulderHold(1)
-			}
-			return s
-		case sdl.CONTROLLER_BUTTON_DPAD_LEFT:
-			if ev.Type == sdl.CONTROLLERBUTTONDOWN {
-				if s.isAlphaJumpMode() && s.cacheReady {
-					s.jumpCursor(alphaJumpIndex(s.viewGames, s.cursor, -1) - s.cursor)
-				} else {
-					s.startShoulderHold(-1)
-				}
-			} else {
-				s.stopShoulderHold(-1)
-			}
-			return s
-		}
-		if ev.Type != sdl.CONTROLLERBUTTONDOWN {
-			return s
-		}
-		// Allow retrying when the feed is blocked (physical A = confirm button = sdl B).
-		// CONTROLLER_BUTTON_A (physical B = back/exit) is intentionally left unhandled
-		// here so it falls through to the exit case below.
-		if s.err != nil && ev.Button == sdl.CONTROLLER_BUTTON_B {
-			go s.loadPage(1, "")
-			return s
-		}
-		switch ev.Button {
-		case sdl.CONTROLLER_BUTTON_B:
-			if s.cursor < len(s.viewGames) {
-				return NewDetailScreen(s.client, s.cfg, s.cfgPath, s.cache, s.viewGames[s.cursor], s.inv, s.inventoryPath, s, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle)
-			}
-		case sdl.CONTROLLER_BUTTON_A:
-			return nil
-		case sdl.CONTROLLER_BUTTON_START:
-			return NewSettingsScreen(s.client, s.cfg, s.cfgPath, s.inv, s.inventoryPath, s.cache, s, s.newCacheRefreshScreen, s.updateSvc, s.nextUITheme, s.defaultTheme, s.themeAvailable, s.onThemeToggle, s.onOwnedReady)
-		case sdl.CONTROLLER_BUTTON_BACK: // SELECT → filter overlay
-			return NewFilterScreen(s, s.platformFilter, string(s.sortMode), s.searchQuery,
-				func(platform, sort, query string) {
-					s.SetFilter(platform, sort, query)
-				})
-		case sdl.CONTROLLER_BUTTON_RIGHTSHOULDER: // R1 — cycle sort forward
-			if s.cacheReady {
-				s.SetFilter(s.platformFilter, string(s.nextSortModeSimple()), s.searchQuery)
-			}
-			return s
-		case sdl.CONTROLLER_BUTTON_LEFTSHOULDER: // L1 — cycle sort backward
-			if s.cacheReady {
-				s.SetFilter(s.platformFilter, string(s.prevSortModeSimple()), s.searchQuery)
-			}
-			return s
-		case sdl.CONTROLLER_BUTTON_X:
-			if s.cursor < len(s.viewGames) {
-				g := s.viewGames[s.cursor]
-				if s.inv.HasPendingUpdates(g.URL) {
-					s.inv.DismissUpdate(g.URL)
-					logger.Info("update-svc: update dismissed for game=%q", g.Title)
-					if err := s.inv.Save(s.inventoryPath); err != nil {
-						logger.Warn("inventory: save after dismiss: %v", err)
-					}
-					s.rebuildView()
-				} else if s.inv.IsRemoved(g.URL) {
-					s.inv.DismissRemoval(g.URL)
-					logger.Info("update-svc: removal dismissed for game=%q", g.Title)
-					if err := s.inv.Save(s.inventoryPath); err != nil {
-						logger.Warn("inventory: save after dismiss: %v", err)
-					}
-					s.rebuildView()
-				}
-			}
-			return s
-		}
+	case appui.ListIntentDismissNotice:
+		s.dismissSelectedNotice()
 	}
 	return s
+}
+
+func (s *ListScreen) handleAppInput(event appui.InputEvent) appui.ListIntent {
+	switch event.Button {
+	case appui.ButtonDown:
+		if event.Pressed {
+			s.startHold(1)
+		} else {
+			s.stopHold(1)
+		}
+		return appui.ListIntentNone
+	case appui.ButtonUp:
+		if event.Pressed {
+			s.startHold(-1)
+		} else {
+			s.stopHold(-1)
+		}
+		return appui.ListIntentNone
+	case appui.ButtonRight, appui.ButtonLeft:
+		direction := 1
+		if event.Button == appui.ButtonLeft {
+			direction = -1
+		}
+		if event.Pressed {
+			if s.isAlphaJumpMode() && s.cacheReady {
+				s.jumpCursor(alphaJumpIndex(s.viewGames, s.cursor, direction) - s.cursor)
+			} else {
+				s.startShoulderHold(direction)
+			}
+		} else {
+			s.stopShoulderHold(direction)
+		}
+		return appui.ListIntentNone
+	}
+	if !event.Pressed {
+		return appui.ListIntentNone
+	}
+	if s.err != nil {
+		if event.Button == appui.ButtonA {
+			return appui.ListIntentRetry
+		}
+		if event.Button == appui.ButtonB {
+			return appui.ListIntentExit
+		}
+		return appui.ListIntentNone
+	}
+	switch event.Button {
+	case appui.ButtonA:
+		return appui.ListIntentOpen
+	case appui.ButtonB, appui.ButtonQuit:
+		return appui.ListIntentExit
+	case appui.ButtonSelect:
+		return appui.ListIntentFilter
+	case appui.ButtonStart:
+		return appui.ListIntentSettings
+	case appui.ButtonL1:
+		return appui.ListIntentPreviousSort
+	case appui.ButtonR1:
+		return appui.ListIntentNextSort
+	case appui.ButtonX:
+		return appui.ListIntentDismissNotice
+	default:
+		return appui.ListIntentNone
+	}
+}
+
+func listAppEvent(event sdl.Event) (appui.InputEvent, bool) {
+	var button appui.Button
+	pressed := false
+	switch value := event.(type) {
+	case *sdl.KeyboardEvent:
+		pressed = value.Type == sdl.KEYDOWN
+		switch value.Keysym.Sym {
+		case sdl.K_UP:
+			button = appui.ButtonUp
+		case sdl.K_DOWN:
+			button = appui.ButtonDown
+		case sdl.K_LEFT:
+			button = appui.ButtonLeft
+		case sdl.K_RIGHT:
+			button = appui.ButtonRight
+		case sdl.K_RETURN:
+			button = appui.ButtonA
+		case sdl.K_ESCAPE:
+			button = appui.ButtonB
+		case sdl.K_x:
+			button = appui.ButtonX
+		case sdl.K_PAGEUP:
+			button = appui.ButtonL1
+		case sdl.K_PAGEDOWN:
+			button = appui.ButtonR1
+		case sdl.K_s:
+			button = appui.ButtonStart
+		case sdl.K_TAB:
+			button = appui.ButtonSelect
+		default:
+			return appui.InputEvent{}, false
+		}
+	case *sdl.ControllerButtonEvent:
+		pressed = value.Type == sdl.CONTROLLERBUTTONDOWN
+		switch value.Button {
+		case sdl.CONTROLLER_BUTTON_DPAD_UP:
+			button = appui.ButtonUp
+		case sdl.CONTROLLER_BUTTON_DPAD_DOWN:
+			button = appui.ButtonDown
+		case sdl.CONTROLLER_BUTTON_DPAD_LEFT:
+			button = appui.ButtonLeft
+		case sdl.CONTROLLER_BUTTON_DPAD_RIGHT:
+			button = appui.ButtonRight
+		case sdl.CONTROLLER_BUTTON_B: // physical A
+			button = appui.ButtonA
+		case sdl.CONTROLLER_BUTTON_A: // physical B
+			button = appui.ButtonB
+		case sdl.CONTROLLER_BUTTON_X:
+			button = appui.ButtonX
+		case sdl.CONTROLLER_BUTTON_LEFTSHOULDER:
+			button = appui.ButtonL1
+		case sdl.CONTROLLER_BUTTON_RIGHTSHOULDER:
+			button = appui.ButtonR1
+		case sdl.CONTROLLER_BUTTON_START:
+			button = appui.ButtonStart
+		case sdl.CONTROLLER_BUTTON_BACK:
+			button = appui.ButtonSelect
+		default:
+			return appui.InputEvent{}, false
+		}
+	default:
+		return appui.InputEvent{}, false
+	}
+	return appui.InputEvent{Button: button, Pressed: pressed}, true
+}
+
+func (s *ListScreen) dismissSelectedNotice() {
+	if s.cursor >= len(s.viewGames) {
+		return
+	}
+	game := s.viewGames[s.cursor]
+	if s.inv.HasPendingUpdates(game.URL) {
+		s.inv.DismissUpdate(game.URL)
+		logger.Info("update-svc: update dismissed for game=%q", game.Title)
+	} else if s.inv.IsRemoved(game.URL) {
+		s.inv.DismissRemoval(game.URL)
+		logger.Info("update-svc: removal dismissed for game=%q", game.Title)
+	} else {
+		return
+	}
+	if err := s.inv.Save(s.inventoryPath); err != nil {
+		logger.Warn("inventory: save after dismiss: %v", err)
+	}
+	s.rebuildView()
 }
 
 // badgePrice returns a memoised "$X.XX" string for the given game, computing it

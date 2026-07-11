@@ -519,7 +519,16 @@ int catui_texture_draw(catui_texture_id texture, int x, int y, int w, int h) {
     int guard = catui__guard(); if (guard != CATUI_OK) return guard;
     catui_texture_slot *slot = catui__texture_slot(texture);
     if (!slot) return CATUI_INVALID_TEXTURE;
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* The MLP1 renderer batches texture copies aggressively. Isolate an
+       app-owned texture from queued Cat text/status copies so switching GIF
+       frames cannot make an earlier copy observe the new texture state. */
+    SDL_RenderFlush(cat_get_renderer());
+#endif
     cat_draw_image(slot->texture, x, y, w, h);
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    SDL_RenderFlush(cat_get_renderer());
+#endif
     return CATUI_OK;
 }
 

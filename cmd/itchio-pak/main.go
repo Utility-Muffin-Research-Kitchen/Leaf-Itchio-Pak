@@ -34,6 +34,10 @@ func main() {
 	catFixturePage := flag.Int("cat-fixture-page", 0, "Catastrophe fixture page (0-4)")
 	catFixtureFrames := flag.Int("cat-fixture-frames", 0, "exit Catastrophe fixture after N frames")
 	catFixtureScreenshot := flag.String("cat-fixture-screenshot", "", "save the final Catastrophe fixture frame as PNG")
+	catMainList := flag.Bool("cat-main-list", false, "run the offline Catastrophe main-list migration slice")
+	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, or empty")
+	catMainListFrames := flag.Int("cat-main-list-frames", 0, "exit Catastrophe main-list fixture after N frames")
+	catMainListScreenshot := flag.String("cat-main-list-screenshot", "", "save the final Catastrophe main-list frame as PNG")
 	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
 	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
 	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
@@ -150,6 +154,12 @@ func main() {
 		_ = os.Setenv("ITCHIO_CAT_FIXTURE_PAGE", fmt.Sprintf("%d", *catFixturePage))
 		_ = os.Setenv("ITCHIO_CAT_FIXTURE_FRAMES", fmt.Sprintf("%d", *catFixtureFrames))
 		_ = os.Setenv("ITCHIO_CAT_FIXTURE_SCREENSHOT", *catFixtureScreenshot)
+	}
+	if *catMainList {
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST", "1")
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_STATE", *catMainListState)
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_FRAMES", fmt.Sprintf("%d", *catMainListFrames))
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_SCREENSHOT", *catMainListScreenshot)
 	}
 
 	runSDL()

@@ -126,6 +126,15 @@ func TestTagPillsWrapAndClipToBounds(t *testing.T) {
 	}
 }
 
+func TestContrastTextUsesLightTextOnDarkAccent(t *testing.T) {
+	if got := contrastText(RGBA(40, 48, 74, 255)); got != RGBA(247, 242, 232, 255) {
+		t.Fatalf("dark accent contrast = %#x", got)
+	}
+	if got := contrastText(RGBA(230, 220, 190, 255)); got != RGBA(24, 28, 39, 255) {
+		t.Fatalf("light accent contrast = %#x", got)
+	}
+}
+
 func TestWrapTextPreservesParagraphBreaks(t *testing.T) {
 	lines := wrapText("one two three\n\nfour", 7, func(value string) int { return len(value) })
 	want := []string{"one two", "three", "", "four"}

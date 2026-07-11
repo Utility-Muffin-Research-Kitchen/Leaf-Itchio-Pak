@@ -14,7 +14,7 @@ export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
 export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
 
 .DEFAULT_GOAL := native
-.PHONY: test test-race native mac run-mac run-cat-fixtures cat-fixture-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
+.PHONY: test test-race native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
 test:
 	go test -count=1 -tags headless ./...
@@ -63,6 +63,9 @@ run-cat-fixtures: mac
 
 cat-fixture-snapshots: mac
 	./scripts/cat-fixtures-smoke.sh
+
+cat-main-list-snapshots: mac
+	./scripts/cat-main-list-smoke.sh
 
 mlp1: check-catastrophe
 	./scripts/build.sh mlp1

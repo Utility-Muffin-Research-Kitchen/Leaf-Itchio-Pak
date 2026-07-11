@@ -503,17 +503,30 @@ func (ui *Composer) DrawKeyboard(bounds Rect, keys [][]string, selected int) err
 }
 
 func (ui *Composer) DrawTagPills(bounds Rect, tags []string) (int, error) {
+	background := ui.ctx.ThemeColor(RoleAccent)
 	return drawTagPills(bounds, tags, ui.ctx.FontHeight(FontTiny), ui.ctx.Scale(8), ui.ctx.Scale(6),
 		func(value string) int { return ui.ctx.MeasureFallbackText(FontTiny, value) },
 		func(rect Rect, value string) error {
-			if err := ui.ctx.DrawPill(rect, ui.ctx.ThemeColor(RoleAccent)); err != nil {
+			if err := ui.ctx.DrawPill(rect, background); err != nil {
 				return err
 			}
 			y := rect.Y + (rect.H-ui.ctx.FontHeight(FontTiny))/2
 			_, err := ui.ctx.DrawFallbackText(FontTiny, value, rect.X+ui.ctx.Scale(8), y,
-				ui.ctx.ThemeColor(RoleText), rect.W-ui.ctx.Scale(16))
+				contrastText(background), rect.W-ui.ctx.Scale(16))
 			return err
 		})
+}
+
+func contrastText(background Color) Color {
+	r := int(uint32(background) & 0xff)
+	g := int((uint32(background) >> 8) & 0xff)
+	b := int((uint32(background) >> 16) & 0xff)
+	// Integer approximation of perceived luminance. A slightly conservative
+	// threshold keeps small Cat font tiers readable on saturated colours.
+	if (r*299+g*587+b*114)/1000 >= 145 {
+		return RGBA(24, 28, 39, 255)
+	}
+	return RGBA(247, 242, 232, 255)
 }
 
 func drawTagPills(bounds Rect, tags []string, fontHeight, horizontalPad, gap int,
