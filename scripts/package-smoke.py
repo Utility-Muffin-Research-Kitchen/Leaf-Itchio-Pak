@@ -30,6 +30,7 @@ STATIC_FILES = {
     "res/icon.png",
     "res/certs/ca-certificates.crt",
     "licenses/LICENSE",
+    "licenses/Catastrophe-LICENSE",
     "licenses/THIRD-PARTY-LICENSES.md",
 }
 EXPECTED_FILES = STATIC_FILES | {f"res/fonts/{font}" for font in FONTS} | {

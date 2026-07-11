@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -29,6 +30,9 @@ var gitCommit = "unknown"
 func main() {
 	headless := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
 	rotateLogOnly := flag.Bool("rotate-log-only", false, "rotate the app log and exit (launcher use)")
+	catProof := flag.Bool("cat-proof", false, "run the Catastrophe bridge visual proof")
+	catProofFrames := flag.Int("cat-proof-frames", 0, "exit Catastrophe proof after N frames")
+	catProofScreenshot := flag.String("cat-proof-screenshot", "", "save the final Catastrophe proof frame as PNG")
 	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
 	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
 	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
@@ -139,6 +143,11 @@ func main() {
 	if *headless {
 		logger.Info("headless mode: exiting cleanly")
 		os.Exit(0)
+	}
+	if *catProof {
+		_ = os.Setenv("ITCHIO_CAT_PROOF", "1")
+		_ = os.Setenv("ITCHIO_CAT_PROOF_FRAMES", fmt.Sprintf("%d", *catProofFrames))
+		_ = os.Setenv("ITCHIO_CAT_PROOF_SCREENSHOT", *catProofScreenshot)
 	}
 
 	runSDL()

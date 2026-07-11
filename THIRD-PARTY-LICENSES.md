@@ -44,9 +44,10 @@ Versions are pinned in `go.mod` and `go.sum`; those files are authoritative when
 this human-readable grouping becomes stale. Their upstream license files must
 be included in release notices by the packaging lane.
 
-Catastrophe is MIT-licensed and will become a production dependency when its
-app-local bridge lands. SDL and the current Go SDL binding remain listed until
-the legacy renderer is removed. Before the first Pak Rat submission, the
+Catastrophe is an MIT-licensed production dependency through the app-local CGo
+bridge; its license is shipped as `licenses/Catastrophe-LICENSE`. SDL and the
+current Go SDL binding remain listed until the legacy renderer is removed.
+Before the first Pak Rat submission, the
 release gate must generate and review a complete dependency/license manifest,
 including native libraries, image decoders, archive readers, and transitive Go
 modules.

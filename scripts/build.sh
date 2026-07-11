@@ -21,7 +21,8 @@ ldflags() {
 build_host() {
     output=$1
     mkdir -p "$(dirname -- "$output")"
-    CGO_ENABLED=1 go build \
+    test -f "$CATASTROPHE_DIR/include/catastrophe.h" || { echo "missing Catastrophe: $CATASTROPHE_DIR" >&2; exit 1; }
+    CGO_ENABLED=1 CGO_CFLAGS="${CGO_CFLAGS:-} -I$CATASTROPHE_DIR/include" go build \
         -trimpath \
         -buildvcs=false \
         -ldflags "$(ldflags)" \
@@ -54,7 +55,7 @@ build_mlp1_container() {
     export CXX=${CXX:-aarch64-buildroot-linux-gnu-g++}
     export PKG_CONFIG_SYSROOT_DIR=${PKG_CONFIG_SYSROOT_DIR:-$SYSROOT}
     export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig"
-    export CGO_CFLAGS="$UMRK_MLP1_PROFILE_CFLAGS"
+    export CGO_CFLAGS="$UMRK_MLP1_PROFILE_CFLAGS -DPLATFORM_MLP1 -I$CATASTROPHE_DIR/include"
     export CGO_CXXFLAGS="$UMRK_MLP1_PROFILE_CXXFLAGS"
     export CGO_LDFLAGS="$UMRK_MLP1_PROFILE_LDFLAGS"
     export GOCACHE=${GOCACHE:-/go-cache/build}

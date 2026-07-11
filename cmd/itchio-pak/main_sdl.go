@@ -6,7 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/catui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
@@ -27,6 +30,19 @@ const (
 )
 
 func runSDL() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if os.Getenv("ITCHIO_CAT_PROOF") == "1" {
+		frames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_PROOF_FRAMES"))
+		if err := catui.RunProof(catui.ProofConfig{
+			Frames:         frames,
+			ScreenshotPath: os.Getenv("ITCHIO_CAT_PROOF_SCREENSHOT"),
+		}); err != nil {
+			logger.Error("Catastrophe proof: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	runtimeEnv, err := leaf.LoadEnvironment()
 	if err != nil {
 		logger.Error("leaf runtime: %v", err)

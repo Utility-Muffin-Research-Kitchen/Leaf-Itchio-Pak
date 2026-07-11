@@ -7,6 +7,8 @@ cd "$REPO_DIR"
 
 APP_VERSION=${APP_VERSION:-0.1.0}
 MIN_JAWAKA_VERSION=${MIN_JAWAKA_VERSION:-0.5.4}
+WORKSPACE_ROOT=${WORKSPACE_ROOT:-$(CDPATH= cd -- "$REPO_DIR/.." && pwd)}
+CATASTROPHE_DIR=${CATASTROPHE_DIR:-$WORKSPACE_ROOT/Catastrophe}
 PACKAGE_ROOT=build/mlp1/package
 PACKAGE_DIR=$PACKAGE_ROOT/Itch-io.pak
 ARCHIVE=build/mlp1/Itch-io.mlp1.pak.zip
@@ -34,6 +36,7 @@ cp pak.json "$PACKAGE_DIR/pak.json"
 cp pak/res/icon.png "$PACKAGE_DIR/res/icon.png"
 cp assets/ca-certificates.crt "$PACKAGE_DIR/res/certs/ca-certificates.crt"
 cp LICENSE "$PACKAGE_DIR/licenses/LICENSE"
+cp "$CATASTROPHE_DIR/LICENSE" "$PACKAGE_DIR/licenses/Catastrophe-LICENSE"
 cp THIRD-PARTY-LICENSES.md "$PACKAGE_DIR/licenses/THIRD-PARTY-LICENSES.md"
 
 for font in font.ttf font_fallback_arabic.ttf font_fallback_devanagari.ttf font_fallback_emoji.ttf font_fallback_hebrew.ttf font_fallback_thai.ttf; do
