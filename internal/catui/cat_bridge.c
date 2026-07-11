@@ -24,6 +24,7 @@ static struct {
     TTF_Font *fallbacks[CAT_FONT_TIER_COUNT][CATUI_FALLBACK_CAP];
     char fallback_dir[PATH_MAX];
     atomic_uint wake_count;
+    SDL_Texture *capture_target;
 } catui__state;
 
 static const char *catui__fallback_names[CATUI_FALLBACK_CAP] = {
@@ -126,6 +127,11 @@ int catui_init(const char *title, const char *font_path,
 int catui_quit(void) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
+    if (catui__state.capture_target) {
+        SDL_SetRenderTarget(cat_get_renderer(), NULL);
+        SDL_DestroyTexture(catui__state.capture_target);
+        catui__state.capture_target = NULL;
+    }
     for (int i = 0; i < CATUI_TEXTURE_CAP; i++) {
         if (catui__state.textures[i].texture) {
             SDL_DestroyTexture(catui__state.textures[i].texture);
@@ -541,6 +547,40 @@ int catui_texture_destroy(catui_texture_id texture) {
     slot->width = slot->height = 0;
     slot->generation++;
     if (slot->generation == 0) slot->generation = 1;
+    return CATUI_OK;
+}
+
+int catui_capture_begin(void) {
+    int guard = catui__guard(); if (guard != CATUI_OK) return guard;
+    SDL_Renderer *renderer = cat_get_renderer();
+    if (catui__state.capture_target || SDL_GetRenderTarget(renderer) != NULL)
+        return CATUI_ERROR;
+    SDL_Texture *target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                            SDL_TEXTUREACCESS_TARGET,
+                                            cat_get_screen_width(), cat_get_screen_height());
+    if (!target) return CATUI_ERROR;
+    SDL_SetTextureBlendMode(target, SDL_BLENDMODE_NONE);
+    if (SDL_SetRenderTarget(renderer, target) != 0) {
+        SDL_DestroyTexture(target);
+        return CATUI_ERROR;
+    }
+    catui__state.capture_target = target;
+    return CATUI_OK;
+}
+
+int catui_capture_end(void) {
+    int guard = catui__guard(); if (guard != CATUI_OK) return guard;
+    if (!catui__state.capture_target) return CATUI_ERROR;
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    SDL_RenderFlush(cat_get_renderer());
+#endif
+    SDL_Texture *target = catui__state.capture_target;
+    catui__state.capture_target = NULL;
+    if (SDL_SetRenderTarget(cat_get_renderer(), NULL) != 0) {
+        SDL_DestroyTexture(target);
+        return CATUI_ERROR;
+    }
+    SDL_DestroyTexture(target);
     return CATUI_OK;
 }
 

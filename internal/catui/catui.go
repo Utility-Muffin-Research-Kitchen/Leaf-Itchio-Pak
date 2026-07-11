@@ -525,3 +525,17 @@ func (c *Context) ScreenshotPNG(path string) error {
 	defer freePath()
 	return statusError(C.catui_screenshot_png(pathC))
 }
+
+func (c *Context) BeginCapture() error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	return statusError(C.catui_capture_begin())
+}
+
+func (c *Context) EndCapture() error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	return statusError(C.catui_capture_end())
+}

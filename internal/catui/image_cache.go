@@ -82,6 +82,7 @@ func (a *animatedTexture) destroy() {
 type catImageEntry struct {
 	key       string
 	animation *animatedTexture
+	active    bool
 }
 
 type decodedImage struct {
@@ -159,7 +160,20 @@ func (c *ImageCache) Peek(key string) *Texture {
 		return nil
 	}
 	c.lru.MoveToFront(element)
-	return element.Value.(*catImageEntry).animation.texture(time.Now())
+	entry := element.Value.(*catImageEntry)
+	entry.active = true
+	return entry.animation.texture(time.Now())
+}
+
+// BeginFrame clears the visible-animation set. Draw paths mark only artwork
+// actually used by the current screen active through Peek/Get, preventing a
+// cached off-screen GIF from scheduling redraws forever.
+func (c *ImageCache) BeginFrame() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for element := c.lru.Front(); element != nil; element = element.Next() {
+		element.Value.(*catImageEntry).active = false
+	}
 }
 
 func (c *ImageCache) Failed(key string) bool {
@@ -206,7 +220,11 @@ func (c *ImageCache) NextFrameIn() (time.Duration, bool) {
 	var minimum time.Duration
 	found := false
 	for element := c.lru.Front(); element != nil; element = element.Next() {
-		remaining, animated := element.Value.(*catImageEntry).animation.nextFrameIn(now)
+		entry := element.Value.(*catImageEntry)
+		if !entry.active {
+			continue
+		}
+		remaining, animated := entry.animation.nextFrameIn(now)
 		if animated && (!found || remaining < minimum) {
 			minimum, found = remaining, true
 		}

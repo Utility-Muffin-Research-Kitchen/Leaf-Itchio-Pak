@@ -109,6 +109,8 @@ catui_texture_id catui_texture_load(const char *path);
 int catui_texture_size(catui_texture_id texture, int *width, int *height);
 int catui_texture_draw(catui_texture_id texture, int x, int y, int w, int h);
 int catui_texture_destroy(catui_texture_id texture);
+int catui_capture_begin(void);
+int catui_capture_end(void);
 int catui_screenshot_png(const char *path);
 
 #ifdef __cplusplus

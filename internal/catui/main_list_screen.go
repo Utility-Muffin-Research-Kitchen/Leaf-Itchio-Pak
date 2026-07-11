@@ -69,6 +69,7 @@ func appButton(button Button) appui.Button {
 }
 
 func (screen *MainListScreen) Draw() error {
+	screen.cache.BeginFrame()
 	footer := []FooterHint{{Button: ButtonB, Label: "Exit"}}
 	switch screen.model.State {
 	case appui.ListError:
@@ -275,14 +276,21 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 			drawn++
 			if config.Frames > 0 && drawn >= config.Frames {
 				if config.ScreenshotPath != "" {
+					if err := ctx.BeginCapture(); err != nil {
+						return err
+					}
+					if err := screen.Draw(); err != nil {
+						_ = ctx.EndCapture()
+						return err
+					}
 					if err := ctx.ScreenshotPNG(config.ScreenshotPath); err != nil {
+						_ = ctx.EndCapture()
+						return err
+					}
+					if err := ctx.EndCapture(); err != nil {
 						return err
 					}
 				}
-				// Read back the complete frame before swapping buffers. Some MLP1
-				// SDL backends do not preserve the new backbuffer after Present;
-				// redrawing solely for a screenshot can therefore capture stale
-				// rectangles even though the presented frame is correct.
 				ctx.RequestFrame()
 				if err := ctx.Present(); err != nil {
 					return err
@@ -290,6 +298,12 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 				break
 			}
 			redraw = false
+		}
+		if config.Frames > 0 && drawn < config.Frames {
+			// Frame-counted acceptance runs deliberately exercise repeated full
+			// redraws even for static loading/error states.
+			ctx.RequestFrame()
+			redraw = true
 		}
 		if delay, animated := cache.NextFrameIn(); animated {
 			milliseconds := delay.Milliseconds()
