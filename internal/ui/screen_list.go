@@ -528,6 +528,27 @@ func (s *ListScreen) CatSelected(index int) (itchio.Game, bool) {
 
 func (s *ListScreen) RetryCatLoad() { go s.loadPage(1, "") }
 
+// ApplyCatCache publishes a fully committed Cat refresh to the live list.
+func (s *ListScreen) ApplyCatCache(games []itchio.Game) {
+	snapshot := append([]itchio.Game(nil), games...)
+	select {
+	case s.cacheUpdateCh <- snapshot:
+	default:
+		select {
+		case <-s.cacheUpdateCh:
+		default:
+		}
+		select {
+		case s.cacheUpdateCh <- snapshot:
+		default:
+		}
+	}
+	s.wakeUI()
+	if s.updateSvc != nil {
+		s.updateSvc.TriggerNow()
+	}
+}
+
 func (s *ListScreen) CatFilter() (platform, sort, query string) {
 	return s.platformFilter, string(s.sortMode), s.searchQuery
 }

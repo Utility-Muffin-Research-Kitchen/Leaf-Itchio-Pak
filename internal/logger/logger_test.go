@@ -161,6 +161,22 @@ func TestRegisterSecret_UpdatesExistingLabel(t *testing.T) {
 	}
 }
 
+func TestRemoveSecretForgetsLabel(t *testing.T) {
+	resetLevel(t)
+	logger.SetLevel(logger.LevelInfo)
+	buf := captureOutput(t)
+
+	secret := "test-removed-key-qRsTuV-55443"
+	logger.RegisterSecret(secret, "[REMOVE-TEST]")
+	logger.RemoveSecret("[REMOVE-TEST]")
+	logger.Info("removed=%s", secret)
+
+	out := buf.String()
+	if !strings.Contains(out, secret) || strings.Contains(out, "[REMOVE-TEST]") {
+		t.Fatalf("removed label still active: %s", out)
+	}
+}
+
 func TestSignedURLCredentialsAreRedacted(t *testing.T) {
 	resetLevel(t)
 	logger.SetLevel(logger.LevelDebug)

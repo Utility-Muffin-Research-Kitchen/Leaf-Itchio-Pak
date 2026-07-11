@@ -82,6 +82,19 @@ func RegisterSecret(value, label string) {
 	secrets = append(secrets, secret{plain: value, label: label})
 }
 
+// RemoveSecret forgets the plaintext registered for label. Use this when a
+// persisted credential is removed from application state.
+func RemoveSecret(label string) {
+	secretsMu.Lock()
+	defer secretsMu.Unlock()
+	for index, item := range secrets {
+		if item.label == label {
+			secrets = append(secrets[:index], secrets[index+1:]...)
+			return
+		}
+	}
+}
+
 func redact(s string) string {
 	secretsMu.RLock()
 	defer secretsMu.RUnlock()

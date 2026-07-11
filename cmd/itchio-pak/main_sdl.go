@@ -230,6 +230,7 @@ func runSDL() {
 	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() {
 		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: userEventInventoryUpdate})
 	})
+	updateSvc.SetSources(runtimeEnv.Sources)
 	updateSvc.Start(nil)
 	defer updateSvc.Stop()
 
@@ -420,9 +421,13 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	imageCache := catui.NewImageCache(50, client.HTTPClient())
 	defer imageCache.Clear()
 	imageCache.SetNotify(func() { _ = ctx.Wake() })
+	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() { _ = ctx.Wake() })
+	updateSvc.SetSources(sources)
+	updateSvc.Start(nil)
+	defer updateSvc.Stop()
 	legacyTheme := theme.Defaults()
 	list := ui.NewListScreen(client, cfg, cfgPath, nil, cachePath, inv, inventoryPath,
-		nil, legacyTheme, legacyTheme, false, nil, ownedCachePath)
+		updateSvc, legacyTheme, legacyTheme, false, nil, ownedCachePath)
 	list.SetWake(func() { _ = ctx.Wake() })
 	model := appui.NewMainListModel(nil)
 	model.SetLoading()
@@ -440,6 +445,12 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteDownloadProgress
 		catRouteManage
 		catRouteRename
+		catRouteSettings
+		catRouteModeration
+		catRouteTags
+		catRouteMaskedKeyboard
+		catRouteAbout
+		catRouteCacheRefresh
 	)
 	route := catRouteList
 	var filterModel *appui.FilterModel
@@ -465,6 +476,90 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var renameModel *appui.RenameModel
 	var renameScreen *catui.RenameScreen
 	var renameFlow *ui.CatRenameFlow
+	var settingsModel *appui.SettingsModel
+	var settingsScreen *catui.SettingsScreen
+	var settingsFlow *ui.CatSettingsFlow
+	var settingsReturn catRoute
+	var moderationModel *appui.SettingsModel
+	var moderationScreen *catui.SettingsScreen
+	var moderationFlow *ui.CatModerationFlow
+	var moderationReturn catRoute
+	var tagModel *appui.SettingsModel
+	var tagScreen *catui.SettingsScreen
+	var tagFlow *ui.CatTagFlow
+	var maskedModel *appui.MaskedKeyboardModel
+	var maskedScreen *catui.MaskedKeyboardScreen
+	var aboutScreen *catui.AboutScreen
+	var cacheRefreshModel *appui.RefreshModel
+	var cacheRefreshScreen *catui.RefreshScreen
+	var cacheRefreshFlow *ui.CatCacheRefreshFlow
+	openSettings := func(back catRoute) error {
+		settingsReturn = back
+		settingsFlow, settingsModel = ui.NewCatSettingsFlow(cfg, cfgPath, ownedCachePath,
+			filepath.Dir(cfgPath), sources, client, func() { _ = ctx.Wake() })
+		var screenErr error
+		settingsScreen, screenErr = catui.NewSettingsScreen(ctx, settingsModel)
+		if screenErr != nil {
+			return screenErr
+		}
+		route = catRouteSettings
+		return nil
+	}
+	openMaskedKeyboard := func() error {
+		maskedModel = appui.NewMaskedKeyboardModel("Enter API Key", cfg.APIKey)
+		var screenErr error
+		maskedScreen, screenErr = catui.NewMaskedKeyboardScreen(ctx, maskedModel)
+		if screenErr != nil {
+			return screenErr
+		}
+		route = catRouteMaskedKeyboard
+		return nil
+	}
+	openModeration := func(back catRoute) error {
+		moderationReturn = back
+		moderationFlow, moderationModel = ui.NewCatModerationFlow(cfg, cfgPath)
+		var screenErr error
+		moderationScreen, screenErr = catui.NewSettingsScreen(ctx, moderationModel)
+		if screenErr != nil {
+			return screenErr
+		}
+		route = catRouteModeration
+		return nil
+	}
+	handleSettingsAction := func(action ui.CatSettingsAction) error {
+		switch action {
+		case ui.CatSettingsEditAPIKey:
+			return openMaskedKeyboard()
+		case ui.CatSettingsClearImages:
+			imageCache.Clear()
+			settingsModel.SetMessage("Decoded image and GIF frames were cleared. They will be fetched again when needed.")
+		case ui.CatSettingsRefreshGames:
+			if list.IsBusy() {
+				settingsModel.SetMessage("A game-list refresh is already running.")
+				break
+			}
+			cacheRefreshFlow, cacheRefreshModel = ui.NewCatCacheRefreshFlow(client, cachePath, func() { _ = ctx.Wake() })
+			var screenErr error
+			cacheRefreshScreen, screenErr = catui.NewRefreshScreen(ctx, cacheRefreshModel)
+			if screenErr != nil {
+				return screenErr
+			}
+			route = catRouteCacheRefresh
+		case ui.CatSettingsUpdateInventory:
+			updateSvc.TriggerNow()
+			settingsModel.SetMessage("Inventory update started. Local downloads stay available during the check.")
+		case ui.CatSettingsModeration:
+			return openModeration(catRouteSettings)
+		case ui.CatSettingsAbout:
+			var screenErr error
+			aboutScreen, screenErr = catui.NewAboutScreen(ctx, version, readLeafVersion())
+			if screenErr != nil {
+				return screenErr
+			}
+			route = catRouteAbout
+		}
+		return nil
+	}
 	openManage := func() error {
 		var flowErr error
 		manageFlow, manageModel, flowErr = ui.NewCatManageFlow(inv, inventoryPath, activeGame.URL, sources, catalog)
@@ -537,6 +632,18 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return manageScreen.Draw()
 		case catRouteRename:
 			return renameScreen.Draw()
+		case catRouteSettings:
+			return settingsScreen.Draw()
+		case catRouteModeration:
+			return moderationScreen.Draw()
+		case catRouteTags:
+			return tagScreen.Draw()
+		case catRouteMaskedKeyboard:
+			return maskedScreen.Draw()
+		case catRouteAbout:
+			return aboutScreen.Draw()
+		case catRouteCacheRefresh:
+			return cacheRefreshScreen.Draw()
 		default:
 			return screen.Draw()
 		}
@@ -563,6 +670,17 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 				return err
 			}
 			redraw = true
+		}
+		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
+			redraw = true
+		}
+		if cacheRefreshFlow != nil && cacheRefreshModel != nil {
+			if games, changed := cacheRefreshFlow.Sync(cacheRefreshModel); changed {
+				if games != nil {
+					list.ApplyCatCache(games)
+				}
+				redraw = true
+			}
 		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			snapshot := downloadBackend.CatSnapshot()
@@ -610,7 +728,13 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					detailScreen, detailModel, detailLoader = nil, nil, nil
 					route = catRouteList
 				case appui.DetailIntentSettings:
-					logger.Debug("cat detail: settings destination is scheduled for a later slice")
+					open := openSettings
+					if detailModel.State == appui.DetailWarning {
+						open = openModeration
+					}
+					if err := open(catRouteDetail); err != nil {
+						return err
+					}
 				case appui.DetailIntentDownload:
 					if activeDetail == nil {
 						break
@@ -743,6 +867,90 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 						renameModel.SetError(flowErr.Error())
 					}
 				}
+			case catRouteSettings:
+				switch settingsScreen.HandleInput(event) {
+				case appui.SettingsIntentBack:
+					if settingsFlow.Back(settingsModel) {
+						settingsFlow, settingsModel, settingsScreen = nil, nil, nil
+						route = settingsReturn
+					}
+				case appui.SettingsIntentCancel:
+					settingsFlow.Cancel(settingsModel)
+				case appui.SettingsIntentActivate:
+					action, flowErr := settingsFlow.Activate(settingsModel)
+					if flowErr != nil {
+						settingsModel.SetError(flowErr.Error())
+					} else if err := handleSettingsAction(action); err != nil {
+						return err
+					}
+				case appui.SettingsIntentConfirm:
+					action, flowErr := settingsFlow.Confirm(settingsModel)
+					if flowErr != nil {
+						settingsModel.SetError(flowErr.Error())
+					} else if err := handleSettingsAction(action); err != nil {
+						return err
+					}
+				}
+			case catRouteModeration:
+				switch moderationScreen.HandleInput(event) {
+				case appui.SettingsIntentBack:
+					moderationFlow, moderationModel, moderationScreen = nil, nil, nil
+					if moderationReturn == catRouteSettings {
+						settingsFlow.Refresh(settingsModel)
+					}
+					route = moderationReturn
+				case appui.SettingsIntentActivate:
+					var flowErr error
+					tagFlow, tagModel, flowErr = moderationFlow.Activate(moderationModel)
+					if flowErr != nil {
+						moderationModel.SetError(flowErr.Error())
+					} else if tagFlow != nil {
+						tagScreen, flowErr = catui.NewSettingsScreen(ctx, tagModel)
+						if flowErr != nil {
+							return flowErr
+						}
+						route = catRouteTags
+					}
+				}
+			case catRouteTags:
+				switch tagScreen.HandleInput(event) {
+				case appui.SettingsIntentBack:
+					tagFlow, tagModel, tagScreen = nil, nil, nil
+					moderationFlow.Refresh(moderationModel)
+					route = catRouteModeration
+				case appui.SettingsIntentActivate:
+					if flowErr := tagFlow.Activate(tagModel); flowErr != nil {
+						tagModel.SetError(flowErr.Error())
+					}
+				}
+			case catRouteMaskedKeyboard:
+				switch maskedScreen.HandleInput(event) {
+				case appui.MaskedKeyboardIntentCancel:
+					maskedModel, maskedScreen = nil, nil
+					route = catRouteSettings
+				case appui.MaskedKeyboardIntentAccept:
+					value := maskedModel.Value
+					maskedModel, maskedScreen = nil, nil
+					if flowErr := settingsFlow.SetAPIKey(settingsModel, value); flowErr != nil {
+						settingsModel.SetError(flowErr.Error())
+					}
+					route = catRouteSettings
+				}
+			case catRouteAbout:
+				if aboutScreen.HandleInput(event) {
+					aboutScreen.Close()
+					aboutScreen = nil
+					route = catRouteSettings
+				}
+			case catRouteCacheRefresh:
+				switch cacheRefreshScreen.HandleInput(event) {
+				case appui.RefreshIntentCancel:
+					cacheRefreshFlow.Cancel()
+				case appui.RefreshIntentBack:
+					cacheRefreshFlow, cacheRefreshModel, cacheRefreshScreen = nil, nil, nil
+					settingsFlow.Refresh(settingsModel)
+					route = catRouteSettings
+				}
 			default:
 				switch screen.HandleInput(event) {
 				case appui.ListIntentExit:
@@ -779,7 +987,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					detailLoader = ui.NewCatDetailLoader(client, cfg, game, func() { _ = ctx.Wake() })
 					route = catRouteDetail
 				case appui.ListIntentSettings:
-					logger.Debug("cat live list: settings destination is scheduled for a later slice")
+					if err := openSettings(catRouteList); err != nil {
+						return err
+					}
 				}
 			}
 			redraw = true
@@ -797,6 +1007,17 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 				return err
 			}
 			redraw = true
+		}
+		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
+			redraw = true
+		}
+		if cacheRefreshFlow != nil && cacheRefreshModel != nil {
+			if games, changed := cacheRefreshFlow.Sync(cacheRefreshModel); changed {
+				if games != nil {
+					list.ApplyCatCache(games)
+				}
+				redraw = true
+			}
 		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			snapshot := downloadBackend.CatSnapshot()
@@ -855,6 +1076,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			redraw = true
 		} else if route == catRouteDownloadProgress && downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning {
 			ctx.RequestFrameIn(50)
+			redraw = true
+		} else if route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy() {
+			ctx.RequestFrameIn(100)
 			redraw = true
 		} else if list.IsBusy() {
 			ctx.RequestFrameIn(250)

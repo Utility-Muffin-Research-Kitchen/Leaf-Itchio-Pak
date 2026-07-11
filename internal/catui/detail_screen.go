@@ -51,6 +51,12 @@ func (screen *DetailScreen) Draw() error {
 	screen.cache.BeginFrame()
 	footer := []FooterHint{{Button: ButtonB, Label: "Back"}}
 	if screen.model.State == appui.DetailReady {
+		// A downloaded game needs five active hints once Settings is available.
+		// Keep B fully functional but omit its hint here so Cat never collapses
+		// this footer into a synthetic +1 item on the 960-wide MLP1 display.
+		if screen.model.Game.Downloaded {
+			footer = footer[:0]
+		}
 		footer = append(footer,
 			FooterHint{Button: ButtonL1, Label: "Image -/+", NarrowLabel: "Images"},
 			FooterHint{Button: ButtonUp, Label: "Scroll"})
@@ -67,9 +73,8 @@ func (screen *DetailScreen) Draw() error {
 		if screen.model.Game.Downloaded {
 			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage", NarrowLabel: "Files"})
 		}
-	} else if screen.model.State == appui.DetailWarning {
-		footer = append(footer, FooterHint{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"})
 	}
+	footer = append(footer, FooterHint{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"})
 	frame, err := screen.ui.BeginScreen(ScreenSpec{
 		Title:           screen.model.Game.Title,
 		SubHeaderHeight: screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(10),

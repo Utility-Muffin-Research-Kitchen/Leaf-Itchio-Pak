@@ -258,7 +258,36 @@ int catui_draw_footer(const catui_footer_item *items, int count) {
         converted[i].is_confirm = items[i].is_confirm != 0;
         converted[i].button_text = NULL;
     }
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* A footer draws its outer group and inner button pills in one call. The
+       full-radius sprite path reuses the status atlas between those copies,
+       and deferred SDL backends can clip a button badge after later atlas
+       state changes. Use Cat's own procedural pill path for this one draw and
+       flush between left/action and right/confirm groups. The Go composer has
+       already selected narrow labels that fit the available footer width. */
+    float pill_ratio = cat__g.theme.pill_radius_ratio;
+    if (pill_ratio >= 1.0f && cat__g.status_assets)
+        cat__g.theme.pill_radius_ratio = 0.999f;
+    cat_footer_item left[16], right[16];
+    int left_count = 0, right_count = 0;
+    for (int i = 0; i < count; i++) {
+        if (converted[i].is_confirm) right[right_count++] = converted[i];
+        else left[left_count++] = converted[i];
+    }
+    SDL_RenderFlush(cat_get_renderer());
+    if (left_count > 0 && right_count > 0) {
+        cat_draw_footer(left, left_count);
+        SDL_RenderFlush(cat_get_renderer());
+        cat_draw_footer(right, right_count);
+        SDL_RenderFlush(cat_get_renderer());
+    } else {
+        cat_draw_footer(converted, count);
+        SDL_RenderFlush(cat_get_renderer());
+    }
+    cat__g.theme.pill_radius_ratio = pill_ratio;
+#else
     cat_draw_footer(converted, count);
+#endif
     return CATUI_OK;
 }
 
@@ -624,6 +653,11 @@ int catui_capture_begin(void) {
                                             cat_get_screen_width(), cat_get_screen_height());
     if (!target) return CATUI_ERROR;
     SDL_SetTextureBlendMode(target, SDL_BLENDMODE_NONE);
+#if SDL_VERSION_ATLEAST(2, 0, 10)
+    /* Do not let queued commands for the visible backbuffer cross into the
+       deterministic fixture target when SDL_SetRenderTarget synchronizes. */
+    SDL_RenderFlush(renderer);
+#endif
     if (SDL_SetRenderTarget(renderer, target) != 0) {
         SDL_DestroyTexture(target);
         return CATUI_ERROR;

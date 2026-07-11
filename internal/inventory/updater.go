@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
@@ -24,6 +25,11 @@ type UpdateService struct {
 	stopCh        chan struct{}
 	stopOnce      sync.Once
 	running       atomic.Bool
+	sources       leaf.SourceList
+}
+
+func (s *UpdateService) SetSources(sources leaf.SourceList) {
+	s.sources = append(leaf.SourceList(nil), sources...)
 }
 
 // NewUpdateService constructs an UpdateService. notify (may be nil) is called
@@ -98,7 +104,7 @@ func (s *UpdateService) LatestCheckedAt() time.Time {
 }
 
 func (s *UpdateService) runCheck() {
-	s.inv.VerifyAndClean(s.inventoryPath)
+	s.inv.VerifyAndCleanWithSources(s.inventoryPath, s.sources)
 
 	s.inv.mu.Lock()
 	urls := make([]string, 0, len(s.inv.Entries))

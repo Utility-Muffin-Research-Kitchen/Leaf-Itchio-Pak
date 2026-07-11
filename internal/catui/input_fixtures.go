@@ -195,6 +195,88 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
+	case "settings", "settings-confirm", "moderation", "moderation-tags":
+		title, subtitle := "Settings", "Leaf settings · changes save immediately"
+		rows := []appui.SettingsRow{
+			{Key: appui.SettingsAPIKey, Label: "API Key", Value: "••••7f2a", ActionEnabled: true},
+			{Key: appui.SettingsEditAPIKey, Label: "Edit API Key", ActionEnabled: true},
+			{Key: appui.SettingsRemoveAPIKey, Label: "Remove API Key", ActionEnabled: true},
+			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: "ask", ActionEnabled: true},
+			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: "auto", ActionEnabled: true},
+			{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: "ask", ActionEnabled: true},
+			{Key: appui.SettingsUnifiedNaming, Label: "Use game title", Value: "On", ActionEnabled: true},
+			{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: "Primary SD + Secondary SD · 3 systems"},
+			{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
+			{Key: appui.SettingsContentModeration, Label: "Content Moderation", Value: ">", ActionEnabled: true},
+			{Key: appui.SettingsAbout, Label: "About", Value: ">", ActionEnabled: true},
+		}
+		if config.Screen == "moderation" {
+			title, subtitle = "Content Moderation", "Local advisory filters · creator tagging may be incomplete"
+			rows = []appui.SettingsRow{
+				{Key: appui.SettingsAdultContent, Label: "Adult Content", Value: "14 blocked >", ActionEnabled: true},
+				{Key: appui.SettingsQueerContent, Label: "Queer Content", Value: "Allowed >", ActionEnabled: true},
+				{Key: appui.SettingsHeavyThemes, Label: "Heavy Themes", Value: "9 blocked >", ActionEnabled: true},
+				{Key: appui.SettingsSubstanceUse, Label: "Substance Use", Value: "Blocked", ActionEnabled: true},
+			}
+		} else if config.Screen == "moderation-tags" {
+			title, subtitle = "Adult Content", "A toggles · category coverage depends on creator tags"
+			rows = []appui.SettingsRow{
+				{Key: appui.SettingsTagMaster, Label: "All category tags", Value: "Blocked", ActionEnabled: true},
+				{Key: appui.SettingsTag, Label: "Adult", Value: "Blocked", ActionEnabled: true},
+				{Key: appui.SettingsTag, Label: "Erotic", Value: "Allowed", ActionEnabled: true},
+				{Key: appui.SettingsTag, Label: "Mature", Value: "Blocked", ActionEnabled: true},
+				{Key: appui.SettingsTag, Label: "Nudity", Value: "Blocked", ActionEnabled: true},
+			}
+		}
+		model := appui.NewSettingsModel(title)
+		model.SetRows(subtitle, rows)
+		if config.Screen == "settings-confirm" {
+			model.SetConfirm("Store an itch.io API key?", []string{
+				"The key is stored in App Data on the SD card.",
+				"FAT32 cannot protect it from someone with physical access to the card.",
+				"The key is masked in the UI and redacted from logs.",
+			})
+		}
+		screen, screenErr := NewSettingsScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.SettingsIntentBack
+		}
+	case "masked-api":
+		model := appui.NewMaskedKeyboardModel("Enter API Key", "fixture-private-key")
+		screen, screenErr := NewMaskedKeyboardScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.MaskedKeyboardIntentCancel
+		}
+	case "about":
+		screen, screenErr := NewAboutScreen(ctx, "0.1.0", "fixture")
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		closeScreen = screen.Close
+		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
+	case "refresh", "refresh-done":
+		model := appui.NewRefreshModel("Refreshing Game List")
+		model.Fetched = 184
+		if config.Screen == "refresh-done" {
+			model.State, model.Total = appui.RefreshDone, 427
+		}
+		screen, screenErr := NewRefreshScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.RefreshIntentBack
+		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
 	}

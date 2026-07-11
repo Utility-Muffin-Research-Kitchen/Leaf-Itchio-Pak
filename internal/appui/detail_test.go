@@ -18,6 +18,9 @@ func TestDetailNavigationAndWarningGate(t *testing.T) {
 		t.Fatalf("scroll = %d, want 1", model.ScrollLine)
 	}
 	model.State = DetailWarning
+	if got := model.Handle(InputEvent{Button: ButtonStart, Pressed: true}); got != DetailIntentSettings {
+		t.Fatalf("warning Start intent = %v, want settings", got)
+	}
 	model.Handle(InputEvent{Button: ButtonRight, Pressed: true})
 	if model.ImageIndex != 1 {
 		t.Fatal("warning screen allowed gallery navigation")

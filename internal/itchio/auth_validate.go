@@ -34,6 +34,13 @@ func (c *Client) MarkAPIKeyCheckStarted() bool {
 	return atomic.CompareAndSwapInt32(&c.apiKeyChecking, 0, 1)
 }
 
+// ResetAPIKeyState clears cached validation state after a key is replaced or
+// removed. It never logs or retains the previous credential.
+func (c *Client) ResetAPIKeyState() {
+	atomic.StoreInt32(&c.apiKeyStatus, int32(APIKeyStatusUnknown))
+	atomic.StoreInt32(&c.apiKeyChecking, 0)
+}
+
 // CheckAPIKey does a lightweight /profile fetch to determine whether apiKey is
 // accepted. Returns APIKeyStatusWorking on success, APIKeyStatusRejected when
 // the server explicitly rejects the key, and APIKeyStatusUnknown on network or
