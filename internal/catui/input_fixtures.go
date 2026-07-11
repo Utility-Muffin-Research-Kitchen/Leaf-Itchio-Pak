@@ -245,16 +245,6 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.SettingsIntentBack
 		}
-	case "masked-api":
-		model := appui.NewMaskedKeyboardModel("Enter API Key", "fixture-private-key")
-		screen, screenErr := NewMaskedKeyboardScreen(ctx, model)
-		if screenErr != nil {
-			return screenErr
-		}
-		draw = screen.Draw
-		handleIntent = func(event InputEvent) bool {
-			return screen.HandleInput(event) != appui.MaskedKeyboardIntentCancel
-		}
 	case "about":
 		screen, screenErr := NewAboutScreen(ctx, "0.1.0", "fixture")
 		if screenErr != nil {

@@ -448,7 +448,6 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteSettings
 		catRouteModeration
 		catRouteTags
-		catRouteMaskedKeyboard
 		catRouteAbout
 		catRouteCacheRefresh
 	)
@@ -487,8 +486,6 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var tagModel *appui.SettingsModel
 	var tagScreen *catui.SettingsScreen
 	var tagFlow *ui.CatTagFlow
-	var maskedModel *appui.MaskedKeyboardModel
-	var maskedScreen *catui.MaskedKeyboardScreen
 	var aboutScreen *catui.AboutScreen
 	var cacheRefreshModel *appui.RefreshModel
 	var cacheRefreshScreen *catui.RefreshScreen
@@ -505,16 +502,6 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		route = catRouteSettings
 		return nil
 	}
-	openMaskedKeyboard := func() error {
-		maskedModel = appui.NewMaskedKeyboardModel("Enter API Key", cfg.APIKey)
-		var screenErr error
-		maskedScreen, screenErr = catui.NewMaskedKeyboardScreen(ctx, maskedModel)
-		if screenErr != nil {
-			return screenErr
-		}
-		route = catRouteMaskedKeyboard
-		return nil
-	}
 	openModeration := func(back catRoute) error {
 		moderationReturn = back
 		moderationFlow, moderationModel = ui.NewCatModerationFlow(cfg, cfgPath)
@@ -529,7 +516,18 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	handleSettingsAction := func(action ui.CatSettingsAction) error {
 		switch action {
 		case ui.CatSettingsEditAPIKey:
-			return openMaskedKeyboard()
+			// Start blank even when replacing an existing key: the native Cat
+			// keyboard is deliberately full-featured but not a password field.
+			// This keeps the persisted key from being revealed during an edit.
+			value, accepted, keyboardErr := ctx.Keyboard("")
+			if keyboardErr != nil {
+				return keyboardErr
+			}
+			if accepted {
+				if flowErr := settingsFlow.SetAPIKey(settingsModel, value); flowErr != nil {
+					settingsModel.SetError(flowErr.Error())
+				}
+			}
 		case ui.CatSettingsClearImages:
 			imageCache.Clear()
 			settingsModel.SetMessage("Decoded image and GIF frames were cleared. They will be fetched again when needed.")
@@ -638,8 +636,6 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return moderationScreen.Draw()
 		case catRouteTags:
 			return tagScreen.Draw()
-		case catRouteMaskedKeyboard:
-			return maskedScreen.Draw()
 		case catRouteAbout:
 			return aboutScreen.Draw()
 		case catRouteCacheRefresh:
@@ -922,19 +918,6 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					if flowErr := tagFlow.Activate(tagModel); flowErr != nil {
 						tagModel.SetError(flowErr.Error())
 					}
-				}
-			case catRouteMaskedKeyboard:
-				switch maskedScreen.HandleInput(event) {
-				case appui.MaskedKeyboardIntentCancel:
-					maskedModel, maskedScreen = nil, nil
-					route = catRouteSettings
-				case appui.MaskedKeyboardIntentAccept:
-					value := maskedModel.Value
-					maskedModel, maskedScreen = nil, nil
-					if flowErr := settingsFlow.SetAPIKey(settingsModel, value); flowErr != nil {
-						settingsModel.SetError(flowErr.Error())
-					}
-					route = catRouteSettings
 				}
 			case catRouteAbout:
 				if aboutScreen.HandleInput(event) {
