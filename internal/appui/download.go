@@ -156,6 +156,7 @@ type DownloadProgressModel struct {
 	Downloaded, Total       int64
 	FileIndex, FileCount    int
 	SavedPaths              []string
+	Locked                  bool // protected operation cannot be cancelled mid-transaction
 }
 
 func (m *DownloadProgressModel) Handle(event InputEvent) DownloadProgressIntent {
@@ -163,6 +164,9 @@ func (m *DownloadProgressModel) Handle(event InputEvent) DownloadProgressIntent 
 		return DownloadProgressIntentNone
 	}
 	if m.State == DownloadProgressRunning {
+		if m.Locked {
+			return DownloadProgressIntentNone
+		}
 		if event.Button == ButtonB || event.Button == ButtonQuit {
 			return DownloadProgressIntentCancel
 		}

@@ -124,7 +124,9 @@ func (screen *DownloadProgressScreen) Draw() error {
 	case appui.DownloadProgressDone, appui.DownloadProgressError, appui.DownloadProgressCancelled:
 		footer = []FooterHint{{Button: ButtonB, Label: "Back"}}
 	case appui.DownloadProgressRunning:
-		footer = []FooterHint{{Button: ButtonB, Label: "Cancel"}}
+		if !screen.model.Locked {
+			footer = []FooterHint{{Button: ButtonB, Label: "Cancel"}}
+		}
 	case appui.DownloadProgressInhibitBlocked:
 		footer = []FooterHint{
 			{Button: ButtonB, Label: "Cancel"},

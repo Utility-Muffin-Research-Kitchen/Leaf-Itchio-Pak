@@ -12,9 +12,10 @@ storage and runtime integration for Leaf. The active target is the Miniloong
 Pocket 1 (`mlp1`) only. NextUI and the former TrimUI/Miyoo package lanes are not
 supported.
 
-The Catastrophe CGo bridge and shared Leaf-native screen primitives are
-implemented. The inherited screens remain temporary until their vertical
-slices migrate; the shipping design has Catastrophe as the sole GUI owner. See
+The Catastrophe CGo bridge and shared Leaf-native screen graph are implemented.
+Normal launch, developer start routes, and visual fixtures all use Catastrophe
+as the sole GUI owner. The retained inherited download workers are headless
+backends and cannot be selected as an alternate UI. See
 [docs/catastrophe-bridge.md](docs/catastrophe-bridge.md) for the ownership
 contract and [docs/catastrophe-primitives.md](docs/catastrophe-primitives.md)
 for the screen-composition vocabulary.
@@ -86,10 +87,10 @@ Go caches, user state, debug profiles, or foreign-platform libraries.
 The Pak consumes Leaf's launcher environment and writes durable app state to
 `$USERDATA_PATH/Itch-io` and logs to `$LOGS_PATH/itchio-pak.log`. It preserves
 the inherited `CAT_*` appearance snapshot and uses the packaged CA bundle.
-While the screen graph is being migrated, a normal launch of an explicitly
-staged development pak opens the Catastrophe preview route. Set
-`ITCHIO_UI_MODE=legacy` only when comparing against the retained legacy graph;
-explicit fixture and command-line routes are not modified by the wrapper.
+`DEV_START_SCREEN=settings|detail` enters those routes through the same Cat
+graph. `--app-frames` and `--app-screenshot` provide bounded live captures;
+the `--cat-fixtures`, `--cat-main-list`, and `--cat-input` flags remain offline
+deterministic visual tools.
 
 ## Installation policy
 

@@ -50,13 +50,7 @@ grep -F "ARG=argument with spaces" "$LOG_FILE" >/dev/null
 grep -F "stderr-marker" "$LOG_FILE" >/dev/null
 
 UMRK_ENV_FILE="$ENV_FILE" "$PAK_DIR/launch.sh"
-grep -F "ARG=--cat-live-list" "$LOG_FILE" >/dev/null
-
-ITCHIO_UI_MODE=legacy UMRK_ENV_FILE="$ENV_FILE" "$PAK_DIR/launch.sh"
-if [ "$(grep -F -c 'ARG=--cat-live-list' "$LOG_FILE")" -ne 1 ]; then
-    echo "launch-smoke: legacy escape hatch unexpectedly selected Cat preview" >&2
-    exit 1
-fi
+grep -F "ARG=" "$LOG_FILE" >/dev/null
 
 if UMRK_ENV_FILE="$TMP_ROOT/missing-env.sh" "$PAK_DIR/launch.sh" >/dev/null 2>&1; then
     echo "launch-smoke: explicit missing UMRK_ENV_FILE must fail" >&2

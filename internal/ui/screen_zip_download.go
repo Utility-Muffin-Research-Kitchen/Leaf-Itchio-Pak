@@ -235,7 +235,7 @@ func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
 
 		switch kind {
 		case roms.KindROM:
-			if !s.shouldExtractROM(baseName) {
+			if !s.shouldExtractROM(f.Name) {
 				continue
 			}
 			dest, err := s.extractROM(f, baseName, now)
@@ -317,7 +317,7 @@ func (s *ZIPDownloadScreen) run7z(tmpPath string) {
 		kind, baseName := classifyWithMagic(baseName, f.Open)
 		switch kind {
 		case roms.KindROM:
-			if !s.shouldExtractROM(baseName) {
+			if !s.shouldExtractROM(filepath.ToSlash(strings.ReplaceAll(f.Name, "\\", "/"))) {
 				continue
 			}
 			dest, err := s.extractROMFromOpener(f.Open, f.FileInfo().Size(), baseName, now)
@@ -642,7 +642,7 @@ func (s *ZIPDownloadScreen) shouldExtractROM(name string) bool {
 	if !ok {
 		return true
 	}
-	return chosen == name
+	return chosen == name || chosen == filepath.Base(name)
 }
 
 func (s *ZIPDownloadScreen) extractROM(f *zip.File, baseName string, now time.Time) (string, error) {

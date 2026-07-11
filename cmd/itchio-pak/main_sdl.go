@@ -16,18 +16,10 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
-	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/theme"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
-	"github.com/veandco/go-sdl2/sdl"
-)
-
-const (
-	userEventInventoryUpdate = int32(0) // UpdateService finished a check
-	userEventPowerSleep      = int32(1) // power: short press
-	userEventPowerShutdown   = int32(2) // power: long press
 )
 
 func runSDL() {
@@ -150,258 +142,14 @@ func runSDL() {
 	}
 	inv.VerifyAndCleanWithSources(inventoryPath, runtimeEnv.Sources)
 	client := itchio.NewClient()
-	if os.Getenv("ITCHIO_CAT_LIVE_LIST") == "1" {
-		if err := runCatLiveList(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
-			runtimeEnv.Sources, catalog); err != nil {
-			logger.Error("Catastrophe live main list: %v", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	level := cfg.LogLevel
-	if level == "" {
-		level = "info"
-	}
-	logger.Info("log_level:  %s", level)
-
-	// Pre-init SDL2 to detect display resolution before creating the window.
-	// Include JOYSTICK + GAMECONTROLLER so the device's physical buttons are
-	// delivered as ControllerButtonEvents (the device SDL2 has built-in
-	// mappings for TrimUI/Miyoo hardware). renderer.New will call sdl.Init
-	// again — that is idempotent.
-	if err := sdl.Init(sdl.INIT_VIDEO | sdl.INIT_JOYSTICK | sdl.INIT_GAMECONTROLLER); err != nil {
-		logger.Error("sdl pre-init: %v", err)
+	if err := runCatApp(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
+		runtimeEnv.Sources, catalog); err != nil {
+		logger.Error("Catastrophe app: %v", err)
 		os.Exit(1)
-	}
-
-	// Open all connected game controllers so button events are delivered.
-	for i := 0; i < sdl.NumJoysticks(); i++ {
-		if sdl.IsGameController(i) {
-			if gc := sdl.GameControllerOpen(i); gc != nil {
-				defer gc.Close()
-			}
-		} else {
-			if js := sdl.JoystickOpen(i); js != nil {
-				defer js.Close()
-			}
-		}
-	}
-
-	w, h := int32(1024), int32(768) // sensible default for TrimUI Brick
-	if dm, err := sdl.GetCurrentDisplayMode(0); err == nil {
-		w, h = dm.W, dm.H
-	}
-	logger.Info("display: %dx%d", w, h)
-
-	// Leaf appearance will be inherited through Catastrophe. Until that bridge
-	// lands, keep the default legacy palette without reading NextUI settings.
-	nextUITheme, themeAvailable := theme.Defaults(), false
-	defaultTheme := theme.Defaults()
-
-	activeTheme := defaultTheme
-	if cfg.NextUITheme && themeAvailable {
-		activeTheme = nextUITheme
-	}
-	logger.Info("theme: available=%v, active=%v", themeAvailable, cfg.NextUITheme && themeAvailable)
-
-	r, err := renderer.New("Itch.io", int(w), int(h), activeTheme)
-	if err != nil {
-		logger.Error("renderer init: %v", err)
-		os.Exit(1)
-	}
-	defer r.Close()
-
-	onThemeToggle := func(enabled bool) {
-		if enabled && themeAvailable {
-			r.Theme = nextUITheme
-		} else {
-			r.Theme = defaultTheme
-		}
-		logger.Debug("renderer: theme updated (NextUI active: %v)", enabled && themeAvailable)
-	}
-
-	cache := renderer.NewImageCache(50, client.HTTPClient())
-	defer cache.Clear()
-	cache.SetNotify(func() {
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: -1})
-	})
-
-	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() {
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: userEventInventoryUpdate})
-	})
-	updateSvc.SetSources(runtimeEnv.Sources)
-	updateSvc.Start(nil)
-	defer updateSvc.Stop()
-
-	powerMgr := power.NewManager(func(action power.Action) {
-		code := userEventPowerSleep
-		if action == power.ActionShutdown {
-			code = userEventPowerShutdown
-		}
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT, Code: code})
-	})
-	powerMgr.Start()
-
-	listScreen := ui.NewListScreen(client, cfg, cfgPath, cache, cachePath, inv, inventoryPath, updateSvc, nextUITheme, defaultTheme, themeAvailable, onThemeToggle, ownedCachePath)
-	var current ui.Screen
-	if devScreen := os.Getenv("DEV_START_SCREEN"); devScreen != "" {
-		logger.Info("dev: DEV_START_SCREEN=%q", devScreen)
-		current = ui.NewDevStartScreen(devScreen, listScreen, client, cfg, cfgPath, cache, inv, inventoryPath, updateSvc, nextUITheme, defaultTheme, themeAvailable, onThemeToggle)
-	} else {
-		current = listScreen
-	}
-
-	// pendingQuit and pendingAction are set together; only read when pendingQuit is true.
-	var (
-		pendingQuit   bool
-		pendingAction = power.ActionSleep
-	)
-
-	platform := readPlatform()
-	if platform == "my355" {
-		const joyTypePath = "/sys/class/miyooio_chr_dev/joy_type"
-		logger.Debug("input: checking for my355 joy_type workaround at %s", joyTypePath)
-		if _, err := os.Stat(joyTypePath); err == nil {
-			logger.Info("input: applying my355 joy_type workaround (-1)")
-			if err := os.WriteFile(joyTypePath, []byte("-1"), 0644); err != nil {
-				logger.Error("input: failed to apply joy_type workaround: %v", err)
-			}
-			defer func() {
-				logger.Info("input: restoring my355 joy_type (0)")
-				if err := os.WriteFile(joyTypePath, []byte("0"), 0644); err != nil {
-					logger.Error("input: failed to restore joy_type: %v", err)
-				}
-			}()
-		}
-	}
-
-loop:
-	for current != nil {
-		// Upload any images that background goroutines finished fetching.
-		// Returns true if at least one texture was uploaded this call.
-		newImages := cache.ProcessPending(r)
-
-		// Block until an SDL event arrives.
-		// Four modes:
-		//   16ms  — screen needs continuous redraws (download progress, spinners)
-		//   poll  — textures just uploaded; draw them before blocking again
-		//  500ms  — screen is static but has a pending timed animation (e.g. title
-		//           scroll delay). This guarantees the loop wakes before the
-		//           animation window opens even if no other events fire.
-		//  ∞      — truly idle: no redraws needed, image-cache notify and user
-		//           input are the only expected wakeups.
-		//
-		// The poll case fixes a race where ProcessPending uploads a texture in
-		// iteration N+1 (after the notify UserEvent woke iteration N's WaitEvent),
-		// but then WaitEvent blocks indefinitely because no further event arrives.
-		gotEvent := false
-		var e sdl.Event
-		if current.NeedsRedraw() {
-			e = sdl.WaitEventTimeout(16)
-		} else if newImages {
-			e = sdl.PollEvent()
-		} else if current.HasPendingAnimation() {
-			e = sdl.WaitEventTimeout(500)
-		} else {
-			e = sdl.WaitEvent()
-		}
-		for e != nil {
-			gotEvent = true
-			if pendingQuit {
-				e = sdl.PollEvent()
-				continue // drain input while waiting for tasks
-			}
-			// Intercept SDL_QUIT (SIGTERM from NextUI) before screens see it.
-			if _, ok := e.(*sdl.QuitEvent); ok {
-				current = nil
-				break loop
-			}
-			// Intercept UserEvents before screens see them.
-			if uev, ok := e.(*sdl.UserEvent); ok {
-				switch uev.Code {
-				case userEventInventoryUpdate:
-					// Update-svc finished a check; rebuild the list view so
-					// new [UP]/[!] badges and DL-sort order are immediately visible.
-					listScreen.ScheduleRebuild()
-					// Fall through — do NOT continue. FetchUploadsScreen also uses
-					// UserEvent code 0 for its goroutine-done signal, so the event
-					// must still reach current.HandleEvent(e).
-				case userEventPowerSleep:
-					logger.Info("power: sleep requested, waiting for tasks")
-					pendingQuit = true
-					pendingAction = power.ActionSleep
-					updateSvc.Stop()
-					e = sdl.PollEvent()
-					continue
-				case userEventPowerShutdown:
-					logger.Info("power: shutdown requested, waiting for tasks")
-					pendingQuit = true
-					pendingAction = power.ActionShutdown
-					updateSvc.Stop()
-					e = sdl.PollEvent()
-					continue
-				}
-			}
-			current = current.HandleEvent(e)
-			if current == nil {
-				break loop
-			}
-			e = sdl.PollEvent()
-		}
-		if current == nil {
-			break loop
-		}
-		if pendingQuit {
-			var busy bool
-			if bc, ok := current.(ui.BusyChecker); ok {
-				busy = bc.IsBusy()
-			}
-			if !busy && !updateSvc.IsRunning() {
-				if pendingAction == power.ActionShutdown {
-					logger.Info("power: all tasks done, writing /tmp/poweroff")
-					if err := os.WriteFile("/tmp/poweroff", []byte{}, 0644); err != nil {
-						logger.Error("power: /tmp/poweroff: %v", err)
-					}
-					break loop // exit cleanly; NextUI detects /tmp/poweroff and shuts down
-				}
-				suspendPath := filepath.Join(os.Getenv("SYSTEM_PATH"), "bin", "suspend")
-				if _, err := os.Stat(suspendPath); err != nil {
-					logger.Warn("power: suspend script not found at %s, exiting instead", suspendPath)
-					current = nil
-				} else {
-					logger.Info("power: all tasks done, calling %s", suspendPath)
-					if err := exec.Command(suspendPath).Run(); err != nil {
-						logger.Error("power: suspend: %v", err)
-					}
-					logger.Info("power: resumed from sleep")
-					powerMgr.PostWake()
-					// Flush any power UserEvents the goroutine queued while
-					// processing the wake-up key press. They arrived before
-					// suspend.Run() returned, so PostWake() alone is too late.
-					for e := sdl.PollEvent(); e != nil; e = sdl.PollEvent() {
-						if uev, ok := e.(*sdl.UserEvent); ok &&
-							(uev.Code == userEventPowerSleep || uev.Code == userEventPowerShutdown) {
-							logger.Info("power: discarding buffered wake-up event")
-							continue
-						}
-						current = current.HandleEvent(e)
-						if current == nil {
-							break loop
-						}
-					}
-					pendingQuit = false
-				}
-			} else {
-				drawPowerPendingOverlay(r, pendingAction)
-			}
-		} else if gotEvent || newImages || current.NeedsRedraw() {
-			current.Draw(r)
-		}
 	}
 }
 
-func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, ownedCachePath string,
+func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, ownedCachePath string,
 	inv *inventory.Inventory, inventoryPath string, sources leaf.SourceList, catalog *leaf.Catalog) error {
 	resourceDir := os.Getenv("ITCHIO_RES_DIR")
 	fontPath := os.Getenv("CAT_FONT_PATH")
@@ -417,6 +165,25 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		return err
 	}
 	defer ctx.Close()
+	powerActions := make(chan power.Action, 1)
+	powerMgr := power.NewManager(func(action power.Action) {
+		select {
+		case powerActions <- action:
+		default:
+		}
+		_ = ctx.Wake()
+	})
+	powerMgr.Start()
+	waitSleep, err := catui.NewWaitScreen(ctx, "Itch.io", "Please wait", "Finishing protected work before sleep…")
+	if err != nil {
+		return err
+	}
+	waitShutdown, err := catui.NewWaitScreen(ctx, "Itch.io", "Please wait", "Finishing protected work before shutdown…")
+	if err != nil {
+		return err
+	}
+	powerPending := false
+	pendingPowerAction := power.ActionSleep
 
 	imageCache := catui.NewImageCache(50, client.HTTPClient())
 	defer imageCache.Clear()
@@ -441,6 +208,8 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteFilter
 		catRouteDetail
 		catRouteDownloadSelect
+		catRouteArchiveInspect
+		catRouteArchiveContents
 		catRouteDestination
 		catRouteDownloadProgress
 		catRouteManage
@@ -465,10 +234,22 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var downloadProgressModel *appui.DownloadProgressModel
 	var downloadProgressScreen *catui.DownloadProgressScreen
 	var downloadBackend ui.CatDownloadBackend
+	var archiveFlow *ui.CatArchiveFlow
+	var archiveInspectModel *appui.DownloadProgressModel
+	var archiveInspectScreen *catui.DownloadProgressScreen
+	var archiveContentsModel *appui.DownloadSelectModel
+	var archiveContentsScreen *catui.DownloadSelectScreen
 	var destinationModel *appui.DestinationModel
 	var destinationScreen *catui.DestinationScreen
 	var destinationFlow *ui.CatDestinationFlow
 	var destinationPlan *ui.CatDownloadPlan
+	type destinationPurpose uint8
+	const (
+		destinationRegular destinationPurpose = iota
+		destinationArchiveROM
+		destinationArchiveMusic
+	)
+	var destinationUse destinationPurpose
 	var manageModel *appui.ManageModel
 	var manageScreen *catui.ManageScreen
 	var manageFlow *ui.CatManageFlow
@@ -490,6 +271,26 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var cacheRefreshModel *appui.RefreshModel
 	var cacheRefreshScreen *catui.RefreshScreen
 	var cacheRefreshFlow *ui.CatCacheRefreshFlow
+	openDetail := func(index int) error {
+		game, ok := list.CatSelected(index)
+		if !ok {
+			return nil
+		}
+		activeGame, activeDetail = game, nil
+		detailModel = appui.NewDetailModel(appui.DetailGame{
+			Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
+			Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
+			CanDownload: game.IsFree || cfg.APIKey != "",
+		})
+		var screenErr error
+		detailScreen, screenErr = catui.NewDetailScreen(ctx, detailModel, imageCache)
+		if screenErr != nil {
+			return screenErr
+		}
+		detailLoader = ui.NewCatDetailLoader(client, cfg, game, func() { _ = ctx.Wake() })
+		route = catRouteDetail
+		return nil
+	}
 	openSettings := func(back catRoute) error {
 		settingsReturn = back
 		settingsFlow, settingsModel = ui.NewCatSettingsFlow(cfg, cfgPath, ownedCachePath,
@@ -571,38 +372,8 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		route = catRouteManage
 		return nil
 	}
-	startDownloadPlan := func(plan *ui.CatDownloadPlan) error {
-		if plan == nil {
-			return nil
-		}
-		switch plan.Kind {
-		case ui.CatDownloadPlanArchive:
-			downloadSelectModel.SetHandoff("ZIP/7z inspection must classify ROM and music contents before writing files. That Cat route is scheduled with the archive/destination slice.")
-			return nil
-		case ui.CatDownloadPlanDestination:
-			var flowErr error
-			destinationFlow, destinationModel, flowErr = ui.NewCatROMDestinationFlow(
-				sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
-			if flowErr != nil {
-				downloadSelectModel.SetError(flowErr.Error())
-				return nil
-			}
-			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
-			if flowErr != nil {
-				return flowErr
-			}
-			destinationPlan = plan
-			route = catRouteDestination
-			return nil
-		case ui.CatDownloadPlanDirect:
-			downloadBackend = ui.NewCatDirectDownloadBackend(client, cfg, activeGame, activeDetail,
-				plan.Uploads[0], plan.DestPaths[0], inv, inventoryPath)
-		case ui.CatDownloadPlanMulti:
-			downloadBackend = ui.NewCatMultiDownloadBackend(client, cfg, activeGame, activeDetail,
-				plan.Uploads, plan.DestPaths, inv, inventoryPath)
-		default:
-			return nil
-		}
+	startBackend := func(backend ui.CatDownloadBackend) error {
+		downloadBackend = backend
 		snapshot := downloadBackend.CatSnapshot()
 		downloadProgressModel = &snapshot
 		var screenErr error
@@ -613,7 +384,123 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		route = catRouteDownloadProgress
 		return nil
 	}
+	var startDownloadPlan func(*ui.CatDownloadPlan) error
+	var handleArchiveAction func(ui.CatArchiveAction) error
+	startDownloadPlan = func(plan *ui.CatDownloadPlan) error {
+		if plan == nil {
+			return nil
+		}
+		switch plan.Kind {
+		case ui.CatDownloadPlanArchive:
+			archiveFlow = ui.NewCatArchiveFlow(client, cfg, activeGame, plan.Uploads[0], inv,
+				func() { _ = ctx.Wake() })
+			snapshot := archiveFlow.Snapshot()
+			archiveInspectModel = &snapshot
+			var screenErr error
+			archiveInspectScreen, screenErr = catui.NewDownloadProgressScreen(ctx, archiveInspectModel)
+			if screenErr != nil {
+				return screenErr
+			}
+			route = catRouteArchiveInspect
+			return nil
+		case ui.CatDownloadPlanDestination:
+			var flowErr error
+			if len(plan.LogicalExts) > 0 {
+				destinationFlow, destinationModel, flowErr = ui.NewCatLogicalROMDestinationFlow(
+					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads, plan.LogicalExts)
+			} else {
+				destinationFlow, destinationModel, flowErr = ui.NewCatROMDestinationFlow(
+					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
+			}
+			if flowErr != nil {
+				downloadSelectModel.SetError(flowErr.Error())
+				return nil
+			}
+			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
+			if flowErr != nil {
+				return flowErr
+			}
+			destinationPlan = plan
+			destinationUse = destinationRegular
+			route = catRouteDestination
+			return nil
+		case ui.CatDownloadPlanDirect:
+			return startBackend(ui.NewCatDirectDownloadBackend(client, cfg, activeGame, activeDetail,
+				plan.Uploads[0], plan.DestPaths[0], inv, inventoryPath))
+		case ui.CatDownloadPlanMulti:
+			return startBackend(ui.NewCatMultiDownloadBackend(client, cfg, activeGame, activeDetail,
+				plan.Uploads, plan.DestPaths, inv, inventoryPath))
+		default:
+			return nil
+		}
+	}
+	handleArchiveAction = func(action ui.CatArchiveAction) error {
+		switch action {
+		case ui.CatArchiveChooseContents:
+			archiveContentsModel = appui.NewDownloadSelectModel(activeGame.Title)
+			archiveFlow.PrepareChoices(archiveContentsModel)
+			var screenErr error
+			archiveContentsScreen, screenErr = catui.NewDownloadSelectScreen(ctx, archiveContentsModel)
+			if screenErr != nil {
+				return screenErr
+			}
+			route = catRouteArchiveContents
+		case ui.CatArchiveChooseROMDestination:
+			var flowErr error
+			destinationFlow, destinationModel, flowErr = ui.NewCatArchiveROMDestinationFlow(
+				sources, catalog, cfg, cfgPath, activeGame.Title, archiveFlow.ROMExtensions())
+			if flowErr != nil {
+				archiveInspectModel.State = appui.DownloadProgressError
+				archiveInspectModel.Detail = flowErr.Error()
+				route = catRouteArchiveInspect
+				return nil
+			}
+			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
+			if flowErr != nil {
+				return flowErr
+			}
+			destinationUse = destinationArchiveROM
+			route = catRouteDestination
+		case ui.CatArchiveChooseMusicDestination:
+			var flowErr error
+			destinationFlow, destinationModel, flowErr = ui.NewCatMusicDestinationFlow(
+				sources, cfg, cfgPath, activeGame.Title)
+			if flowErr != nil {
+				archiveInspectModel.State = appui.DownloadProgressError
+				archiveInspectModel.Detail = flowErr.Error()
+				route = catRouteArchiveInspect
+				return nil
+			}
+			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
+			if flowErr != nil {
+				return flowErr
+			}
+			destinationUse = destinationArchiveMusic
+			route = catRouteDestination
+		case ui.CatArchiveStartDirect:
+			return startDownloadPlan(archiveFlow.TakeDirectPlan())
+		case ui.CatArchiveStartExtraction:
+			return startBackend(ui.NewCatArchiveDownloadBackend(client, cfg, activeGame, activeDetail,
+				archiveFlow.ExtractionPlan(), inv, inventoryPath))
+		}
+		return nil
+	}
+	devDetailPending := os.Getenv("DEV_START_SCREEN") == "detail"
+	if devScreen := os.Getenv("DEV_START_SCREEN"); devScreen != "" {
+		logger.Info("dev: DEV_START_SCREEN=%q through Catastrophe graph", devScreen)
+		if devScreen == "settings" {
+			if err := openSettings(catRouteList); err != nil {
+				return err
+			}
+		}
+	}
 	drawCurrent := func() error {
+		if powerPending {
+			if pendingPowerAction == power.ActionShutdown {
+				return waitShutdown.Draw()
+			}
+			return waitSleep.Draw()
+		}
 		switch route {
 		case catRouteFilter:
 			imageCache.BeginFrame()
@@ -622,6 +509,10 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return detailScreen.Draw()
 		case catRouteDownloadSelect:
 			return downloadSelectScreen.Draw()
+		case catRouteArchiveInspect:
+			return archiveInspectScreen.Draw()
+		case catRouteArchiveContents:
+			return archiveContentsScreen.Draw()
 		case catRouteDestination:
 			return destinationScreen.Draw()
 		case catRouteDownloadProgress:
@@ -646,10 +537,19 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	}
 
 	running, redraw := true, true
-	targetFrames, _ := strconv.Atoi(os.Getenv("ITCHIO_CAT_LIVE_LIST_FRAMES"))
-	screenshotPath := os.Getenv("ITCHIO_CAT_LIVE_LIST_SCREENSHOT")
+	targetFrames, _ := strconv.Atoi(os.Getenv("ITCHIO_APP_FRAMES"))
+	screenshotPath := os.Getenv("ITCHIO_APP_SCREENSHOT")
 	drawn := 0
 	for running {
+		select {
+		case action := <-powerActions:
+			if !powerPending || action == power.ActionShutdown {
+				powerPending, pendingPowerAction = true, action
+				updateSvc.Stop()
+				logger.Info("power: waiting for Cat routes before action=%d", action)
+			}
+		default:
+		}
 		// cat_present() blocks on the raw evdev wake fd. A release or noisy
 		// analog sample can wake it without producing a normalized app event.
 		// SDL does not preserve backbuffer contents across RenderPresent, so a
@@ -657,12 +557,25 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		// Always rebuild one complete frame after every wake before presenting.
 		redraw = true
 		list.SyncCatModel(model)
+		if devDetailPending && route == catRouteList && model.State == appui.ListReady && len(model.Items) > 0 {
+			if err := openDetail(0); err != nil {
+				return err
+			}
+			devDetailPending = false
+			redraw = true
+		}
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
 			if err := startDownloadPlan(downloadFlow.TakePlan()); err != nil {
+				return err
+			}
+			redraw = true
+		}
+		if route == catRouteArchiveInspect && archiveFlow != nil && archiveFlow.Sync(archiveInspectModel) {
+			if err := handleArchiveAction(archiveFlow.TakeAction()); err != nil {
 				return err
 			}
 			redraw = true
@@ -698,6 +611,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			}
 			if event.Wake {
 				redraw = true
+				continue
+			}
+			if powerPending {
 				continue
 			}
 			switch route {
@@ -762,6 +678,25 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 						return err
 					}
 				}
+			case catRouteArchiveInspect:
+				switch archiveInspectScreen.HandleInput(event) {
+				case appui.DownloadProgressIntentCancel, appui.DownloadProgressIntentBack:
+					archiveFlow, archiveInspectModel, archiveInspectScreen = nil, nil, nil
+					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					route = catRouteDetail
+				}
+			case catRouteArchiveContents:
+				switch archiveContentsScreen.HandleInput(event) {
+				case appui.DownloadSelectIntentBack:
+					archiveFlow, archiveContentsModel, archiveContentsScreen = nil, nil, nil
+					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					route = catRouteDetail
+				case appui.DownloadSelectIntentChoose:
+					archiveFlow.Choose(archiveContentsModel)
+					if err := handleArchiveAction(archiveFlow.TakeAction()); err != nil {
+						return err
+					}
+				}
 			case catRouteDestination:
 				switch destinationScreen.HandleInput(event) {
 				case appui.DestinationIntentBack:
@@ -778,6 +713,26 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					}
 					if complete {
 						dirs := destinationFlow.DestPaths()
+						if destinationUse == destinationArchiveROM {
+							archiveFlow.SetROMDirs(destinationFlow.ArchiveROMDirs())
+							destinationFlow, destinationModel, destinationScreen = nil, nil, nil
+							if err := handleArchiveAction(archiveFlow.TakeAction()); err != nil {
+								return err
+							}
+							break
+						}
+						if destinationUse == destinationArchiveMusic {
+							if len(dirs) != 1 {
+								destinationModel.SetError("Music destination was not resolved.")
+								break
+							}
+							archiveFlow.SetMusicDir(dirs[0])
+							destinationFlow, destinationModel, destinationScreen = nil, nil, nil
+							if err := handleArchiveAction(archiveFlow.TakeAction()); err != nil {
+								return err
+							}
+							break
+						}
 						resolved := &ui.CatDownloadPlan{Uploads: append([]roms.Upload(nil), destinationPlan.Uploads...)}
 						if len(resolved.Uploads) == 1 {
 							resolved.Kind = ui.CatDownloadPlanDirect
@@ -953,22 +908,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					}
 					route = catRouteFilter
 				case appui.ListIntentOpen:
-					game, ok := list.CatSelected(model.Cursor)
-					if !ok {
-						break
-					}
-					activeGame, activeDetail = game, nil
-					detailModel = appui.NewDetailModel(appui.DetailGame{
-						Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
-						Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
-						CanDownload: game.IsFree || cfg.APIKey != "",
-					})
-					detailScreen, err = catui.NewDetailScreen(ctx, detailModel, imageCache)
-					if err != nil {
+					if err := openDetail(model.Cursor); err != nil {
 						return err
 					}
-					detailLoader = ui.NewCatDetailLoader(client, cfg, game, func() { _ = ctx.Wake() })
-					route = catRouteDetail
 				case appui.ListIntentSettings:
 					if err := openSettings(catRouteList); err != nil {
 						return err
@@ -991,6 +933,12 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			}
 			redraw = true
 		}
+		if route == catRouteArchiveInspect && archiveFlow != nil && archiveFlow.Sync(archiveInspectModel) {
+			if err := handleArchiveAction(archiveFlow.TakeAction()); err != nil {
+				return err
+			}
+			redraw = true
+		}
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
@@ -1006,6 +954,46 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			snapshot := downloadBackend.CatSnapshot()
 			*downloadProgressModel = snapshot
 			redraw = true
+		}
+		if powerPending {
+			busy := list.IsBusy() || updateSvc.IsRunning()
+			busy = busy || detailModel != nil && detailModel.State == appui.DetailLoading
+			busy = busy || downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading
+			busy = busy || archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning
+			busy = busy || downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning
+			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
+			busy = busy || settingsFlow != nil && settingsFlow.Busy()
+			if !busy {
+				if pendingPowerAction == power.ActionShutdown {
+					logger.Info("power: Cat routes idle, writing /tmp/poweroff")
+					if err := os.WriteFile("/tmp/poweroff", []byte{}, 0o644); err != nil {
+						return err
+					}
+					running = false
+					continue
+				}
+				suspendPath := filepath.Join(os.Getenv("SYSTEM_PATH"), "bin", "suspend")
+				if _, err := os.Stat(suspendPath); err != nil {
+					logger.Warn("power: suspend script not found at %s, exiting instead", suspendPath)
+					running = false
+					continue
+				}
+				logger.Info("power: Cat routes idle, calling %s", suspendPath)
+				if err := exec.Command(suspendPath).Run(); err != nil {
+					logger.Error("power: suspend: %v", err)
+				}
+				powerMgr.PostWake()
+				for {
+					select {
+					case <-powerActions:
+					default:
+						powerPending = false
+						redraw = true
+						goto powerDrainComplete
+					}
+				}
+			powerDrainComplete:
+			}
 		}
 		if redraw {
 			if err := drawCurrent(); err != nil {
@@ -1057,6 +1045,9 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		} else if route == catRouteDownloadSelect && downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading {
 			ctx.RequestFrameIn(100)
 			redraw = true
+		} else if route == catRouteArchiveInspect && archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning {
+			ctx.RequestFrameIn(100)
+			redraw = true
 		} else if route == catRouteDownloadProgress && downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning {
 			ctx.RequestFrameIn(50)
 			redraw = true
@@ -1072,17 +1063,4 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		}
 	}
 	return nil
-}
-
-func drawPowerPendingOverlay(r *renderer.Renderer, action power.Action) {
-	r.Clear(20, 20, 20)
-	subtitle := "Finishing up before sleep…"
-	if action == power.ActionShutdown {
-		subtitle = "Finishing up before shutdown…"
-	}
-	_, mainH := r.TextSize("Ag")
-	mid := r.H / 2
-	r.DrawTextCentered("Please wait", 0, mid-mainH-6, r.W, 220, 220, 220)
-	r.DrawSmallTextCentered(subtitle, 0, mid+6, r.W, 120, 120, 120)
-	r.Present()
 }

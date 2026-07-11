@@ -31,3 +31,10 @@ func TestDownloadProgressCancelsButDoesNotNavigateWhileRunning(t *testing.T) {
 		t.Fatalf("blocked B intent = %v, want back", got)
 	}
 }
+
+func TestDownloadProgressLockedTransactionIgnoresCancel(t *testing.T) {
+	model := DownloadProgressModel{State: DownloadProgressRunning, Locked: true}
+	if got := model.Handle(InputEvent{Button: ButtonB, Pressed: true}); got != DownloadProgressIntentNone {
+		t.Fatalf("locked B intent = %v", got)
+	}
+}

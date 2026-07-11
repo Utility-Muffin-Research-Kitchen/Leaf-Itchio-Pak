@@ -37,6 +37,12 @@ func NewCatMultiDownloadBackend(client *itchio.Client, cfg *settings.Config,
 	return NewMultiROMDownloadScreen(client, cfg, game, detail, downloads, inv, inventoryPath, nil)
 }
 
+func NewCatArchiveDownloadBackend(client *itchio.Client, cfg *settings.Config,
+	game itchio.Game, detail *itchio.GameDetail, plan ZIPPlan,
+	inv *inventory.Inventory, inventoryPath string) CatDownloadBackend {
+	return NewZIPDownloadScreen(client, cfg, game, detail, plan, inv, inventoryPath, nil)
+}
+
 func (s *DownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.upload.Filename,
@@ -109,3 +115,39 @@ func (s *MultiROMDownloadScreen) CatContinueWithoutProtection() {
 }
 
 func (s *MultiROMDownloadScreen) CatCancel() { s.Cancel() }
+
+func (s *ZIPDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
+	model := appui.DownloadProgressModel{
+		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.plan.Upload.Filename,
+		Downloaded: atomic.LoadInt64(&s.downloaded), Total: atomic.LoadInt64(&s.total), FileCount: 1, Locked: true,
+	}
+	switch s.loadState() {
+	case zipDLExtracting:
+		model.Filename = "Extracting " + s.plan.Upload.Filename
+	case zipDLDone:
+		model.State = appui.DownloadProgressDone
+		model.SavedPaths = append([]string(nil), s.extracted...)
+	case zipDLError:
+		model.State = appui.DownloadProgressError
+		if s.err != nil {
+			model.Detail = s.err.Error()
+		}
+		if s.inhibitBlocked.Load() {
+			model.State = appui.DownloadProgressInhibitBlocked
+		}
+	}
+	return model
+}
+
+func (s *ZIPDownloadScreen) CatContinueWithoutProtection() {
+	if s.loadState() != zipDLError || !s.inhibitBlocked.Load() {
+		return
+	}
+	s.storeState(zipDLDownloading)
+	go s.run(true)
+}
+
+// Archive extraction cannot safely stop halfway through a file set. Cancel is
+// therefore a no-op while busy and the progress screen keeps the operation
+// visible until its protected transaction completes.
+func (s *ZIPDownloadScreen) CatCancel() {}

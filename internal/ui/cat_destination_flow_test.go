@@ -209,3 +209,29 @@ func TestCatDestinationVisitsEachCanonicalSystemOnce(t *testing.T) {
 		t.Fatalf("upload-aligned destinations = %v", paths)
 	}
 }
+
+func TestCatArchiveDestinationReturnsInnerExtensionMap(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	cfg := &settings.Config{}
+	flow, model, err := NewCatArchiveROMDestinationFlow(sources, catalog, cfg, cfgPath,
+		"Archive", []string{".gb", ".gbc", ".gb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 1 // Secondary SD.
+	if _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || complete {
+		t.Fatalf("save GB = %v, %v", complete, err)
+	}
+	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || !complete {
+		t.Fatalf("save GBC = %v, %v", complete, err)
+	}
+	dirs := flow.ArchiveROMDirs()
+	if dirs[".gb"] == "" || dirs[".gbc"] == "" || dirs[".gb"] == dirs[".gbc"] {
+		t.Fatalf("archive dirs = %#v", dirs)
+	}
+}

@@ -39,11 +39,4 @@ export ITCHIO_LOG_PREPARED=1
 
 cd "$PAK_DIR"
 
-# Normal launcher starts use the in-progress Catastrophe screen graph so an
-# explicitly staged development pak exercises the port under test. Arguments
-# are left untouched for fixture/smoke routes. Set ITCHIO_UI_MODE=legacy as a
-# temporary escape hatch until the legacy renderer is deleted after cutover.
-if [ "$#" -eq 0 ] && [ "${ITCHIO_UI_MODE:-cat}" = "cat" ]; then
-    set -- --cat-live-list
-fi
 exec "$PAK_DIR/bin/itchio-pak" "$@" >>"$LOG_FILE" 2>&1

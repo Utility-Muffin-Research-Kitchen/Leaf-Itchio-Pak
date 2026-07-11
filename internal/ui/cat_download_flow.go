@@ -30,6 +30,11 @@ type CatDownloadPlan struct {
 	Kind      CatDownloadPlanKind
 	Uploads   []roms.Upload
 	DestPaths []string
+	// LogicalExts describes the ROM type when the downloaded filename itself
+	// is an archive. It lets the source-aware destination picker place a
+	// single-ROM ZIP under the correct Leaf system instead of guessing from
+	// the outer .zip suffix.
+	LogicalExts []string
 }
 
 type catDownloadMode uint8

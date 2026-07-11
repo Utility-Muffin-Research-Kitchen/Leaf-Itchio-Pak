@@ -36,20 +36,52 @@ type CatDestinationFlow struct {
 	current       string
 	chosenDirs    map[string]string
 	destPaths     []string
+	archiveExts   map[string][]string
 }
 
 func NewCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 	cfg *settings.Config, cfgPath, title string, uploads []roms.Upload) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	exts := make([]string, len(uploads))
+	for index, upload := range uploads {
+		exts[index] = strings.ToLower(roms.ROMExt(upload.Filename))
+	}
+	return newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, title, uploads, exts, false)
+}
+
+// NewCatLogicalROMDestinationFlow chooses destinations using the inspected
+// inner ROM extensions while retaining the outer upload filenames.
+func NewCatLogicalROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
+	cfg *settings.Config, cfgPath, title string, uploads []roms.Upload,
+	exts []string) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	return newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, title, uploads, exts, false)
+}
+
+// NewCatArchiveROMDestinationFlow chooses one directory per distinct ROM
+// system represented in an inspected archive.
+func NewCatArchiveROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
+	cfg *settings.Config, cfgPath, title string,
+	exts []string) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	uploads := make([]roms.Upload, len(exts))
+	return newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, title, uploads, exts, true)
+}
+
+func newCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
+	cfg *settings.Config, cfgPath, title string, uploads []roms.Upload,
+	exts []string, archive bool) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	if len(uploads) != len(exts) {
+		return nil, nil, fmt.Errorf("download destination metadata is inconsistent")
+	}
 	flow := &CatDestinationFlow{
 		sources: sources, catalog: catalog, cfg: cfg, cfgPath: cfgPath, title: title,
 		chosenDirs: make(map[string]string), uploadTargets: make([]int, len(uploads)),
+		archiveExts: make(map[string][]string),
 	}
 	byKey := make(map[string]int)
-	for index, upload := range uploads {
-		ext := strings.ToLower(roms.ROMExt(upload.Filename))
+	for index, ext := range exts {
+		ext = strings.ToLower(ext)
 		canonical, ok := leaf.CanonicalSystemForExtension(ext)
 		if !ok || canonical == "GBC" && ext == ".zip" {
-			return nil, nil, fmt.Errorf("cannot choose a ROM destination for %q before archive inspection", upload.Filename)
+			return nil, nil, fmt.Errorf("cannot choose a ROM destination for %q", ext)
 		}
 		targetIndex, exists := byKey[canonical]
 		if !exists {
@@ -58,12 +90,16 @@ func NewCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 			flow.targets = append(flow.targets, catDestinationTarget{key: canonical, label: canonical, legacyExt: ext})
 		}
 		flow.uploadTargets[index] = targetIndex
+		flow.archiveExts[canonical] = append(flow.archiveExts[canonical], ext)
 	}
 	if len(flow.targets) == 0 {
 		return nil, nil, fmt.Errorf("download has no destination targets")
 	}
 	model := appui.NewDestinationModel(title)
 	flow.showSources(model)
+	if !archive {
+		flow.archiveExts = nil
+	}
 	return flow, model, nil
 }
 
@@ -158,6 +194,18 @@ func (flow *CatDestinationFlow) Back(model *appui.DestinationModel) bool {
 
 func (flow *CatDestinationFlow) DestPaths() []string {
 	return append([]string(nil), flow.destPaths...)
+}
+
+// ArchiveROMDirs returns the chosen directory keyed by each inspected inner
+// extension, ready for ZIPPlan.ROMDirs.
+func (flow *CatDestinationFlow) ArchiveROMDirs() map[string]string {
+	dirs := make(map[string]string)
+	for canonical, exts := range flow.archiveExts {
+		for _, ext := range exts {
+			dirs[ext] = flow.chosenDirs[canonical]
+		}
+	}
+	return dirs
 }
 
 func (flow *CatDestinationFlow) openTarget(model *appui.DestinationModel) error {

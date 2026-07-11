@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
@@ -52,6 +53,7 @@ type CatSettingsFlow struct {
 	wake           func()
 	pending        catSettingsConfirm
 	apiResults     chan catAPIResult
+	validating     atomic.Bool
 }
 
 func NewCatSettingsFlow(cfg *settings.Config, cfgPath, ownedCachePath, appDataPath string,
@@ -240,6 +242,7 @@ func (flow *CatSettingsFlow) SetAPIKey(model *appui.SettingsModel, value string)
 func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 	select {
 	case result := <-flow.apiResults:
+		flow.validating.Store(false)
 		if result.err != nil {
 			flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusRejected)
 			model.SetError("API key validation failed. The masked key remains stored so it can be edited or removed.")
@@ -263,6 +266,7 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 
 func (flow *CatSettingsFlow) startAPIValidation(model *appui.SettingsModel, key string) {
 	model.State, model.Message = appui.SettingsWorking, "Validating the masked API key with itch.io…"
+	flow.validating.Store(true)
 	go func() {
 		_, owned, err := flow.client.ValidateAPIKey(key)
 		flow.apiResults <- catAPIResult{owned: owned, err: err}
@@ -271,6 +275,8 @@ func (flow *CatSettingsFlow) startAPIValidation(model *appui.SettingsModel, key 
 		}
 	}()
 }
+
+func (flow *CatSettingsFlow) Busy() bool { return flow != nil && flow.validating.Load() }
 
 func (flow *CatSettingsFlow) saveAndRefresh(model *appui.SettingsModel) error {
 	if err := flow.cfg.Save(flow.cfgPath); err != nil {

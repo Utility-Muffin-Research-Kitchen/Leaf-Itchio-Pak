@@ -40,7 +40,8 @@ capture download-done 960 720 1 0
 capture download-error 960 720 1 0
 capture download-inhibit 960 720 1 0
 capture download-cancelled 960 720 1 0
-capture download-handoff 960 720 1 0
+capture archive-inspect 960 720 1 0
+capture archive-contents 1280 800 0 5
 capture destination-source 960 720 1 0
 capture destination-source 1280 800 0 5
 capture destination-folder 960 720 1 0
@@ -59,6 +60,7 @@ capture moderation-tags 1280 800 0 5
 capture about 960 720 1 0
 capture refresh 960 720 1 0
 capture refresh-done 1280 800 0 5
+capture power-wait 960 720 1 0
 
 python3 - "$OUT" <<'PY'
 import pathlib

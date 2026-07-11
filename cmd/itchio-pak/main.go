@@ -41,9 +41,8 @@ func main() {
 	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture (filter/detail/download/destination states)")
 	catInputFrames := flag.Int("cat-input-frames", 0, "exit Catastrophe input fixture after N frames")
 	catInputScreenshot := flag.String("cat-input-screenshot", "", "save the final Catastrophe input fixture as PNG")
-	catLiveList := flag.Bool("cat-live-list", false, "run the Catastrophe main list against the real Leaf cache/feed")
-	catLiveListFrames := flag.Int("cat-live-list-frames", 0, "exit the live Catastrophe main list after N frames")
-	catLiveListScreenshot := flag.String("cat-live-list-screenshot", "", "save the final live Catastrophe main-list frame as PNG")
+	appFrames := flag.Int("app-frames", 0, "exit the Catastrophe application after N rendered frames")
+	appScreenshot := flag.String("app-screenshot", "", "save the final Catastrophe application frame as PNG")
 	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
 	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
 	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
@@ -172,11 +171,8 @@ func main() {
 		_ = os.Setenv("ITCHIO_CAT_INPUT_FRAMES", fmt.Sprintf("%d", *catInputFrames))
 		_ = os.Setenv("ITCHIO_CAT_INPUT_SCREENSHOT", *catInputScreenshot)
 	}
-	if *catLiveList {
-		_ = os.Setenv("ITCHIO_CAT_LIVE_LIST", "1")
-		_ = os.Setenv("ITCHIO_CAT_LIVE_LIST_FRAMES", fmt.Sprintf("%d", *catLiveListFrames))
-		_ = os.Setenv("ITCHIO_CAT_LIVE_LIST_SCREENSHOT", *catLiveListScreenshot)
-	}
+	_ = os.Setenv("ITCHIO_APP_FRAMES", fmt.Sprintf("%d", *appFrames))
+	_ = os.Setenv("ITCHIO_APP_SCREENSHOT", *appScreenshot)
 
 	runSDL()
 

@@ -75,10 +75,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
-	case "download-select", "download-handoff":
+	case "download-select", "archive-contents":
 		model := appui.NewDownloadSelectModel("Leafbound 葉")
-		if config.Screen == "download-handoff" {
-			model.SetHandoff("ZIP/7z inspection must classify ROM and music contents before choosing either SD card. No files have been written.")
+		if config.Screen == "archive-contents" {
+			model.SetChoices("Choose one .GBC ROM (1/1)", []appui.DownloadChoice{
+				{Title: "release/leafbound-v1.gbc", Badge: "GBC"},
+				{Title: "release/leafbound-v2.gbc", Badge: "GBC"},
+			})
 		} else {
 			model.SetChoices("Choose file and format", []appui.DownloadChoice{
 				{Title: "leafbound.gbc", Badge: "GBC"},
@@ -94,12 +97,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-inhibit", "download-cancelled":
+	case "download-progress", "download-done", "download-error", "download-inhibit", "download-cancelled", "archive-inspect":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
 		}
 		switch config.Screen {
+		case "archive-inspect":
+			model.Filename = "Inspecting soundtrack-and-game.zip"
+			model.Downloaded, model.Total, model.FileCount = 128*1024, 640*1024, 1
 		case "download-done":
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
@@ -122,6 +128,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadProgressIntentBack
 		}
+	case "power-wait":
+		screen, screenErr := NewWaitScreen(ctx, "Itch.io", "Please wait", "Finishing protected work before sleep…")
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(InputEvent) bool { return true }
 	case "destination-source", "destination-folder", "destination-music":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
