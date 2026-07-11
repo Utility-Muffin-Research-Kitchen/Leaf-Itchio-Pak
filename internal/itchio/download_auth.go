@@ -1,6 +1,7 @@
 package itchio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -257,12 +258,20 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 }
 
 func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string, error) {
+	return c.ResolveAuthURLContext(context.Background(), apiKey, uploadID, downloadKeyID)
+}
+
+func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, downloadKeyID string) (string, error) {
 	// URL contains the API key; do not log it.
 	dlURL := fmt.Sprintf("%s/api/1/%s/upload/%s/download?download_key_id=%s",
 		c.base, apiKey, uploadID, downloadKeyID)
 	logger.Debug("auth: resolving CDN for upload id=%s", uploadID)
 
-	resp, err := c.http.Get(dlURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build auth CDN request: %w", err)
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("resolve auth CDN URL: %w", err)
 	}
@@ -296,10 +305,14 @@ func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string,
 // DownloadAuthUpload resolves the CDN URL for an owned upload and streams it to dest.
 // Uses the simple API (itch.io/api/1) with a per-game download key.
 func (c *Client) DownloadAuthUpload(apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveAuthURL(apiKey, uploadID, downloadKeyID)
+	return c.DownloadAuthUploadContext(context.Background(), apiKey, uploadID, downloadKeyID, dest, progress)
+}
+
+func (c *Client) DownloadAuthUploadContext(ctx context.Context, apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
+	cdnURL, err := c.ResolveAuthURLContext(ctx, apiKey, uploadID, downloadKeyID)
 	if err != nil {
 		return err
 	}
 	logger.Info("auth: streaming to %s", dest)
-	return c.streamToFile(cdnURL, dest, progress)
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
 }

@@ -1,6 +1,8 @@
 package itchio
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +46,51 @@ func TestStreamToFileFailurePreservesDestination(t *testing.T) {
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".itchio-download-") {
 			t.Errorf("partial download was not removed: %s", entry.Name())
+		}
+	}
+}
+
+func TestStreamToFileCancellationPreservesDestinationAndRemovesPartial(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1048576")
+		_, _ = w.Write(make([]byte, 32*1024))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "game.gbc")
+	const original = "existing-rom-must-survive"
+	if err := os.WriteFile(dest, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	client := NewClientWithBase(srv.URL)
+	err := client.streamToFileContext(ctx, srv.URL+"/game.gbc", dest, func(downloaded, _ int64) {
+		if downloaded > 0 {
+			cancel()
+		}
+	})
+	<-started
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("stream error = %v, want context canceled", err)
+	}
+	data, readErr := os.ReadFile(dest)
+	if readErr != nil || string(data) != original {
+		t.Fatalf("destination after cancel = %q, %v", data, readErr)
+	}
+	entries, readDirErr := os.ReadDir(dir)
+	if readDirErr != nil {
+		t.Fatal(readDirErr)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".itchio-download-") {
+			t.Fatalf("partial download remains after cancel: %s", entry.Name())
 		}
 	}
 }

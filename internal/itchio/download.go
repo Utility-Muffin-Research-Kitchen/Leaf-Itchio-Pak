@@ -185,6 +185,10 @@ func extractKeyID(jwtKey string) string {
 }
 
 func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
+	return c.ResolveFreeURLContext(context.Background(), upload)
+}
+
+func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (string, error) {
 	// Parse the resolver URL to extract base path, key, and csrf.
 	parsed, err := url.Parse(upload.URL)
 	if err != nil {
@@ -199,7 +203,12 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 	logger.Debug("uploads: POST resolver csrf=%s key=%s", presentAbsent(csrf), presentAbsent(key))
 
 	form := url.Values{"csrf_token": {csrf}, "download_key_id": {keyID}}
-	resp, err := c.http.Post(baseURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("build resolver request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("resolve CDN URL: %w", err)
 	}
@@ -242,15 +251,23 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 //
 //	gameURL/file/UPLOAD_ID?key=KEY&csrf=CSRF
 func (c *Client) DownloadFree(upload Upload, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveFreeURL(upload)
+	return c.DownloadFreeContext(context.Background(), upload, dest, progress)
+}
+
+func (c *Client) DownloadFreeContext(ctx context.Context, upload Upload, dest string, progress func(int64, int64)) error {
+	cdnURL, err := c.ResolveFreeURLContext(ctx, upload)
 	if err != nil {
 		return err
 	}
-	return c.streamToFile(cdnURL, dest, progress)
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
 }
 
 func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) error {
-	lease, guardErr := leaf.BeginOperation(context.Background(), "HTTP body write", false)
+	return c.streamToFileContext(context.Background(), srcURL, dest, progress)
+}
+
+func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, progress func(int64, int64)) error {
+	lease, guardErr := leaf.BeginOperation(ctx, "HTTP body write", false)
 	if guardErr != nil {
 		return fmt.Errorf("protect HTTP body write: %w", guardErr)
 	}
@@ -264,7 +281,11 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 		Jar:           c.http.Jar,
 		CheckRedirect: c.http.CheckRedirect,
 	}
-	resp, err := dlClient.Get(srcURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return fmt.Errorf("build file request: %w", err)
+	}
+	resp, err := dlClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch file: %w", err)
 	}

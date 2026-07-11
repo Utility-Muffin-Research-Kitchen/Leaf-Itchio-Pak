@@ -16,9 +16,9 @@ const (
 )
 
 type DetailGame struct {
-	Title, Author, URL, Platform string
-	Price                        float64
-	IsFree, Downloaded           bool
+	Title, Author, URL, Platform    string
+	Price                           float64
+	IsFree, Downloaded, CanDownload bool
 }
 
 type DetailModel struct {
@@ -40,6 +40,7 @@ const (
 	DetailIntentNone DetailIntent = iota
 	DetailIntentBack
 	DetailIntentSettings
+	DetailIntentDownload
 )
 
 func NewDetailModel(game DetailGame) *DetailModel {
@@ -98,6 +99,10 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonDown:
 		m.ScrollLine++
 		m.clampScroll()
+	case ButtonA:
+		if m.Game.CanDownload && !m.BrowserOnly {
+			return DetailIntentDownload
+		}
 	}
 	return DetailIntentNone
 }

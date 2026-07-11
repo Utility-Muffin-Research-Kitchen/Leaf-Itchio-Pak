@@ -32,6 +32,15 @@ capture filter 1280 800 0 5
 capture detail 960 720 1 0
 capture detail 1280 800 0 5
 capture warning 960 720 1 0
+capture download-select 960 720 1 0
+capture download-select 1280 800 0 5
+capture download-progress 960 720 1 0
+capture download-progress 1280 800 0 5
+capture download-done 960 720 1 0
+capture download-error 960 720 1 0
+capture download-inhibit 960 720 1 0
+capture download-cancelled 960 720 1 0
+capture download-handoff 960 720 1 0
 
 python3 - "$OUT" <<'PY'
 import pathlib

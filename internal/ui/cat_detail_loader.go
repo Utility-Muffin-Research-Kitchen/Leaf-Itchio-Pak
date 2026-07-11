@@ -20,6 +20,7 @@ type catDetailResult struct {
 type CatDetailLoader struct {
 	game    itchio.Game
 	updates chan catDetailResult
+	detail  *itchio.GameDetail
 }
 
 func NewCatDetailLoader(client *itchio.Client, cfg *settings.Config, game itchio.Game, wake func()) *CatDetailLoader {
@@ -49,6 +50,7 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 			return true
 		}
 		detail := result.detail
+		loader.detail = detail
 		images := dedupeStrings(append([]string{loader.game.CoverURL}, detail.ScreenshotURLs...))
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
 		warning := itchio.IsAdvisoryTriggered(detail.PageTags, catFilterConfig(cfg))
@@ -58,6 +60,10 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		return false
 	}
 }
+
+// Detail returns the fully scraped detail after Sync publishes a ready model.
+// It is only read and written by the Cat owner thread.
+func (loader *CatDetailLoader) Detail() *itchio.GameDetail { return loader.detail }
 
 func dedupeStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))

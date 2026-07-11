@@ -54,6 +54,16 @@ func (screen *DetailScreen) Draw() error {
 		footer = append(footer,
 			FooterHint{Button: ButtonL1, Label: "Image -/+", NarrowLabel: "Images"},
 			FooterHint{Button: ButtonUp, Label: "Scroll"})
+		if screen.model.Game.CanDownload && !screen.model.BrowserOnly {
+			label := "Download"
+			if screen.model.Game.Downloaded {
+				label = "Again"
+			}
+			// Keep this with the left group. Splitting a GIF-backed Detail frame
+			// across Cat's left/right footer groups can retain queued shared-sprite
+			// state on MLP1; the action and visual label remain unchanged.
+			footer = append(footer, FooterHint{Button: ButtonA, Label: label})
+		}
 	} else if screen.model.State == appui.DetailWarning {
 		footer = append(footer, FooterHint{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"})
 	}

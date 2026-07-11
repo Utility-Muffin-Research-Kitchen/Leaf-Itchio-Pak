@@ -4,9 +4,11 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +28,7 @@ const (
 	multiDLDownloading multiDLState = iota
 	multiDLDone
 	multiDLError
+	multiDLCancelled
 )
 
 // romDownload pairs an upload with its resolved destination path.
@@ -53,6 +56,8 @@ type MultiROMDownloadScreen struct {
 	err            error
 	finalPaths     []string // resolved dest path for each completed download
 	inhibitBlocked atomic.Bool
+	cancelMu       sync.Mutex
+	cancel         context.CancelFunc
 }
 
 func NewMultiROMDownloadScreen(
@@ -70,7 +75,7 @@ func NewMultiROMDownloadScreen(
 		prev:       prev,
 		finalPaths: make([]string, len(downloads)),
 	}
-	go s.runDownloads(false)
+	s.startDownloads(false)
 	return s
 }
 
@@ -78,10 +83,27 @@ func (s *MultiROMDownloadScreen) loadState() multiDLState {
 	return multiDLState(atomic.LoadInt32(&s.state))
 }
 
-func (s *MultiROMDownloadScreen) runDownloads(allowUninhibited bool) {
+func (s *MultiROMDownloadScreen) startDownloads(allowUninhibited bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancelMu.Lock()
+	s.cancel = cancel
+	s.cancelMu.Unlock()
+	go s.runDownloads(ctx, allowUninhibited)
+}
+
+func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibited bool) {
 	defer func() { sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT}) }()
-	lease, guardErr := leaf.BeginOperation(context.Background(), "batch download", allowUninhibited)
+	defer func() {
+		s.cancelMu.Lock()
+		s.cancel = nil
+		s.cancelMu.Unlock()
+	}()
+	lease, guardErr := leaf.BeginOperation(ctx, "batch download", allowUninhibited)
 	if guardErr != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			atomic.StoreInt32(&s.state, int32(multiDLCancelled))
+			return
+		}
 		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
 		s.inhibitBlocked.Store(true)
 		atomic.StoreInt32(&s.state, int32(multiDLError))
@@ -110,13 +132,18 @@ func (s *MultiROMDownloadScreen) runDownloads(allowUninhibited bool) {
 
 		var err error
 		if isAuth {
-			err = s.client.DownloadAuthUpload(s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.DownloadKeyID, dl.DestPath, progress)
+			err = s.client.DownloadAuthUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.DownloadKeyID, dl.DestPath, progress)
 		} else {
 			itchUpload := itchio.Upload{Filename: dl.Upload.Filename, URL: dl.Upload.URL}
-			err = s.client.DownloadFree(itchUpload, dl.DestPath, progress)
+			err = s.client.DownloadFreeContext(ctx, itchUpload, dl.DestPath, progress)
 		}
 
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Info("multi-download: cancelled at file %d/%d", i+1, len(s.downloads))
+				atomic.StoreInt32(&s.state, int32(multiDLCancelled))
+				return
+			}
 			logger.Error("multi-download: [%d/%d] failed %s: %v", i+1, len(s.downloads), dl.Upload.Filename, err)
 			s.err = err
 			atomic.StoreInt32(&s.state, int32(multiDLError))
@@ -175,6 +202,15 @@ func (s *MultiROMDownloadScreen) runDownloads(allowUninhibited bool) {
 	}
 
 	atomic.StoreInt32(&s.state, int32(multiDLDone))
+}
+
+func (s *MultiROMDownloadScreen) Cancel() {
+	s.cancelMu.Lock()
+	cancel := s.cancel
+	s.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (s *MultiROMDownloadScreen) NeedsRedraw() bool         { return true }
@@ -241,6 +277,8 @@ func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
 		r.DrawText("Download failed:", 20, y, 200, 60, 60)
 		y += fontH + 6
 		r.DrawWrappedText(s.err.Error(), 20, y, r.W-40, fontH+4, 200, 100, 100)
+	case multiDLCancelled:
+		r.DrawTextCentered("Download cancelled", 0, mid-fontH/2, r.W, ht[0], ht[1], ht[2])
 	}
 
 	ftrY := r.DrawFooterBar(footerH)
@@ -254,7 +292,7 @@ func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
 	}
 	switch st {
 	case multiDLDownloading:
-		r.DrawSmallText("Please wait...", 10, ftrY, ht[0], ht[1], ht[2])
+		r.DrawFooterHints([]renderer.FooterHint{{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"}}, ftrY)
 	default:
 		r.DrawFooterHints([]renderer.FooterHint{
 			{Kind: renderer.BadgePill, Label: "A/B", Text: "Back"},
@@ -265,6 +303,16 @@ func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
 
 func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
 	if s.loadState() == multiDLDownloading {
+		switch ev := e.(type) {
+		case *sdl.KeyboardEvent:
+			if ev.Type == sdl.KEYDOWN && ev.Keysym.Sym == sdl.K_ESCAPE {
+				s.Cancel()
+			}
+		case *sdl.ControllerButtonEvent:
+			if ev.Type == sdl.CONTROLLERBUTTONDOWN && ev.Button == sdl.CONTROLLER_BUTTON_A {
+				s.Cancel()
+			}
+		}
 		return s
 	}
 	switch ev := e.(type) {
@@ -274,7 +322,7 @@ func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
 				switch ev.Keysym.Sym {
 				case sdl.K_RETURN:
 					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
-					go s.runDownloads(true)
+					s.startDownloads(true)
 					return s
 				case sdl.K_ESCAPE:
 					return s.prev
@@ -291,7 +339,7 @@ func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
 				switch ev.Button {
 				case sdl.CONTROLLER_BUTTON_B:
 					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
-					go s.runDownloads(true)
+					s.startDownloads(true)
 					return s
 				case sdl.CONTROLLER_BUTTON_A:
 					return s.prev

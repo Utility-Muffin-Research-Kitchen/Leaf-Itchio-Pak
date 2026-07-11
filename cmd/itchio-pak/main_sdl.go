@@ -417,6 +417,8 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		catRouteList catRoute = iota
 		catRouteFilter
 		catRouteDetail
+		catRouteDownloadSelect
+		catRouteDownloadProgress
 	)
 	route := catRouteList
 	var filterModel *appui.FilterModel
@@ -424,6 +426,44 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 	var detailModel *appui.DetailModel
 	var detailScreen *catui.DetailScreen
 	var detailLoader *ui.CatDetailLoader
+	var activeGame itchio.Game
+	var activeDetail *itchio.GameDetail
+	var downloadSelectModel *appui.DownloadSelectModel
+	var downloadSelectScreen *catui.DownloadSelectScreen
+	var downloadFlow *ui.CatDownloadFlow
+	var downloadProgressModel *appui.DownloadProgressModel
+	var downloadProgressScreen *catui.DownloadProgressScreen
+	var downloadBackend ui.CatDownloadBackend
+	startDownloadPlan := func(plan *ui.CatDownloadPlan) error {
+		if plan == nil {
+			return nil
+		}
+		switch plan.Kind {
+		case ui.CatDownloadPlanArchive:
+			downloadSelectModel.SetHandoff("ZIP/7z inspection must classify ROM and music contents before writing files. That Cat route is scheduled with the archive/destination slice.")
+			return nil
+		case ui.CatDownloadPlanDestination:
+			downloadSelectModel.SetHandoff("This configuration requires choosing an SD card or folder. The Cat dual-SD destination browser is the next planned slice; no destination was selected automatically.")
+			return nil
+		case ui.CatDownloadPlanDirect:
+			downloadBackend = ui.NewCatDirectDownloadBackend(client, cfg, activeGame, activeDetail,
+				plan.Uploads[0], plan.DestPaths[0], inv, inventoryPath)
+		case ui.CatDownloadPlanMulti:
+			downloadBackend = ui.NewCatMultiDownloadBackend(client, cfg, activeGame, activeDetail,
+				plan.Uploads, plan.DestPaths, inv, inventoryPath)
+		default:
+			return nil
+		}
+		snapshot := downloadBackend.CatSnapshot()
+		downloadProgressModel = &snapshot
+		var screenErr error
+		downloadProgressScreen, screenErr = catui.NewDownloadProgressScreen(ctx, downloadProgressModel)
+		if screenErr != nil {
+			return screenErr
+		}
+		route = catRouteDownloadProgress
+		return nil
+	}
 	drawCurrent := func() error {
 		switch route {
 		case catRouteFilter:
@@ -431,6 +471,10 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			return filterScreen.Draw()
 		case catRouteDetail:
 			return detailScreen.Draw()
+		case catRouteDownloadSelect:
+			return downloadSelectScreen.Draw()
+		case catRouteDownloadProgress:
+			return downloadProgressScreen.Draw()
 		default:
 			return screen.Draw()
 		}
@@ -449,6 +493,18 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		redraw = true
 		list.SyncCatModel(model)
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
+			activeDetail = detailLoader.Detail()
+			redraw = true
+		}
+		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
+			if err := startDownloadPlan(downloadFlow.TakePlan()); err != nil {
+				return err
+			}
+			redraw = true
+		}
+		if route == catRouteDownloadProgress && downloadBackend != nil {
+			snapshot := downloadBackend.CatSnapshot()
+			*downloadProgressModel = snapshot
 			redraw = true
 		}
 		if uploaded, processErr := imageCache.ProcessPending(ctx); processErr != nil {
@@ -493,6 +549,44 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					route = catRouteList
 				case appui.DetailIntentSettings:
 					logger.Debug("cat detail: settings destination is scheduled for a later slice")
+				case appui.DetailIntentDownload:
+					if activeDetail == nil {
+						break
+					}
+					downloadSelectModel = appui.NewDownloadSelectModel(activeGame.Title)
+					downloadSelectModel.SetLoading("Finding available files")
+					downloadSelectScreen, err = catui.NewDownloadSelectScreen(ctx, downloadSelectModel)
+					if err != nil {
+						return err
+					}
+					downloadFlow = ui.NewCatDownloadFlow(client, cfg, activeGame, activeDetail, inv,
+						func() { _ = ctx.Wake() })
+					route = catRouteDownloadSelect
+				}
+			case catRouteDownloadSelect:
+				switch downloadSelectScreen.HandleInput(event) {
+				case appui.DownloadSelectIntentBack:
+					downloadFlow, downloadSelectScreen, downloadSelectModel = nil, nil, nil
+					route = catRouteDetail
+				case appui.DownloadSelectIntentChoose:
+					downloadFlow.Choose(downloadSelectModel)
+					if err := startDownloadPlan(downloadFlow.TakePlan()); err != nil {
+						return err
+					}
+				}
+			case catRouteDownloadProgress:
+				switch downloadProgressScreen.HandleInput(event) {
+				case appui.DownloadProgressIntentContinue:
+					downloadBackend.CatContinueWithoutProtection()
+				case appui.DownloadProgressIntentCancel:
+					downloadBackend.CatCancel()
+				case appui.DownloadProgressIntentBack:
+					list.ScheduleRebuild()
+					detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
+					downloadProgressScreen.Close()
+					downloadBackend, downloadProgressModel, downloadProgressScreen = nil, nil, nil
+					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					route = catRouteDetail
 				}
 			default:
 				switch screen.HandleInput(event) {
@@ -517,9 +611,11 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 					if !ok {
 						break
 					}
+					activeGame, activeDetail = game, nil
 					detailModel = appui.NewDetailModel(appui.DetailGame{
 						Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
 						Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
+						CanDownload: game.IsFree || cfg.APIKey != "",
 					})
 					detailScreen, err = catui.NewDetailScreen(ctx, detailModel, imageCache)
 					if err != nil {
@@ -538,6 +634,18 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 		}
 		list.SyncCatModel(model)
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
+			activeDetail = detailLoader.Detail()
+			redraw = true
+		}
+		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
+			if err := startDownloadPlan(downloadFlow.TakePlan()); err != nil {
+				return err
+			}
+			redraw = true
+		}
+		if route == catRouteDownloadProgress && downloadBackend != nil {
+			snapshot := downloadBackend.CatSnapshot()
+			*downloadProgressModel = snapshot
 			redraw = true
 		}
 		if redraw {
@@ -586,6 +694,12 @@ func runCatLiveList(client *itchio.Client, cfg *settings.Config, cfgPath, cacheP
 			redraw = true
 		} else if route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading {
 			ctx.RequestFrameIn(100)
+			redraw = true
+		} else if route == catRouteDownloadSelect && downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading {
+			ctx.RequestFrameIn(100)
+			redraw = true
+		} else if route == catRouteDownloadProgress && downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning {
+			ctx.RequestFrameIn(50)
 			redraw = true
 		} else if list.IsBusy() {
 			ctx.RequestFrameIn(250)

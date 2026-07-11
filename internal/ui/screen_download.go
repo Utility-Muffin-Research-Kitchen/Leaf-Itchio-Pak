@@ -4,9 +4,11 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +28,7 @@ const (
 	dlDownloading dlState = iota
 	dlDone
 	dlError
+	dlCancelled
 )
 
 func (s *DownloadScreen) loadState() dlState {
@@ -51,6 +54,8 @@ type DownloadScreen struct {
 	inventoryPath  string
 	start          func(bool)
 	inhibitBlocked atomic.Bool
+	cancelMu       sync.Mutex
+	cancel         context.CancelFunc
 }
 
 func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.Game, detail *itchio.GameDetail, upload roms.Upload, dest string, inv *inventory.Inventory, inventoryPath string, prev Screen) *DownloadScreen {
@@ -61,9 +66,22 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 	}
 
 	s.start = func(allowUninhibited bool) {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.cancelMu.Lock()
+		s.cancel = cancel
+		s.cancelMu.Unlock()
 		go func() {
-			lease, guardErr := leaf.BeginOperation(context.Background(), "download", allowUninhibited)
+			defer func() {
+				s.cancelMu.Lock()
+				s.cancel = nil
+				s.cancelMu.Unlock()
+			}()
+			lease, guardErr := leaf.BeginOperation(ctx, "download", allowUninhibited)
 			if guardErr != nil {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					s.storeState(dlCancelled)
+					return
+				}
 				s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
 				s.inhibitBlocked.Store(true)
 				s.storeState(dlError)
@@ -86,13 +104,18 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 
 			var err error
 			if isAuth {
-				err = client.DownloadAuthUpload(cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
+				err = client.DownloadAuthUploadContext(ctx, cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
 			} else {
 				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
-				err = client.DownloadFree(itchUpload, dest, progress)
+				err = client.DownloadFreeContext(ctx, itchUpload, dest, progress)
 			}
 
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					logger.Info("download: cancelled file=%s", upload.Filename)
+					s.storeState(dlCancelled)
+					return
+				}
 				logger.Error("download: failed file=%s: %v", upload.Filename, err)
 				s.err = err
 				s.storeState(dlError)
@@ -153,6 +176,15 @@ func NewDownloadScreen(client *itchio.Client, cfg *settings.Config, game itchio.
 	s.start(false)
 
 	return s
+}
+
+func (s *DownloadScreen) Cancel() {
+	s.cancelMu.Lock()
+	cancel := s.cancel
+	s.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (s *DownloadScreen) NeedsRedraw() bool {
@@ -248,6 +280,9 @@ func (s *DownloadScreen) Draw(r *renderer.Renderer) {
 			tex.Destroy()
 			r.DrawSmallTextCentered("Scan to visit game page", 0, y+qrSize+4, r.W, ht[0], ht[1], ht[2])
 		}
+	case dlCancelled:
+		mid := headerH + contentH/2
+		r.DrawTextCentered("Download cancelled", 0, mid-fontH/2, r.W, ht[0], ht[1], ht[2])
 	}
 
 	ftrY := r.DrawFooterBar(footerH)
@@ -261,7 +296,7 @@ func (s *DownloadScreen) Draw(r *renderer.Renderer) {
 	}
 	switch s.loadState() {
 	case dlDownloading:
-		r.DrawSmallText("Please wait...", 10, ftrY, ht[0], ht[1], ht[2])
+		r.DrawFooterHints([]renderer.FooterHint{{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"}}, ftrY)
 	default:
 		r.DrawFooterHints([]renderer.FooterHint{
 			{Kind: renderer.BadgePill, Label: "A/B", Text: "Back"},
@@ -274,6 +309,10 @@ func (s *DownloadScreen) HandleEvent(e sdl.Event) Screen {
 	switch ev := e.(type) {
 	case *sdl.KeyboardEvent:
 		if ev.Type != sdl.KEYDOWN {
+			return s
+		}
+		if s.loadState() == dlDownloading && ev.Keysym.Sym == sdl.K_ESCAPE {
+			s.Cancel()
 			return s
 		}
 		if s.loadState() == dlError && s.inhibitBlocked.Load() {
@@ -293,6 +332,10 @@ func (s *DownloadScreen) HandleEvent(e sdl.Event) Screen {
 		}
 	case *sdl.ControllerButtonEvent:
 		if ev.Type != sdl.CONTROLLERBUTTONDOWN {
+			return s
+		}
+		if s.loadState() == dlDownloading && ev.Button == sdl.CONTROLLER_BUTTON_A {
+			s.Cancel()
 			return s
 		}
 		if s.loadState() == dlError && s.inhibitBlocked.Load() {

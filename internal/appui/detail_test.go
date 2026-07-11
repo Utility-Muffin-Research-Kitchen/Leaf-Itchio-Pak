@@ -34,3 +34,15 @@ func TestDescriptionParagraphs(t *testing.T) {
 		t.Fatalf("paragraphs = %#v, want %#v", got, want)
 	}
 }
+
+func TestDetailDownloadIntentHonorsCapabilityAndBrowserOnly(t *testing.T) {
+	model := NewDetailModel(DetailGame{Title: "Game", CanDownload: true})
+	model.SetReady("", nil, nil, false, false)
+	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != DetailIntentDownload {
+		t.Fatalf("A intent = %v, want download", got)
+	}
+	model.BrowserOnly = true
+	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != DetailIntentNone {
+		t.Fatalf("browser-only A intent = %v, want none", got)
+	}
+}

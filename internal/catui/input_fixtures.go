@@ -61,7 +61,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "detail", "warning":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
-			Platform: "GBC", IsFree: true,
+			Platform: "GBC", IsFree: true, CanDownload: true,
 		})
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
@@ -74,6 +74,53 @@ func RunInputFixture(config InputFixtureConfig) error {
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
+		}
+	case "download-select", "download-handoff":
+		model := appui.NewDownloadSelectModel("Leafbound 葉")
+		if config.Screen == "download-handoff" {
+			model.SetHandoff("ZIP/7z inspection must classify ROM and music contents before choosing either SD card. No files have been written.")
+		} else {
+			model.SetChoices("Choose file and format", []appui.DownloadChoice{
+				{Title: "leafbound.gbc", Badge: "GBC"},
+				{Title: "soundtrack-and-game.zip", Badge: "ZIP"},
+				{Title: "mystery-download", Badge: "AUTO", FormatOptions: []string{"AUTO", "P8.PNG", "P8", "GBC", "GB"}},
+			})
+		}
+		screen, screenErr := NewDownloadSelectScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
+		}
+	case "download-progress", "download-done", "download-error", "download-inhibit", "download-cancelled":
+		model := &appui.DownloadProgressModel{
+			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
+			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
+		}
+		switch config.Screen {
+		case "download-done":
+			model.State = appui.DownloadProgressDone
+			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
+		case "download-error":
+			model.State = appui.DownloadProgressError
+			model.Detail = "The signed download URL expired before the transfer completed. Return to Detail and try again."
+		case "download-inhibit":
+			model.State = appui.DownloadProgressInhibitBlocked
+			model.Detail = "Jawaka is unavailable, so Leaf cannot prevent suspend during this transfer. Continue without protection or cancel."
+		case "download-cancelled":
+			model.State = appui.DownloadProgressCancelled
+			model.Detail = "No partial file was installed."
+		}
+		screen, screenErr := NewDownloadProgressScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		closeScreen = screen.Close
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.DownloadProgressIntentBack
 		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
