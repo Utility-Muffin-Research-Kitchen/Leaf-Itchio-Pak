@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -156,6 +157,40 @@ func TestCatManageRechecksCardBeforeDeletion(t *testing.T) {
 	}
 }
 
+func TestCatManageDeletesOnlyAppOwnedArtwork(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	configureManageFixture(t, sources, catalog)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := "https://example.invalid/owned-art"
+	romPath := filepath.Join(sources[0].RomsPath, "GBC", "Game.gbc")
+	artPath := inventory.CanonicalArtworkPath(romPath)
+	for path, data := range map[string]string{romPath: "rom", artPath: "app art"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inv.Add(gameURL, inventory.Entry{Title: "Game", CoverURL: "cover"}, inventory.DownloadedFile{
+		Filename: "Game.gbc", DestPath: romPath, ArtworkPath: artPath,
+		ArtworkHash: "owned-hash", ArtworkCreated: true,
+	})
+	flow, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Confirm(model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(artPath); !os.IsNotExist(err) {
+		t.Fatalf("app-owned artwork remains after ROM deletion: %v", err)
+	}
+}
+
 func TestCatManageDoesNotOfferUnsafePSXDescriptorRename(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	configureManageFixture(t, sources, catalog)
@@ -280,6 +315,62 @@ func TestCatRenameRechecksCardBeforeMutation(t *testing.T) {
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || entry.Files[0].DestPath != romPath {
 		t.Fatal("blocked rename changed the inventory")
+	}
+}
+
+func TestCatRenameMovesOnlyAppOwnedArtwork(t *testing.T) {
+	for _, created := range []bool{false, true} {
+		t.Run(fmt.Sprintf("created_%v", created), func(t *testing.T) {
+			sources, catalog, cfgPath := destinationFixture(t)
+			configureManageFixture(t, sources, catalog)
+			inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+			gameURL := "https://example.invalid/rename-art"
+			romPath := filepath.Join(sources[0].RomsPath, "GBC", "Original.gbc")
+			oldArt := inventory.CanonicalArtworkPath(romPath)
+			for path, data := range map[string]string{romPath: "rom", oldArt: "art"} {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inv.Add(gameURL, inventory.Entry{Title: "Leaf Title", CoverURL: "cover"}, inventory.DownloadedFile{
+				Filename: "Original.gbc", DestPath: romPath, ArtworkPath: oldArt,
+				ArtworkHash: "same-hash", ArtworkCreated: created,
+			})
+			flow, model, err := NewCatRenameFlow(inv, cfgPath, gameURL, 0, sources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := flow.Confirm(model); err != nil || model.State != appui.RenameDone {
+				t.Fatalf("rename = state %v, %v", model.State, err)
+			}
+			entry, _ := inv.Lookup(gameURL)
+			file := entry.Files[0]
+			newArt := inventory.CanonicalArtworkPath(file.DestPath)
+			if created {
+				if file.ArtworkPath != newArt || file.ArtworkHash != "same-hash" || !file.ArtworkCreated {
+					t.Fatalf("app-owned artwork metadata = %+v", file)
+				}
+				if _, err := os.Stat(newArt); err != nil {
+					t.Fatalf("app-owned artwork was not renamed: %v", err)
+				}
+				if _, err := os.Stat(oldArt); !os.IsNotExist(err) {
+					t.Fatalf("old app-owned artwork remains: %v", err)
+				}
+			} else {
+				if file.ArtworkPath != oldArt || file.ArtworkHash != "same-hash" || file.ArtworkCreated {
+					t.Fatalf("user-owned artwork metadata = %+v", file)
+				}
+				if _, err := os.Stat(oldArt); err != nil {
+					t.Fatalf("user-owned artwork moved: %v", err)
+				}
+				if _, err := os.Stat(newArt); !os.IsNotExist(err) {
+					t.Fatalf("new art unexpectedly created for user-owned file: %v", err)
+				}
+			}
+		})
 	}
 }
 

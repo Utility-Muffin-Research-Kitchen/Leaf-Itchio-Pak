@@ -2,7 +2,6 @@ package inventory
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +10,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // UpdateService checks each inventory entry for missing cover art, removed
@@ -153,17 +153,22 @@ func (s *UpdateService) checkEntry(gameURL string) []UpstreamFile {
 
 	// 1. Cover art repair.
 	for _, f := range files {
-		artPath := CoverArtPath(coverURL, f.DestPath)
-		if artPath == "" {
+		if f.ContentKind == ContentKindMusic || f.FileType == FileTypeMusic ||
+			roms.IsPSXSupportExt(roms.ROMExt(f.DestPath)) {
 			continue
 		}
-		if _, err := os.Stat(artPath); err == nil {
-			logger.Debug("update-svc: cover art present for %s", f.Filename)
-			continue
-		}
-		logger.Info("update-svc: repairing cover art for %s", f.Filename)
-		if err := s.client.DownloadCoverArt(coverURL, f.DestPath); err != nil {
+		result, err := s.client.EnsureCoverArt(coverURL, f.DestPath)
+		if err != nil {
 			logger.Error("update-svc: cover art repair failed for %s: %v", f.Filename, err)
+			continue
+		}
+		if result.Path != "" {
+			created := result.Created
+			if !created && f.ArtworkCreated && f.ArtworkPath == result.Path &&
+				(f.ArtworkHash == "" || f.ArtworkHash == result.SHA256) {
+				created = true
+			}
+			s.inv.SetArtwork(gameURL, f.DestPath, result.Path, result.SHA256, created)
 		}
 	}
 

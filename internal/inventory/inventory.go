@@ -67,6 +67,8 @@ type DownloadedFile struct {
 	UploadID        string    `json:"upload_id,omitempty"`
 	PurchaseID      string    `json:"purchase_id,omitempty"`
 	ContentHash     string    `json:"content_hash,omitempty"`
+	ArtworkPath     string    `json:"artwork_path,omitempty"`
+	ArtworkHash     string    `json:"artwork_hash,omitempty"`
 	ArtworkCreated  bool      `json:"artwork_created,omitempty"`
 
 	// Legacy compatibility fields remain available to the existing UI while its
@@ -252,6 +254,11 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 	}
 	for i, f := range existing.Files {
 		if f.DestPath == file.DestPath || f.Filename == file.Filename {
+			if file.ArtworkPath == "" {
+				file.ArtworkPath = f.ArtworkPath
+				file.ArtworkHash = f.ArtworkHash
+				file.ArtworkCreated = f.ArtworkCreated
+			}
 			existing.Files[i] = file // overwrite in place (re-download or path change)
 			return
 		}
@@ -599,6 +606,13 @@ func CoverArtPath(coverURL, romDestPath string) string {
 	if coverURL == "" || romDestPath == "" {
 		return ""
 	}
+	return CanonicalArtworkPath(romDestPath)
+}
+
+func CanonicalArtworkPath(romDestPath string) string {
+	if romDestPath == "" {
+		return ""
+	}
 	base := strings.TrimSuffix(filepath.Base(romDestPath), filepath.Ext(romDestPath))
 	dir := filepath.Dir(romDestPath)
 	return filepath.Join(dir, ".media", base+".png")
@@ -633,6 +647,35 @@ func (inv *Inventory) UpdateFile(gameURL, oldDestPath string, file DownloadedFil
 	return false
 }
 
+// SetArtwork records the exact launcher-art path, hash, and ownership for one
+// managed file without changing its ROM/music identity.
+func (inv *Inventory) SetArtwork(gameURL, destPath, artPath, artHash string, created bool) bool {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	e, ok := inv.Entries[gameURL]
+	if !ok {
+		return false
+	}
+	for index := range e.Files {
+		if filepath.Clean(e.Files[index].DestPath) == filepath.Clean(destPath) {
+			e.Files[index].ArtworkPath = artPath
+			e.Files[index].ArtworkHash = artHash
+			e.Files[index].ArtworkCreated = created
+			return true
+		}
+	}
+	return false
+}
+
+// ArtworkPathFor returns the recorded artwork path, falling back to the
+// canonical path for inventories written before artwork metadata existed.
+func ArtworkPathFor(coverURL string, file DownloadedFile) string {
+	if file.ArtworkPath != "" {
+		return file.ArtworkPath
+	}
+	return CoverArtPath(coverURL, file.DestPath)
+}
+
 // ArtworkReferencedOutside reports whether another managed file still owns the
 // same artwork path after excluding a pending deletion set.
 func (inv *Inventory) ArtworkReferencedOutside(artPath string, excluding []DownloadedFile) bool {
@@ -647,7 +690,7 @@ func (inv *Inventory) ArtworkReferencedOutside(artPath string, excluding []Downl
 			if excluded[filepath.Clean(file.DestPath)] || !file.ArtworkCreated {
 				continue
 			}
-			if filepath.Clean(CoverArtPath(entry.CoverURL, file.DestPath)) == filepath.Clean(artPath) {
+			if filepath.Clean(ArtworkPathFor(entry.CoverURL, file)) == filepath.Clean(artPath) {
 				return true
 			}
 		}

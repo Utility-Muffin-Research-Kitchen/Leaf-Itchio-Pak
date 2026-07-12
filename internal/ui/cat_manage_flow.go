@@ -315,8 +315,15 @@ func (flow *CatManageFlow) removeOwnedArtwork(file inventory.DownloadedFile, del
 	if !file.ArtworkCreated || managedContentKind(file) != inventory.ContentKindROM {
 		return
 	}
-	artPath := inventory.CoverArtPath(flow.entry.CoverURL, file.DestPath)
+	artPath := inventory.ArtworkPathFor(flow.entry.CoverURL, file)
 	if artPath == "" || flow.inv.ArtworkReferencedOutside(artPath, deleting) {
+		return
+	}
+	source, _, err := flow.resolveFile(file, false)
+	if err != nil {
+		return
+	}
+	if _, err := leaf.RelativeWithin(source.Root, artPath); err != nil {
 		return
 	}
 	_ = os.Remove(artPath)
@@ -492,8 +499,8 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 		pairs = append(pairs, flow.states...)
 	}
 	if flow.file.ArtworkCreated {
-		oldArt := inventory.CoverArtPath(flow.entry.CoverURL, flow.file.DestPath)
-		newArt := inventory.CoverArtPath(flow.entry.CoverURL, flow.targetPath)
+		oldArt := inventory.ArtworkPathFor(flow.entry.CoverURL, flow.file)
+		newArt := inventory.CanonicalArtworkPath(flow.targetPath)
 		if oldArt != "" {
 			if _, err := os.Lstat(oldArt); err == nil {
 				pairs = append(pairs, renamePair{oldPath: oldArt, newPath: newArt})
@@ -540,6 +547,9 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	updated.DestPath = flow.targetPath
 	updated.InstalledName = filepath.Base(flow.targetPath)
 	updated.UnifiedName = flow.enable
+	if flow.file.ArtworkCreated && flow.file.ArtworkPath != "" {
+		updated.ArtworkPath = inventory.CanonicalArtworkPath(flow.targetPath)
+	}
 	if identity, ok := roms.DescribeDestination(flow.targetPath); ok {
 		updated.SourceID, updated.RelativePath, updated.CanonicalSystem = identity.SourceID, identity.RelativePath, identity.CanonicalSystem
 	}

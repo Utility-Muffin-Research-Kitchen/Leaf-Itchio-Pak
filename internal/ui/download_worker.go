@@ -140,27 +140,21 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 					}
 				}
 
-				if roms.IsPSXSupportExt(roms.ROMExt(upload.Filename)) {
-					// BIN tracks are companion data and do not own launcher artwork.
-				} else if roms.ROMExt(upload.Filename) == ".p8.png" {
-					if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
-						logger.Warn("cover-art: game=%q: %v", game.Title, artErr)
-					}
-				} else if artErr := client.DownloadCoverArt(game.CoverURL, finalDest); artErr != nil {
-					logger.Warn("cover-art: game=%q url=%s: %v", game.Title, game.CoverURL, artErr)
+				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
+				file := inventory.DownloadedFile{
+					Filename:     upload.Filename,
+					DestPath:     finalDest,
+					DownloadedAt: time.Now(),
+					UnifiedName:  unifiedName,
 				}
+				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{
 					GameURL:  game.URL,
 					Title:    game.Title,
 					Author:   game.Author,
 					CoverURL: game.CoverURL,
 					IsFree:   game.IsFree,
-				}, inventory.DownloadedFile{
-					Filename:     upload.Filename,
-					DestPath:     finalDest,
-					DownloadedAt: time.Now(),
-					UnifiedName:  unifiedName,
-				})
+				}, file)
 				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
 					logger.Warn("inventory: save failed: %v", saveErr)
 				} else {

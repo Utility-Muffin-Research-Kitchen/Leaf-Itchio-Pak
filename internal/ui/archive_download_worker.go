@@ -154,9 +154,6 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
 		s.extractPico8ZIP(&r.Reader, now)
-		if err := s.inv.Save(s.invPath); err != nil {
-			logger.Warn("zip-download: save inventory: %v", err)
-		}
 		// Cover art and .m3u launcher for multi-file Pico-8 games.
 		if len(s.extracted) > 0 {
 			gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
@@ -164,8 +161,11 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			// Cover art: artRef is <gameDir>.p8 so CoverArtPath places the image
 			// in the PARENT directory's .media/ — where NextUI looks for directory art.
 			artRef := gameDir + ".p8"
-			if artErr := s.client.DownloadCoverArt(s.game.CoverURL, artRef); artErr != nil {
-				logger.Warn("zip-download: pico8 cover art: %v", artErr)
+			artwork := ensureROMArtwork(s.client, s.inv, s.game, artRef)
+			if artwork.Path != "" {
+				for _, dest := range s.extracted {
+					s.inv.SetArtwork(s.game.URL, dest, artwork.Path, artwork.SHA256, artwork.Created)
+				}
 			}
 
 			// .m3u launcher: collect .p8/.p8.png files, sort naturally, write
@@ -188,16 +188,18 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 					logger.Warn("zip-download: pico8 m3u write: %v", err)
 				} else {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
-					s.inv.Add(s.game.URL, inventory.Entry{
-						GameURL: s.game.URL, Title: s.game.Title,
-						Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-					}, inventory.DownloadedFile{
+					file := inventory.DownloadedFile{
 						Filename:      filepath.Base(m3uPath),
 						DestPath:      m3uPath,
 						DownloadedAt:  now,
 						FileType:      inventory.FileTypeM3U,
 						SourceArchive: s.plan.Upload.Filename,
-					})
+					}
+					applyArtwork(&file, artwork)
+					s.inv.Add(s.game.URL, inventory.Entry{
+						GameURL: s.game.URL, Title: s.game.Title,
+						Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
+					}, file)
 				}
 			}
 		}
@@ -206,6 +208,9 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			s.err = fmt.Errorf("no Pico-8 files could be extracted from ZIP")
 			s.storeState(zipDLError)
 			return
+		}
+		if err := s.inv.Save(s.invPath); err != nil {
+			logger.Warn("zip-download: save inventory: %v", err)
 		}
 		logger.Info("zip-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
@@ -495,22 +500,20 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		}
 	}
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
-	s.inv.Add(s.game.URL, inventory.Entry{
-		GameURL: s.game.URL, Title: s.game.Title,
-		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-	}, inventory.DownloadedFile{
+	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
+	file := inventory.DownloadedFile{
 		Filename:      filepath.Base(finalDest),
 		DestPath:      finalDest,
 		DownloadedAt:  now,
 		FileType:      inventory.FileTypeROM,
 		UnifiedName:   unifiedName,
 		SourceArchive: s.plan.Upload.Filename,
-	})
-	if !roms.IsPSXSupportExt(ext) {
-		if artErr := s.client.DownloadCoverArt(s.game.CoverURL, finalDest); artErr != nil {
-			logger.Warn("7z-download: cover art: %v", artErr)
-		}
 	}
+	applyArtwork(&file, artwork)
+	s.inv.Add(s.game.URL, inventory.Entry{
+		GameURL: s.game.URL, Title: s.game.Title,
+		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
+	}, file)
 	return finalDest, nil
 }
 
@@ -688,26 +691,20 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 		}
 	}
 
-	if roms.IsPSXSupportExt(ext) {
-		// Companion tracks are not launcher entries and do not own artwork.
-	} else if ext == ".p8.png" {
-		if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
-			logger.Warn("zip-download: cover art copy: %v", artErr)
-		}
-	} else if artErr := s.client.DownloadCoverArt(s.game.CoverURL, finalDest); artErr != nil {
-		logger.Warn("zip-download: cover art: %v", artErr)
-	}
-	s.inv.Add(s.game.URL, inventory.Entry{
-		GameURL: s.game.URL, Title: s.game.Title,
-		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-	}, inventory.DownloadedFile{
+	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
+	file := inventory.DownloadedFile{
 		Filename:      filepath.Base(finalDest),
 		DestPath:      finalDest,
 		DownloadedAt:  now,
 		UnifiedName:   unifiedName,
 		FileType:      inventory.FileTypeROM,
 		SourceArchive: s.plan.Upload.Filename,
-	})
+	}
+	applyArtwork(&file, artwork)
+	s.inv.Add(s.game.URL, inventory.Entry{
+		GameURL: s.game.URL, Title: s.game.Title,
+		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
+	}, file)
 	return finalDest, nil
 }
 

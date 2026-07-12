@@ -166,29 +166,22 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			}
 		}
 
-		if roms.IsPSXSupportExt(roms.ROMExt(dl.Upload.Filename)) {
-			// BIN tracks are companion data and do not own launcher artwork.
-		} else if roms.ROMExt(dl.Upload.Filename) == ".p8.png" {
-			if artErr := itchio.CopyCoverArt(finalDest); artErr != nil {
-				logger.Warn("cover-art: game=%q: %v", s.game.Title, artErr)
-			}
-		} else if artErr := s.client.DownloadCoverArt(s.game.CoverURL, finalDest); artErr != nil {
-			logger.Warn("cover-art: game=%q: %v", s.game.Title, artErr)
-		}
-
+		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest
+		file := inventory.DownloadedFile{
+			Filename:     dl.Upload.Filename,
+			DestPath:     finalDest,
+			DownloadedAt: time.Now(),
+			UnifiedName:  unifiedName,
+		}
+		applyArtwork(&file, artwork)
 		s.inv.Add(s.game.URL, inventory.Entry{
 			GameURL:  s.game.URL,
 			Title:    s.game.Title,
 			Author:   s.game.Author,
 			CoverURL: s.game.CoverURL,
 			IsFree:   s.game.IsFree,
-		}, inventory.DownloadedFile{
-			Filename:     dl.Upload.Filename,
-			DestPath:     finalDest,
-			DownloadedAt: time.Now(),
-			UnifiedName:  unifiedName,
-		})
+		}, file)
 		if saveErr := s.inv.Save(s.invPath); saveErr != nil {
 			logger.Warn("inventory: save failed: %v", saveErr)
 		} else {

@@ -2,6 +2,8 @@ package itchio_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -89,7 +91,8 @@ func TestDownloadCoverArtSuccess(t *testing.T) {
 	dir := t.TempDir()
 	romPath := filepath.Join(dir, "Wario Land II.gbc")
 
-	if err := c.DownloadCoverArt(srv.URL+"/cover.png", romPath); err != nil {
+	result, err := c.EnsureCoverArt(srv.URL+"/cover.png", romPath)
+	if err != nil {
 		t.Fatalf("DownloadCoverArt: %v", err)
 	}
 
@@ -100,6 +103,46 @@ func TestDownloadCoverArtSuccess(t *testing.T) {
 	}
 	if fi.Size() == 0 {
 		t.Errorf("art file at %s is empty", artPath)
+	}
+	if !result.Created || result.Path != artPath || len(result.SHA256) != 64 {
+		t.Fatalf("created artwork metadata = %#v", result)
+	}
+}
+
+func TestEnsureCoverArtPreservesExistingUserArtwork(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Write(minimalPNG())
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	romPath := filepath.Join(dir, "game.gbc")
+	artPath := filepath.Join(dir, ".media", "game.png")
+	if err := os.MkdirAll(filepath.Dir(artPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userArt := []byte("user-owned-art")
+	if err := os.WriteFile(artPath, userArt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := itchio.NewClientWithBase(srv.URL).EnsureCoverArt(srv.URL+"/cover.png", romPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("existing user artwork triggered %d network request(s)", requests)
+	}
+	if result.Created || result.Path != artPath {
+		t.Fatalf("existing artwork metadata = %#v", result)
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256(userArt))
+	if result.SHA256 != wantHash {
+		t.Fatalf("existing artwork hash = %q, want %q", result.SHA256, wantHash)
+	}
+	if got, err := os.ReadFile(artPath); err != nil || !bytes.Equal(got, userArt) {
+		t.Fatalf("user artwork changed: %q, %v", got, err)
 	}
 }
 
@@ -213,10 +256,9 @@ func animatedGIFFirstFrameBlack() []byte {
 	return buf.Bytes()
 }
 
-// TestDownloadCoverArtAnimatedGIFComposited verifies that when a cover art GIF
-// has multiple frames the saved PNG reflects the composited image and is not
-// just the (often black/blank) first frame.
-func TestDownloadCoverArtAnimatedGIFComposited(t *testing.T) {
+// TestDownloadCoverArtAnimatedGIFFirstFrame verifies launcher artwork uses
+// frame zero while the app's separate media cache retains GIF animation.
+func TestDownloadCoverArtAnimatedGIFFirstFrame(t *testing.T) {
 	gifBytes := animatedGIFFirstFrameBlack()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/gif")
@@ -244,11 +286,11 @@ func TestDownloadCoverArtAnimatedGIFComposited(t *testing.T) {
 		t.Fatalf("decode saved PNG: %v", err)
 	}
 
-	// Frame 2 places a red pixel at (0,0). If only the first (all-black) frame
-	// was encoded, this pixel would be black.
+	// Frame 2 places a red pixel at (0,0); launcher art deliberately keeps the
+	// first black frame for deterministic frame-zero ownership semantics.
 	red, _, _, _ := img.At(0, 0).RGBA()
-	if red < 0x8000 {
-		t.Errorf("pixel (0,0) red channel = 0x%04x; expected >= 0x8000 — animated GIF compositing produced a black image (first-frame-only bug)", red)
+	if red >= 0x8000 {
+		t.Errorf("pixel (0,0) red channel = 0x%04x; launcher art did not keep frame zero", red)
 	}
 }
 
@@ -263,7 +305,8 @@ func TestCopyCoverArt(t *testing.T) {
 		t.Fatalf("write rom: %v", err)
 	}
 
-	if err := itchio.CopyCoverArt(romPath); err != nil {
+	result, err := itchio.EnsureCopiedCoverArt(romPath)
+	if err != nil {
 		t.Fatalf("CopyCoverArt: %v", err)
 	}
 
@@ -280,6 +323,9 @@ func TestCopyCoverArt(t *testing.T) {
 	}
 	if !bytes.Equal(got, minimalPNG()) {
 		t.Error("art file content does not match ROM content")
+	}
+	if !result.Created || result.Path != artPath || len(result.SHA256) != 64 {
+		t.Fatalf("copied artwork metadata = %#v", result)
 	}
 }
 
@@ -315,11 +361,9 @@ func gifHighBrightnessLowVariance() []byte {
 	return buf.Bytes()
 }
 
-// TestDownloadCoverArtBestFrameByVariance verifies that the frame with the
-// highest colour variance is selected, not the one with the highest brightness.
-// A uniform-gray frame has higher total brightness than a red+blue frame, but
-// the red+blue frame has far greater per-channel variance and should be chosen.
-func TestDownloadCoverArtBestFrameByVariance(t *testing.T) {
+// TestDownloadCoverArtDoesNotSelectLaterGIFFrame verifies a visually richer
+// later frame does not replace frame zero in source-local launcher artwork.
+func TestDownloadCoverArtDoesNotSelectLaterGIFFrame(t *testing.T) {
 	gifBytes := gifHighBrightnessLowVariance()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/gif")
@@ -347,19 +391,16 @@ func TestDownloadCoverArtBestFrameByVariance(t *testing.T) {
 		t.Fatalf("decode saved PNG: %v", err)
 	}
 
-	// Pixel (0,0) of the high-variance frame is red (G≈0).
-	// The high-brightness frame is gray (G≈25700 in 16-bit range).
-	// If brightness metric was used, green channel would be high.
+	// Frame zero is gray (G≈25700); the later high-variance frame is red (G≈0).
 	_, green, _, _ := img.At(0, 0).RGBA()
-	if green > 0x2000 {
-		t.Errorf("pixel (0,0) green channel = 0x%04x; expected < 0x2000 (red pixel from high-variance frame); brightness metric selected wrong (gray) frame", green)
+	if green <= 0x2000 {
+		t.Errorf("pixel (0,0) green channel = 0x%04x; a later GIF frame replaced frame zero", green)
 	}
 }
 
-// TestDownloadCoverArtStaleFilesCleaned verifies that an old art file with the
-// same stem but a different extension (e.g. a stale .gif) is removed when the
-// new .png is saved.
-func TestDownloadCoverArtStaleFilesCleaned(t *testing.T) {
+// TestDownloadCoverArtOtherExtensionsPreserved verifies the app never deletes
+// same-stem artwork it did not create.
+func TestDownloadCoverArtOtherExtensionsPreserved(t *testing.T) {
 	imgBytes := minimalJPEG()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(imgBytes)
@@ -387,8 +428,8 @@ func TestDownloadCoverArtStaleFilesCleaned(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(mediaDir, "Opossum Country.png")); os.IsNotExist(err) {
 		t.Fatalf("expected Opossum Country.png to exist after download")
 	}
-	// Stale .gif must be gone.
-	if _, err := os.Stat(staleGIF); !os.IsNotExist(err) {
-		t.Errorf("stale Opossum Country.gif should have been removed")
+	// Existing alternate art is user-owned and must remain untouched.
+	if got, err := os.ReadFile(staleGIF); err != nil || string(got) != "stale" {
+		t.Errorf("existing Opossum Country.gif changed: %q, %v", got, err)
 	}
 }

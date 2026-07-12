@@ -177,6 +177,37 @@ func TestAdd_PreservesSecondaryLeafPathIdentity(t *testing.T) {
 	}
 }
 
+func TestAddPreservesArtworkOwnershipWhenRedownloadHasNoNewArt(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	const gameURL = "https://dev.itch.io/game"
+	first := inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb",
+		ArtworkPath: "/leaf/Roms/GB/.media/game.png", ArtworkHash: "abc123", ArtworkCreated: true,
+	}
+	inv.Add(gameURL, inventory.Entry{Title: "Game"}, first)
+	inv.Add(gameURL, inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb",
+	})
+	entry, ok := inv.Lookup(gameURL)
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("redownloaded inventory row is missing")
+	}
+	file := entry.Files[0]
+	if file.ArtworkPath != first.ArtworkPath || file.ArtworkHash != first.ArtworkHash || !file.ArtworkCreated {
+		t.Fatalf("redownload lost artwork metadata: %+v", file)
+	}
+}
+
+func TestArtworkPathForPrefersRecordedPath(t *testing.T) {
+	file := inventory.DownloadedFile{
+		DestPath:    "/leaf/Roms/PICO8/Game/cart.p8",
+		ArtworkPath: "/leaf/Roms/PICO8/.media/Game.png",
+	}
+	if got := inventory.ArtworkPathFor("cover", file); got != file.ArtworkPath {
+		t.Fatalf("ArtworkPathFor = %q, want %q", got, file.ArtworkPath)
+	}
+}
+
 func TestArtworkReferencedOutsideExcludesPendingDeletion(t *testing.T) {
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
 	artPath := "/leaf/Roms/GB/.media/Game.png"
