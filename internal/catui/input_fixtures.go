@@ -140,7 +140,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		handleIntent = func(InputEvent) bool { return true }
-	case "destination-source", "destination-folder", "destination-music":
+	case "destination-source", "destination-folder", "destination-music", "destination-confirm":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
 		case "destination-source":
@@ -161,6 +161,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 				{Kind: appui.DestinationItemSave, Label: "Save here", Detail: "Use this folder", Enabled: true},
 				{Kind: appui.DestinationItemUp, Label: "..", Detail: "Parent folder", Enabled: true},
 				{Kind: appui.DestinationItemFolder, Label: "Game Soundtracks", Detail: "Folder", Value: "Game Soundtracks", Enabled: true},
+			})
+		case "destination-confirm":
+			model.SetConfirm("Confirm download destination", "Secondary SD", []string{
+				"Roms/GBC/RPG/Leafbound.gbc",
+				"Roms/GB/Leafbound Bonus.gb",
 			})
 		}
 		screen, screenErr := NewDestinationScreen(ctx, model)

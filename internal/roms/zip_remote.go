@@ -261,9 +261,10 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
-			Name: name,
-			Kind: kind,
-			Size: f.UncompressedSize64,
+			Name:           name,
+			Kind:           kind,
+			Size:           f.UncompressedSize64,
+			CompressedSize: f.CompressedSize64,
 		})
 	}
 	return m

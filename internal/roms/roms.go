@@ -182,6 +182,45 @@ func PrimaryRoot() string {
 	return config.PrimaryRoot
 }
 
+func SourceRoot(sourceID string) string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	for _, source := range config.Sources {
+		if source.SourceID == sourceID {
+			return source.Root
+		}
+	}
+	return ""
+}
+
+func SourceSystemDir(sourceID, systemID string) string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	for _, source := range config.Sources {
+		if source.SourceID == sourceID {
+			return source.SystemDirs[systemID]
+		}
+	}
+	return ""
+}
+
+func SourceMusicRoot(sourceID string) string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	for _, source := range config.Sources {
+		if source.SourceID == sourceID {
+			return source.MusicRoot
+		}
+	}
+	return ""
+}
+
 func MusicRoot() string {
 	config := pathConfig.Load()
 	if config == nil {

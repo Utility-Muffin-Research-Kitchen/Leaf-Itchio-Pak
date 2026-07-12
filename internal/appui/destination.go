@@ -5,6 +5,7 @@ type DestinationPhase uint8
 const (
 	DestinationSources DestinationPhase = iota
 	DestinationFolders
+	DestinationConfirm
 	DestinationError
 )
 
@@ -32,14 +33,15 @@ const (
 )
 
 type DestinationModel struct {
-	Phase       DestinationPhase
-	Title       string
-	Subtitle    string
-	Path        string
-	Items       []DestinationItem
-	Cursor      int
-	VisibleRows int
-	ErrorDetail string
+	Phase        DestinationPhase
+	Title        string
+	Subtitle     string
+	Path         string
+	Items        []DestinationItem
+	Cursor       int
+	VisibleRows  int
+	ErrorDetail  string
+	SummaryLines []string
 }
 
 func NewDestinationModel(title string) *DestinationModel {
@@ -51,6 +53,7 @@ func (m *DestinationModel) SetSources(items []DestinationItem) {
 	m.Subtitle = "Choose storage card"
 	m.Path = ""
 	m.Items = append([]DestinationItem(nil), items...)
+	m.SummaryLines = nil
 	m.Cursor = firstEnabledDestination(items)
 	m.ErrorDetail = ""
 }
@@ -59,6 +62,16 @@ func (m *DestinationModel) SetFolders(subtitle, path string, items []Destination
 	m.Phase = DestinationFolders
 	m.Subtitle, m.Path = subtitle, path
 	m.Items = append([]DestinationItem(nil), items...)
+	m.SummaryLines = nil
+	m.Cursor = 0
+	m.ErrorDetail = ""
+}
+
+func (m *DestinationModel) SetConfirm(subtitle, path string, lines []string) {
+	m.Phase = DestinationConfirm
+	m.Subtitle, m.Path = subtitle, path
+	m.Items = nil
+	m.SummaryLines = append([]string(nil), lines...)
 	m.Cursor = 0
 	m.ErrorDetail = ""
 }
@@ -78,6 +91,12 @@ func (m *DestinationModel) Handle(event InputEvent) DestinationIntent {
 	if m.Phase == DestinationError {
 		if event.Button == ButtonA {
 			return DestinationIntentBack
+		}
+		return DestinationIntentNone
+	}
+	if m.Phase == DestinationConfirm {
+		if event.Button == ButtonA {
+			return DestinationIntentActivate
 		}
 		return DestinationIntentNone
 	}

@@ -29,7 +29,9 @@ func (screen *DestinationScreen) Draw() error {
 	footer := []FooterHint{{Button: ButtonB, Label: "Back"}}
 	if screen.model.Phase != appui.DestinationError {
 		label := "Select"
-		if screen.model.Phase == appui.DestinationFolders && screen.model.Cursor >= 0 &&
+		if screen.model.Phase == appui.DestinationConfirm {
+			label = "Download"
+		} else if screen.model.Phase == appui.DestinationFolders && screen.model.Cursor >= 0 &&
 			screen.model.Cursor < len(screen.model.Items) &&
 			screen.model.Items[screen.model.Cursor].Kind == appui.DestinationItemSave {
 			label = "Save here"
@@ -54,6 +56,13 @@ func (screen *DestinationScreen) Draw() error {
 	if screen.model.Phase == appui.DestinationError {
 		if err := screen.ui.DrawScrollingBody(body, "Destination unavailable",
 			[]string{screen.model.ErrorDetail}, 0); err != nil {
+			return err
+		}
+		return frame.Finish()
+	}
+	if screen.model.Phase == appui.DestinationConfirm {
+		if err := screen.ui.DrawScrollingBody(body, "Download to this location?",
+			screen.model.SummaryLines, 0); err != nil {
 			return err
 		}
 		return frame.Finish()

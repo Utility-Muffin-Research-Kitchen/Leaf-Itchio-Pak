@@ -89,6 +89,11 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 				logger.Warn("download: continuing without Jawaka suspend protection by user request")
 			}
 			s.inhibitBlocked.Store(false)
+			if _, _, preflightErr := validatePlannedPath(dest); preflightErr != nil {
+				s.err = fmt.Errorf("download destination changed before transfer: %w", preflightErr)
+				s.storeState(dlError)
+				return
+			}
 			progress := func(dl, total int64) {
 				atomic.StoreInt64(&s.downloaded, dl)
 				atomic.StoreInt64(&s.total, total)

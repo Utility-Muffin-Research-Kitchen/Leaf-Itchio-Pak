@@ -323,6 +323,9 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	}()
 
 	total := resp.ContentLength
+	if err := leaf.RequireFreeSpace(dir, total); err != nil {
+		return fmt.Errorf("download storage preflight: %w", err)
+	}
 	var downloaded int64
 	buf := make([]byte, 32*1024)
 	for {

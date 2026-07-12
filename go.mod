@@ -9,6 +9,7 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/image v0.18.0
 	golang.org/x/net v0.26.0
+	golang.org/x/sys v0.21.0
 )
 
 require (
@@ -23,6 +24,5 @@ require (
 	github.com/ulikunitz/xz v0.5.11 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
 	golang.org/x/crypto v0.24.0 // indirect
-	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 )

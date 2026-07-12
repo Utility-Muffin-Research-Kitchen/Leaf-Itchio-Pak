@@ -118,6 +118,11 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			atomic.StoreInt64(&s.dlProgress, downloaded)
 			atomic.StoreInt64(&s.dlTotal, total)
 		}
+		if _, _, preflightErr := validatePlannedPath(dl.DestPath); preflightErr != nil {
+			s.err = fmt.Errorf("download destination changed before file %d: %w", i+1, preflightErr)
+			atomic.StoreInt32(&s.state, int32(multiDLError))
+			return
+		}
 
 		isAuth := dl.Upload.DownloadKeyID != ""
 		logger.Info("multi-download: [%d/%d] starting %s → %s auth=%v",

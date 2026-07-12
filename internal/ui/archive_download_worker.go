@@ -70,7 +70,7 @@ func NewArchiveDownloadWorker(
 ) *ArchiveDownloadWorker {
 	s := &ArchiveDownloadWorker{
 		client: client, cfg: cfg,
-		game: game, detail: detail, plan: plan,
+		game: game, detail: detail, plan: plan.Seal(),
 		inv: inv, invPath: invPath,
 	}
 	go s.run(false)
@@ -91,7 +91,13 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	}
 	s.inhibitBlocked.Store(false)
 
-	tmp, err := os.CreateTemp("", "itchio-zip-*.zip")
+	tempDir, err := s.plan.preflight(s.cfg, s.plan.Manifest)
+	if err != nil {
+		s.err = fmt.Errorf("archive destination preflight: %w", err)
+		s.storeState(zipDLError)
+		return
+	}
+	tmp, err := os.CreateTemp(tempDir, ".itchio-archive-*.part")
 	if err != nil {
 		logger.Error("zip-download: create temp file: %v", err)
 		s.err = fmt.Errorf("create temp file: %w", err)
@@ -99,7 +105,17 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	tmpPath := tmp.Name()
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		s.err = fmt.Errorf("close temp file: %w", err)
+		s.storeState(zipDLError)
+		return
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		s.err = fmt.Errorf("prepare temp file: %w", err)
+		s.storeState(zipDLError)
+		return
+	}
 	defer os.Remove(tmpPath)
 
 	// Re-resolve CDN URL immediately before the download so a stale URL from
@@ -149,6 +165,12 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	defer r.Close()
+	actualManifest := manifestFromZIP(r.File)
+	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
+		s.storeState(zipDLError)
+		return
+	}
 
 	// Pico-8 multi-file: path-preserving extraction to game subdirectory.
 	if s.plan.Pico8GameDir != "" {
@@ -283,6 +305,12 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		return
 	}
 	defer r.Close()
+	actualManifest := manifestFrom7z(r.File)
+	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
+		s.storeState(zipDLError)
+		return
+	}
 
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
@@ -330,7 +358,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 			if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
 				continue
 			}
-			dest, err := s.extractMusicFromOpener(f.Open, baseName, now)
+			dest, err := s.extractMusicFromOpener(f.Open, f.FileInfo().Size(), baseName, now)
 			if err != nil {
 				logger.Warn("7z-download: music %s: %v", baseName, err)
 				s.skipped = append(s.skipped, baseName)
@@ -351,6 +379,33 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	}
 	logger.Info("7z-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
+}
+
+func manifestFromZIP(files []*zip.File) roms.ZIPManifest {
+	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
+	for _, file := range files {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
+			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
+		})
+	}
+	return manifest
+}
+
+func manifestFrom7z(files []*sevenzip.File) roms.ZIPManifest {
+	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
+	for _, file := range files {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name), Size: file.UncompressedSize,
+		})
+	}
+	return manifest
 }
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
@@ -414,7 +469,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 			s.skipped = append(s.skipped, base)
 			continue
 		}
-		if err := extractEntry(f.Open, dest); err != nil {
+		if err := extractEntry(f.Open, f.FileInfo().Size(), dest); err != nil {
 			logger.Warn("7z-download: pico8 extract %s: %v", base, err)
 			s.skipped = append(s.skipped, base)
 			continue
@@ -476,7 +531,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdirall %s: %w", destDir, err)
 	}
-	if err := extractEntry(open, dest); err != nil {
+	if err := extractEntry(open, size, dest); err != nil {
 		return "", err
 	}
 
@@ -518,7 +573,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 }
 
 // extractMusicFromOpener is like extractMusic but takes an opener func.
-func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), baseName string, now time.Time) (string, error) {
+func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
 	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
 		s.musicFailed = true
 		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
@@ -530,7 +585,7 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		safeName = baseName
 	}
 	dest := s.plan.MusicDir + safeName
-	if err := extractEntry(open, dest); err != nil {
+	if err := extractEntry(open, size, dest); err != nil {
 		return "", err
 	}
 	s.inv.Add(s.game.URL, inventory.Entry{
@@ -918,24 +973,53 @@ func fileMD5(path string) (string, error) {
 
 // extractEntry copies the content returned by open() to dest on disk.
 // Used for both ZIP and 7z entries.
-func extractEntry(open func() (io.ReadCloser, error), dest string) error {
+func extractEntry(open func() (io.ReadCloser, error), expectedSize int64, dest string) error {
+	if err := leaf.RequireFreeSpace(filepath.Dir(dest), expectedSize); err != nil {
+		return fmt.Errorf("extract storage preflight: %w", err)
+	}
 	rc, err := open()
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	out, err := os.Create(dest)
+	out, err := os.CreateTemp(filepath.Dir(dest), ".itchio-extract-*.part")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, rc)
-	return err
+	tmpPath := out.Name()
+	committed := false
+	defer func() {
+		_ = out.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	written, err := io.Copy(out, rc)
+	if err != nil {
+		return err
+	}
+	if expectedSize > 0 && written != expectedSize {
+		return fmt.Errorf("extracted size %d does not match expected %d", written, expectedSize)
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // extractZIPEntry is a convenience wrapper around extractEntry for zip.File.
 func extractZIPEntry(f *zip.File, dest string) error {
-	return extractEntry(f.Open, dest)
+	return extractEntry(f.Open, int64(f.UncompressedSize64), dest)
 }
 
 // commonPathPrefix returns the longest common directory path shared by all

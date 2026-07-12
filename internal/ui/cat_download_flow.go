@@ -35,6 +35,7 @@ type CatDownloadPlan struct {
 	// single-ROM ZIP under the correct Leaf system instead of guessing from
 	// the outer .zip suffix.
 	LogicalExts []string
+	Transaction DownloadTransaction
 }
 
 type catDownloadMode uint8

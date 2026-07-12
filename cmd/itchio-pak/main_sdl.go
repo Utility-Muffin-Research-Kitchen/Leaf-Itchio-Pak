@@ -500,6 +500,18 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if plan == nil {
 			return nil
 		}
+		if plan.Kind == ui.CatDownloadPlanDirect || plan.Kind == ui.CatDownloadPlanMulti {
+			sealed, sealErr := plan.Seal(activeGame, activeDetail)
+			if sealErr != nil {
+				if downloadSelectModel != nil {
+					downloadSelectModel.SetError(sealErr.Error())
+					route = catRouteDownloadSelect
+					return nil
+				}
+				return sealErr
+			}
+			plan = sealed
+		}
 		switch plan.Kind {
 		case ui.CatDownloadPlanArchive:
 			archiveFlow = ui.NewCatArchiveFlow(client, cfg, activeGame, plan.Uploads[0], inv,
@@ -535,11 +547,18 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			route = catRouteDestination
 			return nil
 		case ui.CatDownloadPlanDirect:
+			file := plan.Transaction.Files[0]
 			return startBackend(ui.NewCatDirectDownloadBackend(client, cfg, activeGame, activeDetail,
-				plan.Uploads[0], plan.DestPaths[0], inv, inventoryPath))
+				file.Upload, file.FinalPath, inv, inventoryPath))
 		case ui.CatDownloadPlanMulti:
+			uploads := make([]roms.Upload, 0, len(plan.Transaction.Files))
+			destPaths := make([]string, 0, len(plan.Transaction.Files))
+			for _, file := range plan.Transaction.Files {
+				uploads = append(uploads, file.Upload)
+				destPaths = append(destPaths, file.FinalPath)
+			}
 			return startBackend(ui.NewCatMultiDownloadBackend(client, cfg, activeGame, activeDetail,
-				plan.Uploads, plan.DestPaths, inv, inventoryPath))
+				uploads, destPaths, inv, inventoryPath))
 		default:
 			return nil
 		}

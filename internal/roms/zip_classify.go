@@ -16,9 +16,10 @@ const (
 
 // ZIPEntry is one file from a ZIP's central directory.
 type ZIPEntry struct {
-	Name string
-	Kind FileKind
-	Size uint64 // uncompressed bytes
+	Name           string
+	Kind           FileKind
+	Size           uint64 // uncompressed bytes
+	CompressedSize uint64
 }
 
 // ZIPManifest is the classified contents of a ZIP file.

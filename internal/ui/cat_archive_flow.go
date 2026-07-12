@@ -114,6 +114,11 @@ func (flow *CatArchiveFlow) Sync(model *appui.DownloadProgressModel) bool {
 			return true
 		}
 		flow.plan = update.plan
+		if err := ValidateArchiveManifest(flow.plan.Manifest, DefaultArchiveLimits); err != nil {
+			model.State = appui.DownloadProgressError
+			model.Detail = err.Error()
+			return true
+		}
 		if !flow.plan.Manifest.HasROMs() && !flow.plan.Manifest.HasMusic() {
 			model.State = appui.DownloadProgressError
 			model.Detail = "The archive contains no supported ROM or music files."
@@ -143,7 +148,7 @@ func (flow *CatArchiveFlow) TakeDirectPlan() *CatDownloadPlan {
 	return plan
 }
 
-func (flow *CatArchiveFlow) ExtractionPlan() ZIPPlan { return flow.plan }
+func (flow *CatArchiveFlow) ExtractionPlan() ZIPPlan { return flow.plan.Seal() }
 
 func (flow *CatArchiveFlow) ROMExtensions() []string {
 	exts := make([]string, 0, len(flow.plan.Manifest.InstallROMExts()))

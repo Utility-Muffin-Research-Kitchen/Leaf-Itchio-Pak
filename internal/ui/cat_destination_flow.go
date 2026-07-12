@@ -29,6 +29,7 @@ type CatDestinationFlow struct {
 	music   bool
 
 	targets       []catDestinationTarget
+	uploads       []roms.Upload
 	uploadTargets []int
 	selected      leaf.Source
 	targetIndex   int
@@ -37,6 +38,7 @@ type CatDestinationFlow struct {
 	chosenDirs    map[string]string
 	destPaths     []string
 	archiveExts   map[string][]string
+	preferences   map[string]settings.RememberedDestination
 }
 
 func NewCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
@@ -73,8 +75,9 @@ func newCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 	}
 	flow := &CatDestinationFlow{
 		sources: sources, catalog: catalog, cfg: cfg, cfgPath: cfgPath, title: title,
+		uploads:    append([]roms.Upload(nil), uploads...),
 		chosenDirs: make(map[string]string), uploadTargets: make([]int, len(uploads)),
-		archiveExts: make(map[string][]string),
+		archiveExts: make(map[string][]string), preferences: make(map[string]settings.RememberedDestination),
 	}
 	byKey := make(map[string]int)
 	for index, ext := range exts {
@@ -112,6 +115,7 @@ func NewCatMusicDestinationFlow(sources leaf.SourceList, cfg *settings.Config,
 		sources: sources, cfg: cfg, cfgPath: cfgPath, title: title, music: true,
 		targets:       []catDestinationTarget{{key: "music", label: "Music"}},
 		uploadTargets: []int{0}, chosenDirs: make(map[string]string),
+		preferences: make(map[string]settings.RememberedDestination),
 	}
 	model := appui.NewDestinationModel(title)
 	flow.showSources(model)
@@ -141,6 +145,9 @@ func (flow *CatDestinationFlow) showSources(model *appui.DestinationModel) {
 }
 
 func (flow *CatDestinationFlow) Activate(model *appui.DestinationModel) (bool, error) {
+	if model.Phase == appui.DestinationConfirm {
+		return flow.finalize(model)
+	}
 	if model.Cursor < 0 || model.Cursor >= len(model.Items) || !model.Items[model.Cursor].Enabled {
 		return false, nil
 	}
@@ -153,6 +160,7 @@ func (flow *CatDestinationFlow) Activate(model *appui.DestinationModel) (bool, e
 		flow.selected = source
 		flow.targetIndex = 0
 		flow.chosenDirs = make(map[string]string)
+		flow.preferences = make(map[string]settings.RememberedDestination)
 		return false, flow.openTarget(model)
 	}
 	if model.Phase != appui.DestinationFolders {
@@ -182,12 +190,19 @@ func (flow *CatDestinationFlow) Back(model *appui.DestinationModel) bool {
 		flow.showSources(model)
 		return false
 	}
+	if model.Phase == appui.DestinationConfirm {
+		flow.targetIndex = len(flow.targets) - 1
+		flow.current = flow.chosenDirs[flow.targets[flow.targetIndex].key]
+		_ = flow.loadDir(model, flow.current)
+		return false
+	}
 	if filepath.Clean(flow.current) != filepath.Clean(flow.root) {
 		_ = flow.loadDir(model, filepath.Dir(flow.current))
 		return false
 	}
 	flow.targetIndex = 0
 	flow.chosenDirs = make(map[string]string)
+	flow.preferences = make(map[string]settings.RememberedDestination)
 	flow.showSources(model)
 	return false
 }
@@ -295,7 +310,7 @@ func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, er
 	if !flow.selected.Available() {
 		return false, fmt.Errorf("selected storage card was removed")
 	}
-	if err := catDestinationDirectorySafe(flow.root, flow.current, true); err != nil {
+	if err := catDestinationDirectorySafe(flow.root, flow.current, false); err != nil {
 		return false, err
 	}
 	target := flow.targets[flow.targetIndex]
@@ -304,17 +319,7 @@ func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, er
 		return false, err
 	}
 	preference := settings.RememberedDestination{SourceID: flow.selected.ID, RelativePath: filepath.ToSlash(rel)}
-	if flow.music {
-		flow.cfg.MusicDestination = &preference
-	} else {
-		if flow.cfg.ROMDestinations == nil {
-			flow.cfg.ROMDestinations = make(map[string]settings.RememberedDestination)
-		}
-		flow.cfg.ROMDestinations[target.key] = preference
-	}
-	if err := flow.cfg.Save(flow.cfgPath); err != nil {
-		logger.Warn("destination: save preference: %v", err)
-	}
+	flow.preferences[target.key] = preference
 	flow.chosenDirs[target.key] = flow.current
 	if flow.targetIndex+1 < len(flow.targets) {
 		flow.targetIndex++
@@ -324,30 +329,122 @@ func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, er
 	for uploadIndex, targetIndex := range flow.uploadTargets {
 		flow.destPaths[uploadIndex] = flow.chosenDirs[flow.targets[targetIndex].key]
 	}
+	model.SetConfirm("Confirm download destination", destinationSourceLabel(flow.selected), flow.summaryLines())
+	return false, nil
+}
+
+func (flow *CatDestinationFlow) finalize(_ *appui.DestinationModel) (bool, error) {
+	if !flow.selected.Available() {
+		return false, fmt.Errorf("selected storage card was removed")
+	}
+	for _, target := range flow.targets {
+		dir := flow.chosenDirs[target.key]
+		root := flow.selected.MusicPath
+		if !flow.music {
+			var err error
+			root, err = flow.catalog.ROMDir(flow.selected, target.key)
+			if err != nil {
+				return false, err
+			}
+		}
+		if err := catDestinationDirectorySafe(root, dir, true); err != nil {
+			return false, fmt.Errorf("selected storage card changed before download: %w", err)
+		}
+	}
+	if flow.music {
+		preference := flow.preferences["music"]
+		flow.cfg.MusicDestination = &preference
+	} else {
+		if flow.cfg.ROMDestinations == nil {
+			flow.cfg.ROMDestinations = make(map[string]settings.RememberedDestination)
+		}
+		for key, preference := range flow.preferences {
+			flow.cfg.ROMDestinations[key] = preference
+		}
+	}
+	if err := flow.cfg.Save(flow.cfgPath); err != nil {
+		logger.Warn("destination: save preference: %v", err)
+	}
 	return true, nil
+}
+
+func (flow *CatDestinationFlow) summaryLines() []string {
+	var lines []string
+	if flow.music {
+		rel, _ := leaf.RelativeWithin(flow.selected.Root, flow.chosenDirs["music"])
+		return []string{filepath.ToSlash(rel)}
+	}
+	for targetIndex, target := range flow.targets {
+		dir := flow.chosenDirs[target.key]
+		rel, _ := leaf.RelativeWithin(flow.selected.Root, dir)
+		added := false
+		for uploadIndex, mappedTarget := range flow.uploadTargets {
+			if mappedTarget != targetIndex || uploadIndex >= len(flow.uploads) {
+				continue
+			}
+			if flow.uploads[uploadIndex].Filename != "" {
+				lines = append(lines, filepath.ToSlash(filepath.Join(rel, flow.uploads[uploadIndex].Filename)))
+				added = true
+			}
+		}
+		label := filepath.ToSlash(rel)
+		if !added || len(flow.uploadTargets) == 0 {
+			label = target.label + " → " + label
+		}
+		lines = append(lines, label)
+	}
+	return lines
 }
 
 func catDestinationDirectorySafe(root, target string, create bool) error {
 	if _, err := leaf.RelativeWithin(root, target); err != nil {
 		return err
 	}
-	if create {
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return fmt.Errorf("create destination folder: %w", err)
-		}
-	}
-	rootReal, err := filepath.EvalSymlinks(root)
+	rootExisting, err := nearestExistingDirectory(root)
 	if err != nil {
 		return err
 	}
-	targetReal, err := filepath.EvalSymlinks(target)
+	targetExisting, err := nearestExistingDirectory(target)
+	if err != nil {
+		return err
+	}
+	rootReal, err := filepath.EvalSymlinks(rootExisting)
+	if err != nil {
+		return err
+	}
+	targetReal, err := filepath.EvalSymlinks(targetExisting)
 	if err != nil {
 		return err
 	}
 	if _, err := leaf.RelativeWithin(rootReal, targetReal); err != nil {
 		return fmt.Errorf("destination follows a symlink outside its content root: %w", err)
 	}
+	if create {
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return fmt.Errorf("create destination folder: %w", err)
+		}
+		return catDestinationDirectorySafe(root, target, false)
+	}
 	return nil
+}
+
+func nearestExistingDirectory(path string) (string, error) {
+	for candidate := filepath.Clean(path); ; candidate = filepath.Dir(candidate) {
+		info, err := os.Stat(candidate)
+		if err == nil {
+			if !info.IsDir() {
+				return "", fmt.Errorf("destination ancestor %q is not a directory", candidate)
+			}
+			return candidate, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return "", err
+		}
+	}
 }
 
 func destinationSourceLabel(source leaf.Source) string {

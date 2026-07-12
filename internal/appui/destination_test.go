@@ -28,3 +28,14 @@ func TestDestinationFolderControls(t *testing.T) {
 		t.Fatalf("B intent = %v, want back", got)
 	}
 }
+
+func TestDestinationConfirmationRequiresExplicitDownload(t *testing.T) {
+	model := NewDestinationModel("Destination")
+	model.SetConfirm("Confirm download destination", "Secondary SD", []string{"Roms/GBC/game.gbc"})
+	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != DestinationIntentActivate {
+		t.Fatalf("confirm A intent = %v, want activate", got)
+	}
+	if got := model.Handle(InputEvent{Button: ButtonB, Pressed: true}); got != DestinationIntentBack {
+		t.Fatalf("confirm B intent = %v, want back", got)
+	}
+}

@@ -84,8 +84,15 @@ func TestCatROMDestinationSecondarySubfolder(t *testing.T) {
 	}
 	model.Cursor = 0
 	complete, err := flow.Activate(model)
+	if err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("summary = %v, state %v, %v", complete, model.Phase, err)
+	}
+	if len(model.SummaryLines) < 1 || model.SummaryLines[0] != "Roms/GBC/RPG/game.gbc" {
+		t.Fatalf("destination summary = %v", model.SummaryLines)
+	}
+	complete, err = flow.Activate(model)
 	if err != nil || !complete {
-		t.Fatalf("save = %v, %v", complete, err)
+		t.Fatalf("confirm = %v, %v", complete, err)
 	}
 	want := filepath.Join(sources[1].RomsPath, "GBC", "RPG")
 	if got := flow.DestPaths()[0]; got != want {
@@ -145,8 +152,12 @@ func TestCatMusicDestinationRemembersSourceRelativePath(t *testing.T) {
 	}
 	model.Cursor = 0
 	complete, err := flow.Activate(model)
+	if err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("music summary = %v, state %v, %v", complete, model.Phase, err)
+	}
+	complete, err = flow.Activate(model)
 	if err != nil || !complete {
-		t.Fatalf("music save = %v, %v", complete, err)
+		t.Fatalf("music confirm = %v, %v", complete, err)
 	}
 	if cfg.MusicDestination == nil || cfg.MusicDestination.SourceID != "secondary_sd" || cfg.MusicDestination.RelativePath != "Albums" {
 		t.Fatalf("music preference = %#v", cfg.MusicDestination)
@@ -178,6 +189,33 @@ func TestCatDestinationStopsWhenSelectedCardIsRemoved(t *testing.T) {
 	}
 }
 
+func TestCatDestinationRechecksCardAfterSummary(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	cfg := &settings.Config{}
+	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
+		"Game", []roms.Upload{{Filename: "game.gbc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 1
+	if _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("summary = %v, state %v, %v", complete, model.Phase, err)
+	}
+	if err := os.RemoveAll(sources[1].Root); err != nil {
+		t.Fatal(err)
+	}
+	if complete, err := flow.Activate(model); err == nil || complete {
+		t.Fatalf("confirm after removal = %v, %v; want blocked", complete, err)
+	}
+	if len(cfg.ROMDestinations) != 0 {
+		t.Fatalf("removed card persisted destination preferences: %v", cfg.ROMDestinations)
+	}
+}
+
 func TestCatDestinationVisitsEachCanonicalSystemOnce(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	cfg := &settings.Config{}
@@ -205,8 +243,12 @@ func TestCatDestinationVisitsEachCanonicalSystemOnce(t *testing.T) {
 	}
 	model.Cursor = 0
 	complete, err := flow.Activate(model)
+	if err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("summary GBC = %v, state %v, %v", complete, model.Phase, err)
+	}
+	complete, err = flow.Activate(model)
 	if err != nil || !complete {
-		t.Fatalf("save GBC = %v, %v", complete, err)
+		t.Fatalf("confirm GBC = %v, %v", complete, err)
 	}
 	paths := flow.DestPaths()
 	if len(paths) != 3 || paths[0] != paths[2] || paths[0] == paths[1] {
@@ -231,8 +273,11 @@ func TestCatArchiveDestinationReturnsInnerExtensionMap(t *testing.T) {
 		t.Fatalf("save GB = %v, %v", complete, err)
 	}
 	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("summary GBC = %v, state %v, %v", complete, model.Phase, err)
+	}
 	if complete, err := flow.Activate(model); err != nil || !complete {
-		t.Fatalf("save GBC = %v, %v", complete, err)
+		t.Fatalf("confirm GBC = %v, %v", complete, err)
 	}
 	dirs := flow.ArchiveROMDirs()
 	if dirs[".gb"] == "" || dirs[".gbc"] == "" || dirs[".gb"] == dirs[".gbc"] {
@@ -252,8 +297,11 @@ func TestCatPSXArchiveDestinationKeepsCueAndBinOnSecondary(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.Cursor = 0
+	if complete, err := flow.Activate(model); err != nil || complete || model.Phase != appui.DestinationConfirm {
+		t.Fatalf("PSX summary = %v, state %v, %v", complete, model.Phase, err)
+	}
 	if complete, err := flow.Activate(model); err != nil || !complete {
-		t.Fatalf("save PSX destination = %v, %v", complete, err)
+		t.Fatalf("confirm PSX destination = %v, %v", complete, err)
 	}
 	want := filepath.Join(sources[1].RomsPath, "PSX")
 	dirs := flow.ArchiveROMDirs()
