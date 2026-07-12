@@ -129,6 +129,8 @@ func TestCatSettingsRemoveAPIKeyKeepsDownloads(t *testing.T) {
 	client := itchio.NewClientWithBase("http://127.0.0.1")
 	client.StoreAPIKeyStatus(itchio.APIKeyStatusWorking)
 	flow, model, cfgPath, ownedPath := settingsFixture(t, cfg, client)
+	ownedCleared := false
+	flow.SetOwnedChanged(func(owned []itchio.OwnedGame) { ownedCleared = len(owned) == 0 })
 	logger.RegisterSecret(cfg.APIKey, "[API-KEY]")
 	defer logger.RemoveSecret("[API-KEY]")
 	if err := itchio.SaveOwnedCache(ownedPath, []string{"https://example.itch.io/game"}); err != nil {
@@ -145,7 +147,7 @@ func TestCatSettingsRemoveAPIKeyKeepsDownloads(t *testing.T) {
 	if _, err := flow.Confirm(model); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.APIKey != "" || client.GetAPIKeyStatus() != itchio.APIKeyStatusUnknown {
+	if cfg.APIKey != "" || client.GetAPIKeyStatus() != itchio.APIKeyStatusUnknown || !ownedCleared {
 		t.Fatalf("credential state remains: key=%q status=%v", cfg.APIKey, client.GetAPIKeyStatus())
 	}
 	if _, err := os.Stat(ownedPath); !os.IsNotExist(err) {
@@ -178,6 +180,10 @@ func TestCatSettingsValidateAPIKeyAndSaveOwnedCache(t *testing.T) {
 	cfg := &settings.Config{APIKeyWarningAccepted: true, ROMLocation: "auto", MusicDownload: "off"}
 	client := itchio.NewClientWithBaseAndButler(server.URL, server.URL)
 	flow, model, _, ownedPath := settingsFixture(t, cfg, client)
+	var liveOwned []itchio.OwnedGame
+	flow.SetOwnedChanged(func(owned []itchio.OwnedGame) {
+		liveOwned = append([]itchio.OwnedGame(nil), owned...)
+	})
 	defer logger.RemoveSecret("[API-KEY]")
 	if err := flow.SetAPIKey(model, " valid-key "); err != nil {
 		t.Fatal(err)
@@ -189,9 +195,49 @@ func TestCatSettingsValidateAPIKeyAndSaveOwnedCache(t *testing.T) {
 	if model.State != appui.SettingsMessage || client.GetAPIKeyStatus() != itchio.APIKeyStatusWorking {
 		t.Fatalf("validation state=%v status=%v message=%q", model.State, client.GetAPIKeyStatus(), model.Message)
 	}
+	if len(liveOwned) != 1 || liveOwned[0].URL != "https://example.itch.io/leafbound" {
+		t.Fatalf("live owned state = %#v", liveOwned)
+	}
 	urls, err := itchio.LoadOwnedCache(ownedPath)
 	if err != nil || len(urls) != 1 || urls[0] != "https://example.itch.io/leafbound" {
 		t.Fatalf("owned cache=%v err=%v", urls, err)
+	}
+}
+
+func TestCatSettingsReplacingAPIKeyClearsOldOwnedStateBeforeValidation(t *testing.T) {
+	cfg := &settings.Config{APIKey: "old-key", APIKeyWarningAccepted: true}
+	flow, model, _, ownedPath := settingsFixture(t, cfg, itchio.NewClientWithBase("http://127.0.0.1:1"))
+	if err := itchio.SaveOwnedCache(ownedPath, []string{"https://example.itch.io/old"}); err != nil {
+		t.Fatal(err)
+	}
+	cleared := false
+	flow.SetOwnedChanged(func(owned []itchio.OwnedGame) { cleared = len(owned) == 0 })
+	defer logger.RemoveSecret("[API-KEY]")
+	if err := flow.SetAPIKey(model, "new-key"); err != nil {
+		t.Fatal(err)
+	}
+	if !cleared {
+		t.Fatal("old in-memory owned state was not cleared")
+	}
+	if _, err := os.Stat(ownedPath); !os.IsNotExist(err) {
+		t.Fatalf("old owned cache remains: %v", err)
+	}
+}
+
+func TestCatSettingsIgnoresStaleAPIValidationResult(t *testing.T) {
+	flow, model, _, _ := settingsFixture(t, &settings.Config{}, nil)
+	flow.apiGeneration.Store(2)
+	flow.apiResults <- catAPIResult{
+		generation: 1,
+		owned:      []itchio.OwnedGame{{URL: "https://example.itch.io/stale"}},
+	}
+	changed := false
+	flow.SetOwnedChanged(func([]itchio.OwnedGame) { changed = true })
+	if !flow.Sync(model) {
+		t.Fatal("stale validation result was not consumed")
+	}
+	if changed {
+		t.Fatal("stale validation repopulated live owned state")
 	}
 }
 

@@ -50,6 +50,30 @@ func TestRoundTrip(t *testing.T) {
 	if loaded.ROMLocation != "ask" {
 		t.Errorf("ROMLocation = %q, want %q", loaded.ROMLocation, "ask")
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
+	}
+}
+
+func TestLoadRepairsConfigModeWhereSupported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"api_key":"secret"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := settings.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("repaired config mode = %v; want 0600", info.Mode().Perm())
+	}
 }
 
 func TestLoadCorruptedFileReturnsDefaults(t *testing.T) {

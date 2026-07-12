@@ -313,6 +313,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		settingsReturn = back
 		settingsFlow, settingsModel = ui.NewCatSettingsFlow(cfg, cfgPath, ownedCachePath,
 			filepath.Dir(cfgPath), sources, client, func() { _ = ctx.Wake() })
+		settingsFlow.SetOwnedChanged(list.ReplaceOwnedGames)
 		var screenErr error
 		settingsScreen, screenErr = catui.NewSettingsScreen(ctx, settingsModel)
 		if screenErr != nil {
@@ -335,10 +336,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	handleSettingsAction := func(action ui.CatSettingsAction) error {
 		switch action {
 		case ui.CatSettingsEditAPIKey:
-			// Start blank even when replacing an existing key: the native Cat
-			// keyboard is deliberately full-featured but not a password field.
-			// This keeps the persisted key from being revealed during an edit.
-			value, accepted, keyboardErr := ctx.Keyboard("")
+			value, accepted, keyboardErr := ctx.SecretKeyboard()
 			if keyboardErr != nil {
 				return keyboardErr
 			}

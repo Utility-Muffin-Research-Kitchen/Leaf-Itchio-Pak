@@ -55,9 +55,10 @@ type CatalogController struct {
 	cacheUpdateCh chan []itchio.Game
 	needsRebuild  bool
 
-	ownedUpdateCh  chan map[string]bool
-	ownedURLs      map[string]bool
-	ownedCachePath string
+	ownedUpdateCh   chan map[string]bool
+	ownedURLs       map[string]bool
+	ownedCachePath  string
+	ownedGeneration atomic.Uint64
 
 	sortMode       itchio.SortMode
 	platformFilter string
@@ -89,10 +90,16 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 	}
 
 	if cfg.APIKey != "" {
+		key := cfg.APIKey
+		generation := controller.ownedGeneration.Load()
 		go func() {
-			_, owned, err := client.ValidateAPIKey(cfg.APIKey)
+			_, owned, err := client.ValidateAPIKey(key)
 			if err != nil {
 				logger.Warn("owned: startup key validation failed: %v", err)
+				return
+			}
+			if generation != controller.ownedGeneration.Load() {
+				logger.Debug("owned: discarded stale startup key validation")
 				return
 			}
 			controller.publishOwned(owned)
@@ -144,6 +151,22 @@ func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
 	controller.ownedUpdateCh <- ownedURLs
 	controller.wakeUI()
 	logger.Info("owned: %d owned game URL(s) received from key validation", len(ownedURLs))
+}
+
+// ReplaceOwnedGames updates the live catalogue's credential-derived state.
+// It does not persist: CatSettingsFlow owns the matching cache transaction.
+func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame) {
+	controller.ownedGeneration.Add(1)
+	ownedURLs := make(map[string]bool, len(owned))
+	for _, game := range owned {
+		ownedURLs[game.URL] = true
+	}
+	select {
+	case <-controller.ownedUpdateCh:
+	default:
+	}
+	controller.ownedUpdateCh <- ownedURLs
+	controller.wakeUI()
 }
 
 func (controller *CatalogController) loadPage(page int, query string) {

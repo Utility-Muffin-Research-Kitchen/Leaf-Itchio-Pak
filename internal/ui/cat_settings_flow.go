@@ -39,8 +39,9 @@ const (
 )
 
 type catAPIResult struct {
-	owned []itchio.OwnedGame
-	err   error
+	owned      []itchio.OwnedGame
+	err        error
+	generation uint64
 }
 
 type CatSettingsFlow struct {
@@ -54,6 +55,12 @@ type CatSettingsFlow struct {
 	pending        catSettingsConfirm
 	apiResults     chan catAPIResult
 	validating     atomic.Bool
+	apiGeneration  atomic.Uint64
+	ownedChanged   func([]itchio.OwnedGame)
+}
+
+func (flow *CatSettingsFlow) SetOwnedChanged(callback func([]itchio.OwnedGame)) {
+	flow.ownedChanged = callback
 }
 
 func NewCatSettingsFlow(cfg *settings.Config, cfgPath, ownedCachePath, appDataPath string,
@@ -190,7 +197,12 @@ func (flow *CatSettingsFlow) Confirm(model *appui.SettingsModel) (CatSettingsAct
 			return CatSettingsNone, err
 		}
 		flow.client.ResetAPIKeyState()
+		flow.apiGeneration.Add(1)
+		flow.validating.Store(false)
 		logger.RemoveSecret("[API-KEY]")
+		if flow.ownedChanged != nil {
+			flow.ownedChanged(nil)
+		}
 		if err := os.Remove(flow.ownedCachePath); err != nil && !os.IsNotExist(err) {
 			return CatSettingsNone, fmt.Errorf("remove owned cache: %w", err)
 		}
@@ -239,6 +251,14 @@ func (flow *CatSettingsFlow) SetAPIKey(model *appui.SettingsModel, value string)
 	}
 	logger.RegisterSecret(value, "[API-KEY]")
 	flow.client.ResetAPIKeyState()
+	flow.apiGeneration.Add(1)
+	flow.validating.Store(false)
+	if flow.ownedChanged != nil {
+		flow.ownedChanged(nil)
+	}
+	if err := os.Remove(flow.ownedCachePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear previous owned cache: %w", err)
+	}
 	flow.startAPIValidation(model, value)
 	return nil
 }
@@ -246,6 +266,9 @@ func (flow *CatSettingsFlow) SetAPIKey(model *appui.SettingsModel, value string)
 func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 	select {
 	case result := <-flow.apiResults:
+		if result.generation != flow.apiGeneration.Load() {
+			return true
+		}
 		flow.validating.Store(false)
 		if result.err != nil {
 			flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusRejected)
@@ -261,6 +284,9 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 			model.SetError("API key is valid, but the owned-game cache could not be saved.")
 			return true
 		}
+		if flow.ownedChanged != nil {
+			flow.ownedChanged(result.owned)
+		}
 		model.SetMessage(fmt.Sprintf("API key validated. %d owned game(s) found.", len(result.owned)))
 		return true
 	default:
@@ -270,10 +296,11 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 
 func (flow *CatSettingsFlow) startAPIValidation(model *appui.SettingsModel, key string) {
 	model.State, model.Message = appui.SettingsWorking, "Validating the masked API key with itch.io…"
+	generation := flow.apiGeneration.Add(1)
 	flow.validating.Store(true)
 	go func() {
 		_, owned, err := flow.client.ValidateAPIKey(key)
-		flow.apiResults <- catAPIResult{owned: owned, err: err}
+		flow.apiResults <- catAPIResult{owned: owned, err: err, generation: generation}
 		if flow.wake != nil {
 			flow.wake()
 		}

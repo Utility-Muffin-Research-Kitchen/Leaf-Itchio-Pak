@@ -33,6 +33,21 @@ func TestCatalogControllerBindsFilteredGamesToCatModel(t *testing.T) {
 	}
 }
 
+func TestCatalogControllerReplaceOwnedGamesClearsLiveCredentialState(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: []itchio.Game{{Title: "Owned", URL: "https://example.invalid/owned"}},
+		cacheReady:  true, ownedURLs: map[string]bool{"https://example.invalid/owned": true},
+		ownedUpdateCh: make(chan map[string]bool, 1),
+	}
+	controller.rebuildView()
+	controller.ReplaceOwnedGames(nil)
+	controller.consumeUpdates()
+	if len(controller.ownedURLs) != 0 {
+		t.Fatalf("live owned URLs = %v", controller.ownedURLs)
+	}
+}
+
 func TestCyclePlatformFilterWrapsAcrossAllSystems(t *testing.T) {
 	tests := []struct {
 		current   string

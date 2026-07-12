@@ -98,6 +98,11 @@ func Load(path string) (*Config, error) {
 		logger.Debug("settings: config not found at %s, using defaults", path)
 		return defaults(), nil
 	}
+	// Best effort: POSIX filesystems can keep credentials owner-only. FAT32
+	// ignores Unix mode bits, which is disclosed before the first key save.
+	if err := os.Chmod(path, 0o600); err != nil {
+		logger.Debug("settings: owner-only config mode unavailable: %v", err)
+	}
 	cfg := defaults()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		logger.Warn("settings: config at %s is invalid, using defaults: %v", path, err)
@@ -112,14 +117,20 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		logger.Error("settings: failed to write tmp config %s: %v", tmp, err)
 		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		logger.Debug("settings: owner-only temporary config mode unavailable: %v", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		logger.Error("settings: failed to rename config %s → %s: %v", tmp, path, err)
 		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		logger.Debug("settings: owner-only config mode unavailable: %v", err)
 	}
 	return nil
 }
