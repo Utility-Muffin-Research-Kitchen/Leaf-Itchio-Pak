@@ -128,6 +128,44 @@ func TestCatDownloadFlowRequiresLaterSafeRoutes(t *testing.T) {
 	}
 }
 
+func TestCatDownloadFlowROMSelectionAskChoosesOneIndependentUpload(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.cfg.ROMSelection = "ask"
+	flow.setUploads(model, []roms.Upload{{Filename: "game.gb"}, {Filename: "game.gbc"}})
+	if plan := flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectChoices || len(model.Choices) != 2 {
+		t.Fatalf("ask choices = plan %#v model %#v", plan, model)
+	}
+	model.Cursor = 1
+	flow.Choose(model)
+	plan := flow.TakePlan()
+	if plan == nil || plan.Kind != CatDownloadPlanDirect || plan.Uploads[0].Filename != "game.gbc" {
+		t.Fatalf("ask plan = %#v", plan)
+	}
+}
+
+func TestCatDownloadFlowROMSelectionAskShowsSingleUpload(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.cfg.ROMSelection = "ask"
+	flow.setUploads(model, []roms.Upload{{Filename: "game.gbc"}})
+	if plan := flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectChoices || len(model.Choices) != 1 {
+		t.Fatalf("single ask choice = plan %#v model %#v", plan, model)
+	}
+	flow.Choose(model)
+	if plan := flow.TakePlan(); plan == nil || plan.Kind != CatDownloadPlanDirect {
+		t.Fatalf("single ask plan = %#v", plan)
+	}
+}
+
+func TestCatDownloadFlowROMSelectionAskKeepsCUEBINPaired(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.cfg.ROMSelection = "ask"
+	flow.setUploads(model, []roms.Upload{{Filename: "disc.cue"}, {Filename: "track.bin"}})
+	plan := flow.TakePlan()
+	if plan == nil || plan.Kind != CatDownloadPlanMulti || len(plan.Uploads) != 2 {
+		t.Fatalf("paired PSX plan = %#v model %#v", plan, model)
+	}
+}
+
 func TestCatDownloadFlowManualUnknownFormat(t *testing.T) {
 	flow, model := newCatDownloadFlowForTest(t)
 	flow.setUploads(model, []roms.Upload{{Filename: "mystery", NeedsFormat: true}})

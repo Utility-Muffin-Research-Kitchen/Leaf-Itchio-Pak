@@ -231,6 +231,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Key: appui.SettingsAPIKey, Label: "API Key", Value: "••••7f2a", ActionEnabled: true},
 			{Key: appui.SettingsEditAPIKey, Label: "Edit API Key", ActionEnabled: true},
 			{Key: appui.SettingsRemoveAPIKey, Label: "Remove API Key", ActionEnabled: true},
+			{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: "auto", ActionEnabled: true},
 			{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: "ask", ActionEnabled: true},

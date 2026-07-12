@@ -272,6 +272,15 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 			known = append(known, upload)
 		}
 	}
+	if flow.cfg.ROMSelection == "ask" && len(known) > 0 && !isPairedPSXUploadSet(known) {
+		flow.mode, flow.uploads = catDownloadModeUploads, known
+		choices := make([]appui.DownloadChoice, 0, len(known))
+		for _, upload := range known {
+			choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
+		}
+		model.SetChoices("Choose file to download", choices)
+		return
+	}
 	if len(known) == 1 {
 		flow.plan = flow.planForUpload(known[0])
 		return
@@ -301,6 +310,19 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		})
 	}
 	model.SetChoices("Choose file and format", choices)
+}
+
+func isPairedPSXUploadSet(uploads []roms.Upload) bool {
+	hasCUE, hasBIN := false, false
+	for _, upload := range uploads {
+		switch strings.ToLower(roms.ROMExt(upload.Filename)) {
+		case ".cue":
+			hasCUE = true
+		case ".bin":
+			hasBIN = true
+		}
+	}
+	return hasCUE && hasBIN
 }
 
 func (flow *CatDownloadFlow) TakePlan() *CatDownloadPlan {

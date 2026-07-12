@@ -56,6 +56,7 @@ type RememberedDestination struct {
 type Config struct {
 	APIKey                string                           `json:"api_key"`
 	APIKeyWarningAccepted bool                             `json:"api_key_physical_warning_accepted,omitempty"`
+	ROMSelection          string                           `json:"rom_selection"`
 	ROMLocation           string                           `json:"rom_location"`
 	LastROMDirs           map[string]string                `json:"last_rom_dirs,omitempty"`
 	ROMDestinations       map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`
@@ -74,6 +75,7 @@ type Config struct {
 func defaults() *Config {
 	return &Config{
 		APIKey:        "",
+		ROMSelection:  "auto",
 		ROMLocation:   "auto",
 		UnifiedNaming: true,
 		MusicDownload: "off",

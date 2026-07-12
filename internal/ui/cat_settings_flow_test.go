@@ -58,7 +58,7 @@ func settingRow(t *testing.T, model *appui.SettingsModel, key appui.SettingsKey)
 
 func TestCatSettingsExposeOnlyLeafChoicesAndSourceLabels(t *testing.T) {
 	cfg := &settings.Config{
-		ROMLocation: "auto", MusicDownload: "auto", MusicLocation: "ask", UnifiedNaming: true,
+		ROMSelection: "auto", ROMLocation: "auto", MusicDownload: "auto", MusicLocation: "ask", UnifiedNaming: true,
 		ROMDestinations: map[string]settings.RememberedDestination{
 			"GBC": {SourceID: "secondary_sd", RelativePath: "RPG"},
 			"GB":  {SourceID: "primary", RelativePath: "."},
@@ -81,6 +81,25 @@ func TestCatSettingsExposeOnlyLeafChoicesAndSourceLabels(t *testing.T) {
 	}
 	if row := settingRow(t, model, appui.SettingsAppData); row.ActionEnabled || row.Value == "" {
 		t.Fatalf("App Data row = %+v", row)
+	}
+	if got := settingRow(t, model, appui.SettingsROMSelection).Value; got != "auto" {
+		t.Fatalf("ROM Selection = %q", got)
+	}
+}
+
+func TestCatSettingsToggleROMSelection(t *testing.T) {
+	cfg := &settings.Config{ROMSelection: "auto", ROMLocation: "auto", MusicDownload: "off"}
+	flow, model, cfgPath, _ := settingsFixture(t, cfg, nil)
+	selectSettingsKey(t, model, appui.SettingsROMSelection)
+	if _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ROMSelection != "ask" || settingRow(t, model, appui.SettingsROMSelection).Value != "ask" {
+		t.Fatalf("ROM Selection after toggle = %q", cfg.ROMSelection)
+	}
+	loaded, err := settings.Load(cfgPath)
+	if err != nil || loaded.ROMSelection != "ask" {
+		t.Fatalf("persisted ROM Selection = %q, %v", loaded.ROMSelection, err)
 	}
 }
 

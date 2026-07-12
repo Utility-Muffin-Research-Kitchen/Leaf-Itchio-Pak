@@ -78,6 +78,7 @@ func (flow *CatSettingsFlow) Refresh(model *appui.SettingsModel) {
 		)
 	}
 	rows = append(rows,
+		appui.SettingsRow{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: settingValue(flow.cfg.ROMSelection, "auto"), ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: settingValue(flow.cfg.ROMLocation, "auto"), ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: settingValue(flow.cfg.MusicDownload, "off"), ActionEnabled: true},
 	)
@@ -126,6 +127,9 @@ func (flow *CatSettingsFlow) Activate(model *appui.SettingsModel) (CatSettingsAc
 		model.SetConfirm("Remove the API key?", []string{"Owned-game authentication data is cleared.", "Downloaded content and inventory remain installed."})
 	case appui.SettingsEditAPIKey:
 		return CatSettingsEditAPIKey, nil
+	case appui.SettingsROMSelection:
+		flow.cfg.ROMSelection = toggleTwo(flow.cfg.ROMSelection, "auto", "ask")
+		return CatSettingsNone, flow.saveAndRefresh(model)
 	case appui.SettingsROMLocation:
 		flow.cfg.ROMLocation = toggleTwo(flow.cfg.ROMLocation, "auto", "ask")
 		return CatSettingsNone, flow.saveAndRefresh(model)

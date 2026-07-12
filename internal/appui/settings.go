@@ -16,6 +16,7 @@ const (
 	SettingsAPIKey SettingsKey = iota
 	SettingsEditAPIKey
 	SettingsRemoveAPIKey
+	SettingsROMSelection
 	SettingsROMLocation
 	SettingsMusicDownload
 	SettingsMusicLocation
