@@ -16,10 +16,8 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
-	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
-	"github.com/veandco/go-sdl2/sdl"
 )
 
 type multiDLState int32
@@ -37,9 +35,9 @@ type romDownload struct {
 	DestPath string
 }
 
-// MultiROMDownloadScreen downloads a list of ROM files sequentially,
+// MultiDownloadWorker downloads a list of ROM files sequentially,
 // placing each in its respective folder and tracking all in the inventory.
-type MultiROMDownloadScreen struct {
+type MultiDownloadWorker struct {
 	client    *itchio.Client
 	cfg       *settings.Config
 	game      itchio.Game
@@ -47,7 +45,6 @@ type MultiROMDownloadScreen struct {
 	downloads []romDownload
 	inv       *inventory.Inventory
 	invPath   string
-	prev      Screen
 
 	state          int32 // multiDLState, accessed atomically
 	currentIdx     int32 // index of the file currently being downloaded, atomic
@@ -60,30 +57,28 @@ type MultiROMDownloadScreen struct {
 	cancel         context.CancelFunc
 }
 
-func NewMultiROMDownloadScreen(
+func NewMultiDownloadWorker(
 	client *itchio.Client, cfg *settings.Config,
 	game itchio.Game, detail *itchio.GameDetail,
 	downloads []romDownload,
 	inv *inventory.Inventory, invPath string,
-	prev Screen,
-) *MultiROMDownloadScreen {
-	s := &MultiROMDownloadScreen{
+) *MultiDownloadWorker {
+	s := &MultiDownloadWorker{
 		client: client, cfg: cfg, game: game, detail: detail,
 		downloads:  downloads,
 		inv:        inv,
 		invPath:    invPath,
-		prev:       prev,
 		finalPaths: make([]string, len(downloads)),
 	}
 	s.startDownloads(false)
 	return s
 }
 
-func (s *MultiROMDownloadScreen) loadState() multiDLState {
+func (s *MultiDownloadWorker) loadState() multiDLState {
 	return multiDLState(atomic.LoadInt32(&s.state))
 }
 
-func (s *MultiROMDownloadScreen) startDownloads(allowUninhibited bool) {
+func (s *MultiDownloadWorker) startDownloads(allowUninhibited bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelMu.Lock()
 	s.cancel = cancel
@@ -91,8 +86,7 @@ func (s *MultiROMDownloadScreen) startDownloads(allowUninhibited bool) {
 	go s.runDownloads(ctx, allowUninhibited)
 }
 
-func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibited bool) {
-	defer func() { sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT}) }()
+func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited bool) {
 	defer func() {
 		s.cancelMu.Lock()
 		s.cancel = nil
@@ -119,7 +113,6 @@ func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibi
 		atomic.StoreInt32(&s.currentIdx, int32(i))
 		atomic.StoreInt64(&s.dlProgress, 0)
 		atomic.StoreInt64(&s.dlTotal, 0)
-		sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT})
 
 		progress := func(downloaded, total int64) {
 			atomic.StoreInt64(&s.dlProgress, downloaded)
@@ -206,7 +199,7 @@ func (s *MultiROMDownloadScreen) runDownloads(ctx context.Context, allowUninhibi
 	atomic.StoreInt32(&s.state, int32(multiDLDone))
 }
 
-func (s *MultiROMDownloadScreen) Cancel() {
+func (s *MultiDownloadWorker) Cancel() {
 	s.cancelMu.Lock()
 	cancel := s.cancel
 	s.cancelMu.Unlock()
@@ -215,148 +208,7 @@ func (s *MultiROMDownloadScreen) Cancel() {
 	}
 }
 
-func (s *MultiROMDownloadScreen) NeedsRedraw() bool         { return true }
-func (s *MultiROMDownloadScreen) HasPendingAnimation() bool { return false }
-
-func (s *MultiROMDownloadScreen) Draw(r *renderer.Renderer) {
-	bg := r.Theme.Background
-	r.Clear(bg[0], bg[1], bg[2])
-
-	footerH := int32(52)
-	_, fontH := r.TextSize("Ag")
-	_, smallFH := r.SmallTextSize("Ag")
-	headerH := fontH + smallFH + 16
-	hdr := r.Theme.HeaderBG
-	ac := r.Theme.Accent
-	r.DrawRect(0, 0, r.W, headerH, hdr[0], hdr[1], hdr[2])
-	r.DrawRect(0, headerH, r.W, 2, ac[0], ac[1], ac[2])
-	mt := r.Theme.MainText
-	r.DrawText(truncateToWidth(r, s.game.Title, r.W-24), 12, 8, mt[0], mt[1], mt[2])
-	ht := r.Theme.HintText
-	r.DrawSmallText("by "+s.game.Author, 12, 8+fontH+4, ht[0], ht[1], ht[2])
-
-	contentH := r.H - headerH - footerH
-	mid := headerH + contentH/2
-	st := s.loadState()
-
-	switch st {
-	case multiDLDownloading:
-		idx := int(atomic.LoadInt32(&s.currentIdx))
-		dl := atomic.LoadInt64(&s.dlProgress)
-		tot := atomic.LoadInt64(&s.dlTotal)
-		label := fmt.Sprintf("File %d of %d", idx+1, len(s.downloads))
-		r.DrawSmallTextCentered(label, 0, mid-fontH-smallFH-14, r.W, 140, 140, 140)
-		if idx < len(s.downloads) {
-			name := truncateSmallToWidth(r, s.downloads[idx].Upload.Filename, r.W-40)
-			r.DrawSmallTextCentered(name, 0, mid-fontH-6, r.W, ht[0], ht[1], ht[2])
-		}
-		barW := r.W - 80
-		r.DrawRect(40, mid-10, barW, 20, 60, 60, 60)
-		if tot > 0 {
-			filled := int32(float64(barW) * float64(dl) / float64(tot))
-			r.DrawRect(40, mid-10, filled, 20, 80, 200, 80)
-			r.DrawText(fmt.Sprintf("%d%%  (%s / %s)", dl*100/tot, humanBytes(dl), humanBytes(tot)),
-				40, mid+18, mt[0], mt[1], mt[2])
-		} else if dl > 0 {
-			r.DrawRect(40, mid-10, barW/3, 20, 80, 200, 80)
-			r.DrawText(humanBytes(dl)+" downloaded", 40, mid+18, mt[0], mt[1], mt[2])
-		}
-
-	case multiDLDone:
-		r.DrawTextCentered(fmt.Sprintf("%d ROM(s) downloaded!", len(s.downloads)), 0, mid-fontH-8, r.W, 80, 200, 80)
-		lineY := mid + 8
-		for _, p := range s.finalPaths {
-			if p == "" || lineY+smallFH > r.H-footerH-4 {
-				break
-			}
-			label := truncateSmallToWidth(r, filepath.Base(p), r.W-40)
-			r.DrawSmallTextCentered(label, 0, lineY, r.W, ht[0], ht[1], ht[2])
-			lineY += smallFH + 4
-		}
-
-	case multiDLError:
-		y := headerH + 10 + 8
-		r.DrawText("Download failed:", 20, y, 200, 60, 60)
-		y += fontH + 6
-		r.DrawWrappedText(s.err.Error(), 20, y, r.W-40, fontH+4, 200, 100, 100)
-	case multiDLCancelled:
-		r.DrawTextCentered("Download cancelled", 0, mid-fontH/2, r.W, ht[0], ht[1], ht[2])
-	}
-
-	ftrY := r.DrawFooterBar(footerH)
-	if st == multiDLError && s.inhibitBlocked.Load() {
-		r.DrawFooterHints([]renderer.FooterHint{
-			{Kind: renderer.BadgeCircle, Label: "A", Text: "Continue"},
-			{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"},
-		}, ftrY)
-		r.Present()
-		return
-	}
-	switch st {
-	case multiDLDownloading:
-		r.DrawFooterHints([]renderer.FooterHint{{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"}}, ftrY)
-	default:
-		r.DrawFooterHints([]renderer.FooterHint{
-			{Kind: renderer.BadgePill, Label: "A/B", Text: "Back"},
-		}, ftrY)
-	}
-	r.Present()
-}
-
-func (s *MultiROMDownloadScreen) HandleEvent(e sdl.Event) Screen {
-	if s.loadState() == multiDLDownloading {
-		switch ev := e.(type) {
-		case *sdl.KeyboardEvent:
-			if ev.Type == sdl.KEYDOWN && ev.Keysym.Sym == sdl.K_ESCAPE {
-				s.Cancel()
-			}
-		case *sdl.ControllerButtonEvent:
-			if ev.Type == sdl.CONTROLLERBUTTONDOWN && ev.Button == sdl.CONTROLLER_BUTTON_A {
-				s.Cancel()
-			}
-		}
-		return s
-	}
-	switch ev := e.(type) {
-	case *sdl.KeyboardEvent:
-		if ev.Type == sdl.KEYDOWN {
-			if s.loadState() == multiDLError && s.inhibitBlocked.Load() {
-				switch ev.Keysym.Sym {
-				case sdl.K_RETURN:
-					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
-					s.startDownloads(true)
-					return s
-				case sdl.K_ESCAPE:
-					return s.prev
-				}
-			}
-			switch ev.Keysym.Sym {
-			case sdl.K_ESCAPE, sdl.K_RETURN:
-				return s.prev
-			}
-		}
-	case *sdl.ControllerButtonEvent:
-		if ev.Type == sdl.CONTROLLERBUTTONDOWN {
-			if s.loadState() == multiDLError && s.inhibitBlocked.Load() {
-				switch ev.Button {
-				case sdl.CONTROLLER_BUTTON_B:
-					atomic.StoreInt32(&s.state, int32(multiDLDownloading))
-					s.startDownloads(true)
-					return s
-				case sdl.CONTROLLER_BUTTON_A:
-					return s.prev
-				}
-			}
-			switch ev.Button {
-			case sdl.CONTROLLER_BUTTON_A, sdl.CONTROLLER_BUTTON_B:
-				return s.prev
-			}
-		}
-	}
-	return s
-}
-
 // IsBusy implements BusyChecker. Returns true while downloads are in flight.
-func (s *MultiROMDownloadScreen) IsBusy() bool {
+func (s *MultiDownloadWorker) IsBusy() bool {
 	return s.loadState() == multiDLDownloading
 }

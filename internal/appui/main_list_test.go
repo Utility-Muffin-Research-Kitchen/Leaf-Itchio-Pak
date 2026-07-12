@@ -29,6 +29,22 @@ func TestMainListNavigationAndIntents(t *testing.T) {
 	}
 }
 
+func TestMainListAlphaJump(t *testing.T) {
+	model := NewMainListModel([]ListItem{
+		{Title: "Alwa's Awakening"}, {Title: "Arkade Boy"},
+		{Title: "Balloon Trip"}, {Title: "Byte Defender"}, {Title: "Cave Crawler"},
+	})
+	model.Sort = "A-Z"
+	model.Handle(InputEvent{Button: ButtonRight, Pressed: true})
+	if model.Cursor != 2 {
+		t.Fatalf("alpha jump right cursor = %d, want 2", model.Cursor)
+	}
+	model.Handle(InputEvent{Button: ButtonLeft, Pressed: true})
+	if model.Cursor != 1 {
+		t.Fatalf("alpha jump left cursor = %d, want 1", model.Cursor)
+	}
+}
+
 func TestMainListLoadingAndErrorGrammar(t *testing.T) {
 	model := NewMainListModel(nil)
 	model.SetLoading()

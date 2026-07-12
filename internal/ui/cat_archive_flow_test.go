@@ -117,7 +117,7 @@ func TestCatArchivePico8SpecialCaseStillAsksForMusic(t *testing.T) {
 }
 
 func TestZIPSelectionDistinguishesNestedEntries(t *testing.T) {
-	screen := &ZIPDownloadScreen{plan: ZIPPlan{DownloadROMs: true,
+	screen := &ArchiveDownloadWorker{plan: ZIPPlan{DownloadROMs: true,
 		SelectedROMs: map[string]string{".gbc": "v2/game.gbc"}}}
 	if screen.shouldExtractROM("v1/game.gbc") {
 		t.Fatal("unselected nested ROM was accepted")

@@ -22,10 +22,8 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
-	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/renderer"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
-	"github.com/veandco/go-sdl2/sdl"
 )
 
 type zipDLState int32
@@ -37,15 +35,14 @@ const (
 	zipDLError
 )
 
-// ZIPDownloadScreen downloads a ZIP to a temp path, extracts ROM and music files
+// ArchiveDownloadWorker downloads a ZIP to a temp path, extracts ROM and music files
 // to their respective destinations, and records all extracted files in inventory.
-type ZIPDownloadScreen struct {
+type ArchiveDownloadWorker struct {
 	client  *itchio.Client
 	cfg     *settings.Config
 	game    itchio.Game
 	detail  *itchio.GameDetail
 	plan    ZIPPlan
-	prev    Screen
 	inv     *inventory.Inventory
 	invPath string
 
@@ -59,30 +56,28 @@ type ZIPDownloadScreen struct {
 	inhibitBlocked atomic.Bool
 }
 
-func (s *ZIPDownloadScreen) loadState() zipDLState {
+func (s *ArchiveDownloadWorker) loadState() zipDLState {
 	return zipDLState(atomic.LoadInt32((*int32)(&s.state)))
 }
-func (s *ZIPDownloadScreen) storeState(st zipDLState) {
+func (s *ArchiveDownloadWorker) storeState(st zipDLState) {
 	atomic.StoreInt32((*int32)(&s.state), int32(st))
 }
 
-func NewZIPDownloadScreen(
+func NewArchiveDownloadWorker(
 	client *itchio.Client, cfg *settings.Config,
 	game itchio.Game, detail *itchio.GameDetail, plan ZIPPlan,
 	inv *inventory.Inventory, invPath string,
-	prev Screen,
-) *ZIPDownloadScreen {
-	s := &ZIPDownloadScreen{
+) *ArchiveDownloadWorker {
+	s := &ArchiveDownloadWorker{
 		client: client, cfg: cfg,
 		game: game, detail: detail, plan: plan,
-		inv: inv, invPath: invPath, prev: prev,
+		inv: inv, invPath: invPath,
 	}
 	go s.run(false)
 	return s
 }
 
-func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
-	defer func() { sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT}) }()
+func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
 	if guardErr != nil {
 		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
@@ -139,7 +134,6 @@ func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
 	}
 
 	s.storeState(zipDLExtracting)
-	sdl.PushEvent(&sdl.UserEvent{Type: sdl.USEREVENT})
 
 	// 7z archives are extracted via sevenzip; everything else uses archive/zip.
 	if strings.ToLower(filepath.Ext(s.plan.Upload.Filename)) == ".7z" {
@@ -275,7 +269,7 @@ func (s *ZIPDownloadScreen) run(allowUninhibited bool) {
 }
 
 // run7z handles extraction for 7z archives using the same plan logic as run().
-func (s *ZIPDownloadScreen) run7z(tmpPath string) {
+func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	r, err := sevenzip.OpenReader(tmpPath)
 	if err != nil {
 		logger.Error("7z-download: open archive: %v", err)
@@ -356,7 +350,7 @@ func (s *ZIPDownloadScreen) run7z(tmpPath string) {
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
 // preserving relative paths into s.plan.Pico8GameDir.
-func (s *ZIPDownloadScreen) extractPico8_7z(r *sevenzip.ReadCloser, now time.Time) {
+func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 	var relevantPaths []string
 	for _, f := range r.File {
@@ -454,7 +448,7 @@ func (s *ZIPDownloadScreen) extractPico8_7z(r *sevenzip.ReadCloser, now time.Tim
 
 // extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
 // Used by run7z so the same inventory/naming logic applies to 7z entries.
-func (s *ZIPDownloadScreen) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
+func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
@@ -521,7 +515,7 @@ func (s *ZIPDownloadScreen) extractROMFromOpener(open func() (io.ReadCloser, err
 }
 
 // extractMusicFromOpener is like extractMusic but takes an opener func.
-func (s *ZIPDownloadScreen) extractMusicFromOpener(open func() (io.ReadCloser, error), baseName string, now time.Time) (string, error) {
+func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), baseName string, now time.Time) (string, error) {
 	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
 		s.musicFailed = true
 		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
@@ -552,7 +546,7 @@ func (s *ZIPDownloadScreen) extractMusicFromOpener(open func() (io.ReadCloser, e
 // whose DestPath matches. Called when extraction is skipped because an identical
 // file already exists — pre-fix entries have SourceArchive="" which causes the
 // update service to incorrectly mark the game as removed.
-func (s *ZIPDownloadScreen) backfillSourceArchive(destPath string) {
+func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 	if s.plan.Upload.Filename == "" {
 		return
 	}
@@ -573,7 +567,7 @@ func (s *ZIPDownloadScreen) backfillSourceArchive(destPath string) {
 
 // findIdenticalFromOpener checks the inventory for a ROM matching the given
 // opener's content. Used by the 7z extraction path.
-func (s *ZIPDownloadScreen) findIdenticalFromOpener(open func() (io.ReadCloser, error), size int64, ext string) string {
+func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadCloser, error), size int64, ext string) string {
 	entry, ok := s.inv.Lookup(s.game.URL)
 	if !ok {
 		return ""
@@ -632,7 +626,7 @@ func classifyWithMagic(baseName string, open func() (io.ReadCloser, error)) (rom
 	return roms.KindROM, stem + detected
 }
 
-func (s *ZIPDownloadScreen) shouldExtractROM(name string) bool {
+func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
 	if !s.plan.DownloadROMs {
 		return false
 	}
@@ -647,7 +641,7 @@ func (s *ZIPDownloadScreen) shouldExtractROM(name string) bool {
 	return chosen == name || chosen == filepath.Base(name)
 }
 
-func (s *ZIPDownloadScreen) extractROM(f *zip.File, baseName string, now time.Time) (string, error) {
+func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now time.Time) (string, error) {
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
@@ -717,7 +711,7 @@ func (s *ZIPDownloadScreen) extractROM(f *zip.File, baseName string, now time.Ti
 	return finalDest, nil
 }
 
-func (s *ZIPDownloadScreen) extractMusic(f *zip.File, baseName string, now time.Time) (string, error) {
+func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now time.Time) (string, error) {
 	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
 		s.musicFailed = true
 		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
@@ -749,7 +743,7 @@ func (s *ZIPDownloadScreen) extractMusic(f *zip.File, baseName string, now time.
 // s.plan.Pico8GameDir, preserving relative paths from the ZIP after stripping
 // any common top-level wrapper directory. Support files (.lua) required by
 // Pico-8 carts are extracted alongside the cartridges.
-func (s *ZIPDownloadScreen) extractPico8ZIP(r *zip.Reader, now time.Time) {
+func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 
 	// Collect all relevant file paths to determine the common prefix to strip.
@@ -861,7 +855,7 @@ func (s *ZIPDownloadScreen) extractPico8ZIP(r *zip.Reader, now time.Time) {
 // for this game that has byte-for-byte identical content to the ZIP entry f.
 // Size is checked first (cheap); MD5 is computed only when sizes match.
 // Returns "" when no identical file is found or the check cannot be performed.
-func (s *ZIPDownloadScreen) findIdenticalROMInInventory(f *zip.File, ext string) string {
+func (s *ArchiveDownloadWorker) findIdenticalROMInInventory(f *zip.File, ext string) string {
 	entry, ok := s.inv.Lookup(s.game.URL)
 	if !ok {
 		return ""
@@ -994,164 +988,8 @@ func commonPathPrefix(paths []string) string {
 	return strings.Join(parts, "/") + "/"
 }
 
-func (s *ZIPDownloadScreen) NeedsRedraw() bool         { return true }
-func (s *ZIPDownloadScreen) HasPendingAnimation() bool { return false }
-
-func (s *ZIPDownloadScreen) Draw(r *renderer.Renderer) {
-	bg := r.Theme.Background
-	r.Clear(bg[0], bg[1], bg[2])
-
-	footerH := int32(52)
-	_, fontH := r.TextSize("Ag")
-	_, smallFH := r.SmallTextSize("Ag")
-	headerH := fontH + smallFH + 16
-
-	hdr := r.Theme.HeaderBG
-	ac := r.Theme.Accent
-	mt := r.Theme.MainText
-	ht := r.Theme.HintText
-	r.DrawRect(0, 0, r.W, headerH, hdr[0], hdr[1], hdr[2])
-	r.DrawRect(0, headerH, r.W, 2, ac[0], ac[1], ac[2])
-	r.DrawText(truncateToWidth(r, s.game.Title, r.W-24), 12, 8, mt[0], mt[1], mt[2])
-	r.DrawSmallText("by "+s.game.Author, 12, 8+fontH+4, ht[0], ht[1], ht[2])
-
-	contentTop := headerH + 10
-	contentH := r.H - headerH - footerH
-	mid := headerH + contentH/2
-
-	switch s.loadState() {
-	case zipDLDownloading:
-		dl := atomic.LoadInt64(&s.downloaded)
-		tot := atomic.LoadInt64(&s.total)
-		r.DrawSmallText(s.plan.Upload.Filename, 20, contentTop+4, ht[0], ht[1], ht[2])
-		barW := r.W - 80
-		r.DrawRect(40, mid-10, barW, 20, 60, 60, 60)
-		if tot > 0 {
-			filled := int32(float64(barW) * float64(dl) / float64(tot))
-			r.DrawRect(40, mid-10, filled, 20, 80, 200, 80)
-			r.DrawText(fmt.Sprintf("%d%%  (%s / %s)", dl*100/tot, humanBytes(dl), humanBytes(tot)),
-				40, mid+18, mt[0], mt[1], mt[2])
-		} else {
-			if dl > 0 {
-				r.DrawRect(40, mid-10, barW/3, 20, 80, 200, 80)
-			}
-			r.DrawText(humanBytes(dl)+" downloaded", 40, mid+18, mt[0], mt[1], mt[2])
-		}
-
-	case zipDLExtracting:
-		r.DrawTextCentered("Extracting", 0, mid-fontH-10, r.W, mt[0], mt[1], mt[2])
-		drawLoadingDots(r, mid+8)
-
-	case zipDLDone:
-		// Centre the title + count block, then list filenames below.
-		const doneGap = int32(8)
-		blockH := fontH + doneGap + smallFH
-		blockY := mid - blockH/2
-		r.DrawTextCentered("Extraction complete!", 0, blockY, r.W, 80, 200, 80)
-		count := fmt.Sprintf("%d file(s) extracted", len(s.extracted))
-		r.DrawSmallTextCentered(count, 0, blockY+fontH+doneGap, r.W, ht[0], ht[1], ht[2])
-
-		// List filenames, capped to available space so they never overflow the footer.
-		rowH := smallFH + 4
-		y := blockY + blockH + 12
-		bottomLimit := r.H - footerH - 8
-		if s.musicFailed {
-			bottomLimit -= rowH // reserve a row for the warning
-		}
-		shown := 0
-		for i, p := range s.extracted {
-			remaining := len(s.extracted) - i
-			// Stop one row early when more items follow so the "…and N more"
-			// summary line fits within bottomLimit.
-			if y+rowH > bottomLimit || (remaining > 1 && y+rowH*2 > bottomLimit) {
-				break
-			}
-			r.DrawSmallTextCentered(truncateSmallToWidth(r, filepath.Base(p), r.W-40), 0, y, r.W, 120, 120, 120)
-			y += rowH
-			shown++
-		}
-		if shown < len(s.extracted) {
-			more := fmt.Sprintf("…and %d more file(s)", len(s.extracted)-shown)
-			r.DrawSmallTextCentered(more, 0, y, r.W, 80, 80, 80)
-		}
-		if s.musicFailed {
-			r.DrawSmallTextCentered("Note: music folder could not be created",
-				0, r.H-footerH-8-smallFH, r.W, 200, 160, 60)
-		}
-
-	case zipDLError:
-		y := contentTop + 8
-		r.DrawText("Extraction failed:", 20, y, 200, 60, 60)
-		y += fontH + 6
-		r.DrawWrappedText(s.err.Error(), 20, y, r.W-40, fontH+4, 200, 100, 100)
-	}
-
-	ftrY := r.DrawFooterBar(footerH)
-	if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
-		r.DrawFooterHints([]renderer.FooterHint{
-			{Kind: renderer.BadgeCircle, Label: "A", Text: "Continue"},
-			{Kind: renderer.BadgeCircle, Label: "B", Text: "Cancel"},
-		}, ftrY)
-		r.Present()
-		return
-	}
-	switch s.loadState() {
-	case zipDLDownloading, zipDLExtracting:
-		r.DrawSmallText("Please wait…", 10, ftrY, ht[0], ht[1], ht[2])
-	default:
-		r.DrawFooterHints([]renderer.FooterHint{
-			{Kind: renderer.BadgePill, Label: "A/B", Text: "Back"},
-		}, ftrY)
-	}
-	r.Present()
-}
-
-func (s *ZIPDownloadScreen) HandleEvent(e sdl.Event) Screen {
-	switch ev := e.(type) {
-	case *sdl.KeyboardEvent:
-		if ev.Type != sdl.KEYDOWN {
-			return s
-		}
-		if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
-			switch ev.Keysym.Sym {
-			case sdl.K_RETURN:
-				s.storeState(zipDLDownloading)
-				go s.run(true)
-				return s
-			case sdl.K_ESCAPE:
-				return s.prev
-			}
-		} else if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
-			switch ev.Keysym.Sym {
-			case sdl.K_ESCAPE, sdl.K_RETURN:
-				return s.prev
-			}
-		}
-	case *sdl.ControllerButtonEvent:
-		if ev.Type != sdl.CONTROLLERBUTTONDOWN {
-			return s
-		}
-		if s.loadState() == zipDLError && s.inhibitBlocked.Load() {
-			switch ev.Button {
-			case sdl.CONTROLLER_BUTTON_B:
-				s.storeState(zipDLDownloading)
-				go s.run(true)
-				return s
-			case sdl.CONTROLLER_BUTTON_A:
-				return s.prev
-			}
-		} else if s.loadState() != zipDLDownloading && s.loadState() != zipDLExtracting {
-			switch ev.Button {
-			case sdl.CONTROLLER_BUTTON_A, sdl.CONTROLLER_BUTTON_B:
-				return s.prev
-			}
-		}
-	}
-	return s
-}
-
 // IsBusy implements BusyChecker. Returns true while download or extraction is in flight.
-func (s *ZIPDownloadScreen) IsBusy() bool {
+func (s *ArchiveDownloadWorker) IsBusy() bool {
 	st := s.loadState()
 	return st == zipDLDownloading || st == zipDLExtracting
 }

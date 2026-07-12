@@ -18,10 +18,10 @@ binding published by Catastrophe.
 - The owning goroutine locks its OS thread before initialization. Every bridge
   operation except `Wake` rejects calls from another OS thread.
 
-The existing screens still use the inherited renderer until their vertical
-slices move in later phases. `--cat-fixtures` is a complete offline
-Catastrophe-owned route in the real executable; it establishes and continuously
-checks the boundary without claiming that the old screens have already moved.
+The inherited Go/SDL renderer and screen interface were removed after the
+vertical slices passed their device gates. Production, developer routes, and
+offline fixtures now share the Catastrophe-owned graph; retained Go catalogue
+and transfer workers expose state only and contain no drawing or SDL event API.
 
 ## Main-loop and worker wake contract
 

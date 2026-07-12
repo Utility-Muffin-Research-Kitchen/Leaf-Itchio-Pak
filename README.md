@@ -53,6 +53,7 @@ cross-compiles with CGo for Linux arm64.
 ```sh
 make test
 make test-race
+make cat-only-audit
 make native
 make mac
 make run-mac

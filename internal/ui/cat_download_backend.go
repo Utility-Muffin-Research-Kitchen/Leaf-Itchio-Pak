@@ -22,7 +22,7 @@ type CatDownloadBackend interface {
 func NewCatDirectDownloadBackend(client *itchio.Client, cfg *settings.Config,
 	game itchio.Game, detail *itchio.GameDetail, upload roms.Upload, dest string,
 	inv *inventory.Inventory, inventoryPath string) CatDownloadBackend {
-	return NewDownloadScreen(client, cfg, game, detail, upload, dest, inv, inventoryPath, nil)
+	return NewDirectDownloadWorker(client, cfg, game, detail, upload, dest, inv, inventoryPath)
 }
 
 func NewCatMultiDownloadBackend(client *itchio.Client, cfg *settings.Config,
@@ -35,16 +35,16 @@ func NewCatMultiDownloadBackend(client *itchio.Client, cfg *settings.Config,
 		}
 		downloads = append(downloads, romDownload{Upload: upload, DestPath: destPaths[index]})
 	}
-	return NewMultiROMDownloadScreen(client, cfg, game, detail, downloads, inv, inventoryPath, nil)
+	return NewMultiDownloadWorker(client, cfg, game, detail, downloads, inv, inventoryPath)
 }
 
 func NewCatArchiveDownloadBackend(client *itchio.Client, cfg *settings.Config,
 	game itchio.Game, detail *itchio.GameDetail, plan ZIPPlan,
 	inv *inventory.Inventory, inventoryPath string) CatDownloadBackend {
-	return NewZIPDownloadScreen(client, cfg, game, detail, plan, inv, inventoryPath, nil)
+	return NewArchiveDownloadWorker(client, cfg, game, detail, plan, inv, inventoryPath)
 }
 
-func (s *DownloadScreen) CatSnapshot() appui.DownloadProgressModel {
+func (s *DirectDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.upload.Filename,
 		Downloaded: atomic.LoadInt64(&s.downloaded), Total: atomic.LoadInt64(&s.total), FileCount: 1,
@@ -68,11 +68,11 @@ func (s *DownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 	return model
 }
 
-func (s *DownloadScreen) CatCancel() { s.Cancel() }
+func (s *DirectDownloadWorker) CatCancel() { s.Cancel() }
 
-func (s *DownloadScreen) CatNeedsLibraryScan() bool { return true }
+func (s *DirectDownloadWorker) CatNeedsLibraryScan() bool { return true }
 
-func (s *DownloadScreen) CatContinueWithoutProtection() {
+func (s *DirectDownloadWorker) CatContinueWithoutProtection() {
 	if s.loadState() != dlError || !s.inhibitBlocked.Load() {
 		return
 	}
@@ -80,7 +80,7 @@ func (s *DownloadScreen) CatContinueWithoutProtection() {
 	s.start(true)
 }
 
-func (s *MultiROMDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
+func (s *MultiDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	index := int(atomic.LoadInt32(&s.currentIdx))
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title,
@@ -109,7 +109,7 @@ func (s *MultiROMDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 	return model
 }
 
-func (s *MultiROMDownloadScreen) CatContinueWithoutProtection() {
+func (s *MultiDownloadWorker) CatContinueWithoutProtection() {
 	if s.loadState() != multiDLError || !s.inhibitBlocked.Load() {
 		return
 	}
@@ -117,11 +117,11 @@ func (s *MultiROMDownloadScreen) CatContinueWithoutProtection() {
 	s.startDownloads(true)
 }
 
-func (s *MultiROMDownloadScreen) CatCancel() { s.Cancel() }
+func (s *MultiDownloadWorker) CatCancel() { s.Cancel() }
 
-func (s *MultiROMDownloadScreen) CatNeedsLibraryScan() bool { return true }
+func (s *MultiDownloadWorker) CatNeedsLibraryScan() bool { return true }
 
-func (s *ZIPDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
+func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.plan.Upload.Filename,
 		Downloaded: atomic.LoadInt64(&s.downloaded), Total: atomic.LoadInt64(&s.total), FileCount: 1, Locked: true,
@@ -144,7 +144,7 @@ func (s *ZIPDownloadScreen) CatSnapshot() appui.DownloadProgressModel {
 	return model
 }
 
-func (s *ZIPDownloadScreen) CatContinueWithoutProtection() {
+func (s *ArchiveDownloadWorker) CatContinueWithoutProtection() {
 	if s.loadState() != zipDLError || !s.inhibitBlocked.Load() {
 		return
 	}
@@ -152,9 +152,9 @@ func (s *ZIPDownloadScreen) CatContinueWithoutProtection() {
 	go s.run(true)
 }
 
-func (s *ZIPDownloadScreen) CatNeedsLibraryScan() bool { return s.plan.DownloadROMs }
+func (s *ArchiveDownloadWorker) CatNeedsLibraryScan() bool { return s.plan.DownloadROMs }
 
 // Archive extraction cannot safely stop halfway through a file set. Cancel is
 // therefore a no-op while busy and the progress screen keeps the operation
 // visible until its protected transaction completes.
-func (s *ZIPDownloadScreen) CatCancel() {}
+func (s *ArchiveDownloadWorker) CatCancel() {}

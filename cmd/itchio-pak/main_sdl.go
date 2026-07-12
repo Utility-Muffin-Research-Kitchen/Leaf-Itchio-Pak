@@ -21,7 +21,6 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
-	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/theme"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
 )
 
@@ -195,9 +194,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	updateSvc.SetSources(sources)
 	updateSvc.Start(nil)
 	defer updateSvc.Stop()
-	legacyTheme := theme.Defaults()
-	list := ui.NewListScreen(client, cfg, cfgPath, nil, cachePath, inv, inventoryPath,
-		updateSvc, legacyTheme, legacyTheme, false, nil, ownedCachePath)
+	list := ui.NewCatalogController(client, cfg, cfgPath, cachePath, inv, inventoryPath,
+		updateSvc, ownedCachePath)
 	list.SetWake(func() { _ = ctx.Wake() })
 	model := appui.NewMainListModel(nil)
 	model.SetLoading()
@@ -969,6 +967,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					if err := openSettings(catRouteList); err != nil {
 						return err
 					}
+				case appui.ListIntentDismissNotice:
+					list.DismissNotice(model.Cursor)
 				}
 			}
 			redraw = true

@@ -1,5 +1,11 @@
 package appui
 
+import (
+	"strings"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
+)
+
 // Button is the renderer-independent control vocabulary used by application
 // screens. Platform adapters translate their native input into these values.
 type Button uint8
@@ -135,10 +141,18 @@ func (m *MainListModel) Handle(event InputEvent) ListIntent {
 		m.Cursor++
 		m.clampCursor()
 	case ButtonLeft:
-		m.Cursor -= page
+		if m.Sort == "A-Z" || m.Sort == "Z-A" {
+			m.Cursor = m.alphaJump(-1)
+		} else {
+			m.Cursor -= page
+		}
 		m.clampCursor()
 	case ButtonRight:
-		m.Cursor += page
+		if m.Sort == "A-Z" || m.Sort == "Z-A" {
+			m.Cursor = m.alphaJump(1)
+		} else {
+			m.Cursor += page
+		}
 		m.clampCursor()
 	case ButtonA:
 		if m.State == ListReady {
@@ -160,6 +174,30 @@ func (m *MainListModel) Handle(event InputEvent) ListIntent {
 		return ListIntentNextSort
 	}
 	return ListIntentNone
+}
+
+func (m *MainListModel) alphaJump(direction int) int {
+	if m.Cursor < 0 || m.Cursor >= len(m.Items) {
+		return m.Cursor
+	}
+	current := firstTitleRune(m.Items[m.Cursor].Title)
+	for index := m.Cursor + direction; index >= 0 && index < len(m.Items); index += direction {
+		if firstTitleRune(m.Items[index].Title) != current {
+			return index
+		}
+	}
+	if direction > 0 {
+		return len(m.Items) - 1
+	}
+	return 0
+}
+
+func firstTitleRune(title string) rune {
+	normalized := strings.ToLower(strings.TrimSpace(text.StripEmoji(title)))
+	for _, value := range normalized {
+		return value
+	}
+	return 0
 }
 
 func (m *MainListModel) clampCursor() {

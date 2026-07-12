@@ -29,7 +29,6 @@ selected by the build. The current Go build list is:
 | `github.com/holoplot/go-evdev` | MIT |
 | `github.com/refraction-networking/utls` | BSD 3-Clause |
 | `github.com/skip2/go-qrcode` | MIT |
-| `github.com/veandco/go-sdl2` | BSD 3-Clause |
 | `golang.org/x/{crypto,image,net,sys,text}` | BSD 3-Clause |
 | `github.com/andybalholm/brotli` | MIT |
 | `github.com/bodgit/{plumbing,sevenzip,windows}` | BSD 3-Clause |
@@ -45,9 +44,9 @@ this human-readable grouping becomes stale. Their upstream license files must
 be included in release notices by the packaging lane.
 
 Catastrophe is an MIT-licensed production dependency through the app-local CGo
-bridge; its license is shipped as `licenses/Catastrophe-LICENSE`. SDL and the
-current Go SDL binding remain listed until the legacy renderer is removed.
-Before the first Pak Rat submission, the
+bridge; its license is shipped as `licenses/Catastrophe-LICENSE`. SDL remains a
+native runtime dependency of Catastrophe; the retired Go SDL binding is no
+longer part of the module graph. Before the first Pak Rat submission, the
 release gate must generate and review a complete dependency/license manifest,
 including native libraries, image decoders, archive readers, and transitive Go
 modules.
