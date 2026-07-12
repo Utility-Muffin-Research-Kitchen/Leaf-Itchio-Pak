@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -529,11 +531,11 @@ func TestFetchGamesFromURL_sendsBrowserHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := itchio.NewClientWithBase(srv.URL)
+	c := itchio.NewClientWithVersion("v0.1.0")
 	c.FetchGamesFromURL(srv.URL + "/games/made-with-gb-studio.xml?page=1")
 
-	if gotUA == "" {
-		t.Error("User-Agent header not sent")
+	if !strings.Contains(gotUA, "Mozilla/5.0") || !strings.Contains(gotUA, "Leaf-Itchio-Pak/v0.1.0") {
+		t.Errorf("User-Agent = %q, want upstream browser identity and Leaf product/version", gotUA)
 	}
 	if gotAccept == "" {
 		t.Error("Accept header not sent")
@@ -543,5 +545,97 @@ func TestFetchGamesFromURL_sendsBrowserHeaders(t *testing.T) {
 	}
 	if gotFetchMode == "" {
 		t.Error("Sec-Fetch-Mode header not sent")
+	}
+}
+
+func TestFetchGamesContextEscapesSearchQuery(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	client := itchio.NewClientWithBase(srv.URL)
+	if _, err := client.FetchGamesContext(context.Background(), 1, "cats & dogs"); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "cats & dogs" {
+		t.Fatalf("decoded query = %q, want %q", gotQuery, "cats & dogs")
+	}
+}
+
+func TestFetchGamesFromURLContext_CancelsInFlightRequest(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClient().FetchGamesFromURLContext(ctx, srv.URL)
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("FetchGamesFromURLContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("in-flight catalogue request ignored cancellation")
+	}
+}
+
+func TestFetchGamesFromURLContext_DoesNotRetryPermanentStatus(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	if _, err := itchio.NewClient().FetchGamesFromURLContext(context.Background(), srv.URL); err == nil {
+		t.Fatal("FetchGamesFromURLContext unexpectedly accepted HTTP 404")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("permanent HTTP status requests = %d, want 1", got)
+	}
+}
+
+func TestFetchGamesFromURLContext_CancelsRetryWait(t *testing.T) {
+	var requests atomic.Int32
+	first := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(first)
+		}
+		http.Error(w, "temporary", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClient().FetchGamesFromURLContext(ctx, srv.URL)
+		done <- err
+	}()
+	<-first
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("retry cancellation error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("catalogue retry wait ignored cancellation")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("requests after cancelling retry wait = %d, want 1", got)
 	}
 }

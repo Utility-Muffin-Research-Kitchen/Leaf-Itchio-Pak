@@ -143,7 +143,7 @@ func runSDL() {
 		logger.Warn("inventory reset: %v", inventoryErr)
 	}
 	inv.VerifyAndCleanWithSources(inventoryPath, runtimeEnv.Sources)
-	client := itchio.NewClient()
+	client := itchio.NewClientWithVersion(version)
 	if err := runCatApp(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
 		runtimeEnv.Sources, catalog); err != nil {
 		logger.Error("Catastrophe app: %v", err)

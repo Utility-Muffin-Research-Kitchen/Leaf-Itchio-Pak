@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -87,5 +89,47 @@ func TestCatalogControllerDismissesUpdateNotice(t *testing.T) {
 	}
 	if _, err := inventory.Load(path); err != nil {
 		t.Fatalf("dismissed inventory was not persisted: %v", err)
+	}
+}
+
+func TestCacheAgeLabel(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		age  time.Duration
+		want string
+	}{
+		{name: "fresh", age: 10 * time.Second, want: "Cache now"},
+		{name: "minutes", age: 17 * time.Minute, want: "Cache 17m old"},
+		{name: "hours", age: 7 * time.Hour, want: "Cache 7h old"},
+		{name: "days", age: 3 * 24 * time.Hour, want: "Cache 3d old"},
+		{name: "dated", age: 45 * 24 * time.Hour, want: "Cache 2026-05-28"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := cacheAgeLabel(now, now.Add(-test.age).Unix()); got != test.want {
+				t.Fatalf("cacheAgeLabel = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestBackgroundRefreshKeepsCommittedCacheOnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	controller := &CatalogController{
+		client:        itchio.NewClientWithBase(srv.URL),
+		cachePath:     filepath.Join(t.TempDir(), "games_cache.json"),
+		cacheUpdateCh: make(chan []itchio.Game, 1),
+	}
+	controller.cacheCommitted.Store(true)
+	controller.buildCache()
+	select {
+	case partial := <-controller.cacheUpdateCh:
+		t.Fatalf("failed refresh replaced committed cache with %d partial games", len(partial))
+	default:
 	}
 }

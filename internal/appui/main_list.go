@@ -73,6 +73,7 @@ type MainListModel struct {
 	ErrorDetail string
 	Platform    string
 	Sort        string
+	CacheStatus string
 }
 
 func NewMainListModel(items []ListItem) *MainListModel {

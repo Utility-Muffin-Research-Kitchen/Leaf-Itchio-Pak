@@ -104,6 +104,9 @@ func (screen *MainListScreen) Draw() error {
 		sort = "Newest"
 	}
 	subtitle := fmt.Sprintf("%s  ·  %s  ·  %d games", platform, sort, len(screen.model.Items))
+	if screen.model.CacheStatus != "" {
+		subtitle += "  ·  " + screen.model.CacheStatus
+	}
 	if err := screen.ui.DrawSubHeader(frame.Layout.SubHeader, subtitle); err != nil {
 		return err
 	}
@@ -238,10 +241,13 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 	}
 	items := fixtureListItems()
 	model := appui.NewMainListModel(items)
+	model.CacheStatus = "Cache 2h old"
 	switch strings.ToLower(config.State) {
 	case "loading":
+		model.CacheStatus = ""
 		model.SetLoading()
 	case "error":
+		model.CacheStatus = ""
 		model.SetError("Cloudflare blocked the feed. Visit itch.io on this network, then retry.")
 	case "empty":
 		model.SetItems(nil)

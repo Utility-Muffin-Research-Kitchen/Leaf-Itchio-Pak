@@ -51,9 +51,11 @@ type CatalogController struct {
 	inventoryPath string
 	updateSvc     UpdateServicer
 
-	cacheBuilding atomic.Bool
-	cacheUpdateCh chan []itchio.Game
-	needsRebuild  bool
+	cacheBuilding  atomic.Bool
+	cacheUpdateCh  chan []itchio.Game
+	needsRebuild   bool
+	cacheFetched   atomic.Int64
+	cacheCommitted atomic.Bool
 
 	ownedUpdateCh   chan map[string]bool
 	ownedURLs       map[string]bool
@@ -112,6 +114,8 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 			time.Since(gameCache.Meta.FetchedAt).Round(time.Second))
 		controller.cachedGames = gameCache.Games
 		controller.cacheReady = true
+		controller.cacheFetched.Store(gameCache.Meta.FetchedAt.Unix())
+		controller.cacheCommitted.Store(true)
 		controller.rebuildView()
 		if !gameCache.CurrentRevision() {
 			logger.Info("cache: catalogue revision %d is older than %d; refreshing platform coverage in background",
@@ -240,6 +244,7 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 		model.Platform = controller.platformFilter
 	}
 	model.Sort = itchio.SortModeBadge(controller.sortMode)
+	model.CacheStatus = cacheAgeLabel(time.Now(), controller.cacheFetched.Load())
 	if controller.loading.Load() {
 		model.SetLoading()
 		return
@@ -300,6 +305,8 @@ func (controller *CatalogController) DismissNotice(index int) {
 func (controller *CatalogController) RetryCatLoad() { go controller.loadPage(1, "") }
 
 func (controller *CatalogController) ApplyCatCache(games []itchio.Game) {
+	controller.cacheFetched.Store(time.Now().Unix())
+	controller.cacheCommitted.Store(true)
 	snapshot := append([]itchio.Game(nil), games...)
 	select {
 	case controller.cacheUpdateCh <- snapshot:
@@ -454,6 +461,12 @@ func (controller *CatalogController) buildCache() {
 	defer controller.cacheBuilding.Store(false)
 	logger.Info("cache: starting background full fetch")
 	games, err := controller.client.FetchAllGames(context.Background(), func(partial []itchio.Game) {
+		// A partial background refresh must never replace a complete on-disk
+		// catalogue. Progressive results are useful only during first launch,
+		// before any committed cache exists.
+		if controller.cacheCommitted.Load() {
+			return
+		}
 		snapshot := append([]itchio.Game(nil), partial...)
 		select {
 		case controller.cacheUpdateCh <- snapshot:
@@ -471,6 +484,29 @@ func (controller *CatalogController) buildCache() {
 	}
 	logger.Info("cache: saved %d games to %s", len(games), controller.cachePath)
 	controller.ApplyCatCache(games)
+}
+
+func cacheAgeLabel(now time.Time, fetchedUnix int64) string {
+	if fetchedUnix <= 0 {
+		return ""
+	}
+	fetched := time.Unix(fetchedUnix, 0)
+	age := now.Sub(fetched)
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age < time.Minute:
+		return "Cache now"
+	case age < time.Hour:
+		return "Cache " + strconv.Itoa(int(age/time.Minute)) + "m old"
+	case age < 48*time.Hour:
+		return "Cache " + strconv.Itoa(int(age/time.Hour)) + "h old"
+	case age < 30*24*time.Hour:
+		return "Cache " + strconv.Itoa(int(age/(24*time.Hour))) + "d old"
+	default:
+		return "Cache " + fetched.Format("2006-01-02")
+	}
 }
 
 func (controller *CatalogController) refreshCacheIfStale(fetchedAt time.Time) {
