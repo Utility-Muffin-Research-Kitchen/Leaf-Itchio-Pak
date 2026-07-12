@@ -265,7 +265,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.SetConfirm("Store an itch.io API key?", []string{
 				"The key is stored in App Data on the SD card.",
 				"FAT32 cannot protect it from someone with physical access to the card.",
-				"The key is masked in the UI and redacted from logs.",
+				"Settings shows only a suffix; editing starts blank and typed characters are visible.",
+				"The complete key is redacted from logs.",
 			})
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)

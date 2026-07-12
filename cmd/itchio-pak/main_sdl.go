@@ -69,6 +69,7 @@ func runSDL() {
 		logger.Error("leaf runtime: %v", err)
 		os.Exit(1)
 	}
+	registerRuntimeLogPaths(runtimeEnv)
 	if err := leaf.ConfigureDaemon(runtimeEnv); err != nil {
 		logger.Warn("leaf daemon: %v", err)
 	}
@@ -151,9 +152,22 @@ func runSDL() {
 	}
 }
 
+func registerRuntimeLogPaths(runtimeEnv leaf.Environment) {
+	logger.RegisterPrivatePath(runtimeEnv.StateDir(), "[APP-DATA]")
+	logger.RegisterPrivatePath(runtimeEnv.LogsPath, "[LOGS]")
+	logger.RegisterPrivatePath(runtimeEnv.UserdataPath, "[USERDATA]")
+	logger.RegisterPrivatePath(runtimeEnv.PlatformPath, "[LEAF-PLATFORM]")
+	logger.RegisterPrivatePath(runtimeEnv.InternalDataPath, "[LEAF-CONTROL]")
+	logger.RegisterPrivatePath(runtimeEnv.RuntimePath, "[JAWAKA-RUNTIME]")
+	for _, source := range runtimeEnv.Sources {
+		logger.RegisterPrivatePath(source.Root, "[SD:"+source.ID+"]")
+	}
+}
+
 func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, ownedCachePath string,
 	inv *inventory.Inventory, inventoryPath string, sources leaf.SourceList, catalog *leaf.Catalog) error {
 	resourceDir := os.Getenv("ITCHIO_RES_DIR")
+	logger.RegisterPrivatePath(resourceDir, "[RES]")
 	fontPath := os.Getenv("CAT_FONT_PATH")
 	if fontPath == "" && resourceDir != "" {
 		fontPath = filepath.Join(resourceDir, "font.ttf")

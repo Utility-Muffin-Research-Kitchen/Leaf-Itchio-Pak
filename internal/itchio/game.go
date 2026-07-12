@@ -266,7 +266,7 @@ func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) 
 	logger.Debug("download-page: fetching signed download page")
 	resp, err := c.http.Get(pageURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch download page: %w", err)
+		return nil, safeRequestError("fetch download page", err)
 	}
 	defer resp.Body.Close()
 

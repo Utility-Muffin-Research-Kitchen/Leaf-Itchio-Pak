@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bodgit/sevenzip"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/bodgit/sevenzip"
 )
 
 // InspectRemote7z downloads the 7z archive at cdnURL to a temporary file,
@@ -28,7 +28,7 @@ func InspectRemote7z(client *http.Client, cdnURL string) (ZIPManifest, error) {
 
 	resp, err := client.Get(cdnURL)
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("download 7z: %w", err)
+		return ZIPManifest{}, remoteRequestError("download 7z", err)
 	}
 	defer resp.Body.Close()
 

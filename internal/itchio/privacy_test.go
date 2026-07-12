@@ -83,7 +83,76 @@ func TestResolverErrorBodyCannotLeakSignedURLCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("ResolveFreeURL returned nil for HTTP 502")
 	}
-	if strings.Contains(buf.String(), signature) {
+	if strings.Contains(buf.String(), signature) || strings.Contains(err.Error(), signature) {
 		t.Errorf("resolver response leaked its signed credential:\n%s", buf.String())
+	}
+}
+
+func TestCredentialBearingRequestURLsStayOutOfReturnedErrors(t *testing.T) {
+	const (
+		apiKey     = "phase94-error-api-3fa8"
+		downloadID = "phase94-download-id-52ce"
+		signature  = "phase94-error-signature-1bd7"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+
+	client := itchio.NewClientWithBase(base)
+	_, headerErr := client.FetchFileHeader(base+"/game.zip?X-Amz-Signature="+signature, 8)
+	_, uploadsErr := client.FetchUploadsForKey(apiKey, "7", downloadID)
+	for name, err := range map[string]error{"signed header": headerErr, "owned uploads": uploadsErr} {
+		if err == nil {
+			t.Fatalf("%s request unexpectedly succeeded", name)
+		}
+		for _, forbidden := range []string{apiKey, downloadID, signature, base} {
+			if strings.Contains(err.Error(), forbidden) {
+				t.Errorf("%s error leaked %q: %v", name, forbidden, err)
+			}
+		}
+	}
+}
+
+func TestAPIValidationDoesNotLogAccountOrCredentialMaterial(t *testing.T) {
+	const (
+		apiKey   = "phase94-validation-api-4da2"
+		username = "phase94-private-account"
+		cookie   = "phase94-profile-cookie-83bc"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Errorf("Authorization header = %q", got)
+		}
+		switch r.URL.Path {
+		case "/profile":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: cookie})
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]string{"username": username}})
+		case "/profile/owned-keys":
+			_, _ = w.Write([]byte(`{"owned_keys":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	buf := captureDebugLog(t)
+	logger.RegisterSecret(apiKey, "[API-KEY]")
+	t.Cleanup(func() { logger.RemoveSecret("[API-KEY]") })
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
+	gotUsername, _, err := client.ValidateAPIKey(apiKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUsername != username {
+		t.Fatalf("returned username = %q, want %q", gotUsername, username)
+	}
+	out := buf.String()
+	for _, forbidden := range []string{apiKey, username, cookie, "Authorization: Bearer"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("validation log leaked %q:\n%s", forbidden, out)
+		}
+	}
+	if !strings.Contains(out, "authenticated itch.io account") {
+		t.Errorf("sanitized authentication diagnostic missing:\n%s", out)
 	}
 }

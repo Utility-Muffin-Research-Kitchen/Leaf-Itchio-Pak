@@ -211,7 +211,7 @@ func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (stri
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("resolve CDN URL: %w", err)
+		return "", safeRequestError("resolve CDN URL", err)
 	}
 	defer resp.Body.Close()
 
@@ -222,7 +222,7 @@ func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (stri
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("uploads: resolver HTTP %d: %.200s", resp.StatusCode, rawBody)
-		return "", fmt.Errorf("resolve CDN URL: HTTP %d: %.200s", resp.StatusCode, rawBody)
+		return "", fmt.Errorf("resolve CDN URL: HTTP %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -231,11 +231,11 @@ func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (stri
 	}
 	if err := json.Unmarshal(rawBody, &result); err != nil {
 		logger.Error("uploads: parse resolver response: %v (body: %.200s)", err, rawBody)
-		return "", fmt.Errorf("parse CDN URL response: %w (body: %.200s)", err, rawBody)
+		return "", fmt.Errorf("parse CDN URL response: %w", err)
 	}
 	if len(result.Errors) > 0 {
 		logger.Error("uploads: resolver error: %s", strings.Join(result.Errors, "; "))
-		return "", fmt.Errorf("resolver error: %s", strings.Join(result.Errors, "; "))
+		return "", fmt.Errorf("resolver rejected the download request")
 	}
 	if result.URL == "" {
 		logger.Error("uploads: empty CDN URL from resolver (file may require purchase)")
@@ -288,7 +288,7 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	}
 	resp, err := dlClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch file: %w", err)
+		return safeRequestError("fetch file", err)
 	}
 	defer resp.Body.Close()
 
@@ -373,7 +373,7 @@ func (c *Client) FetchFileHeader(cdnURL string, n int) ([]byte, error) {
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", n-1))
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("header fetch: %w", err)
+		return nil, safeRequestError("header fetch", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {

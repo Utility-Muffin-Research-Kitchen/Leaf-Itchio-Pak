@@ -67,7 +67,7 @@ func (c *Client) FetchOwnedKeys(apiKey, gameID string) ([]OwnedKey, error) {
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("fetch owned keys (page %d): %w", page, err)
+			return nil, safeRequestError(fmt.Sprintf("fetch owned keys page %d", page), err)
 		}
 
 		// itch.io returns {"owned_keys":{}} (object, not array) on the last page.
@@ -190,7 +190,7 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 
 	resp, err := c.http.Get(uploadsURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch uploads: %w", err)
+		return nil, safeRequestError("fetch owned uploads", err)
 	}
 	defer resp.Body.Close()
 
@@ -273,7 +273,7 @@ func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, do
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("resolve auth CDN URL: %w", err)
+		return "", safeRequestError("resolve authenticated CDN URL", err)
 	}
 	defer resp.Body.Close()
 
@@ -291,7 +291,7 @@ func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, do
 	}
 	if len(result.Errors) > 0 {
 		logger.Error("auth: CDN error: %s", strings.Join(result.Errors, "; "))
-		return "", fmt.Errorf("auth CDN error: %s", strings.Join(result.Errors, "; "))
+		return "", fmt.Errorf("authenticated CDN resolver rejected the request")
 	}
 	if result.URL == "" {
 		logger.Error("auth: empty CDN URL from resolver")

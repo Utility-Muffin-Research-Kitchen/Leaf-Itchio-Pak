@@ -124,7 +124,8 @@ func (flow *CatSettingsFlow) Activate(model *appui.SettingsModel) (CatSettingsAc
 			model.SetConfirm("Store an itch.io API key?", []string{
 				"The key is stored in App Data on the SD card.",
 				"FAT32 cannot protect it from someone with physical access to the card.",
-				"The key is masked in the UI and redacted from logs.",
+				"Settings shows only a suffix; editing starts blank and typed characters are visible.",
+				"The complete key is redacted from logs.",
 			})
 			return CatSettingsNone, nil
 		}
@@ -272,7 +273,7 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 		flow.validating.Store(false)
 		if result.err != nil {
 			flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusRejected)
-			model.SetError("API key validation failed. The masked key remains stored so it can be edited or removed.")
+			model.SetError("API key validation failed. The stored key remains available to replace or remove.")
 			return true
 		}
 		flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusWorking)
@@ -295,7 +296,7 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 }
 
 func (flow *CatSettingsFlow) startAPIValidation(model *appui.SettingsModel, key string) {
-	model.State, model.Message = appui.SettingsWorking, "Validating the masked API key with itch.io…"
+	model.State, model.Message = appui.SettingsWorking, "Validating the stored API key with itch.io…"
 	generation := flow.apiGeneration.Add(1)
 	flow.validating.Store(true)
 	go func() {

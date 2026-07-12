@@ -194,6 +194,24 @@ func productUserAgent(version string) string {
 	return fmt.Sprintf("%s %s/%s", browserUserAgent, productName, version)
 }
 
+// safeRequestError keeps credential-bearing request URLs out of UI/crash
+// messages while retaining the full failure in the local, redacted debug log.
+// Cancellation identity is preserved for transaction rollback logic.
+func safeRequestError(operation string, err error) error {
+	logger.Debug("%s request failed: %v", operation, err)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("%s: %w", operation, context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return fmt.Errorf("%s: network timeout", operation)
+	}
+	return fmt.Errorf("%s: network request failed", operation)
+}
+
 func newHTTPClient(version string) *http.Client {
 	jar, _ := cookiejar.New(nil)
 	h2t := &http2.Transport{

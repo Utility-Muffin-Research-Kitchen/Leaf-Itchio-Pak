@@ -77,7 +77,7 @@ func (r *rangeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", off, fetchEnd))
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, remoteRequestError("remote ZIP range", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent {
@@ -209,7 +209,7 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 
 	resp, err := client.Get(cdnURL)
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("full download: %w", err)
+		return ZIPManifest{}, remoteRequestError("remote ZIP download", err)
 	}
 	defer resp.Body.Close()
 
