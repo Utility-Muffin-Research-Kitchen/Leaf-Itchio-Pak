@@ -566,6 +566,8 @@ static catui_texture_slot *catui__texture_slot(catui_texture_id id) {
     return slot->texture && slot->generation == generation ? slot : NULL;
 }
 
+int catui_texture_capacity(void) { return CATUI_TEXTURE_CAP; }
+
 static catui_texture_id catui__store_texture(SDL_Texture *texture, int width, int height) {
     if (!texture) return 0;
     for (int i = 0; i < CATUI_TEXTURE_CAP; i++) {

@@ -484,6 +484,22 @@ func (c *Context) TextureFromImage(source image.Image) (*Texture, error) {
 	return texture, nil
 }
 
+func (c *Context) TextureCapacity() int {
+	if c == nil || c.ensureOpen() != nil {
+		return 0
+	}
+	return int(C.catui_texture_capacity())
+}
+
+func (c *Context) TextureCount() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.textures)
+}
+
 func (c *Context) LoadTexture(path string) (*Texture, error) {
 	if err := c.ensureOpen(); err != nil {
 		return nil, err

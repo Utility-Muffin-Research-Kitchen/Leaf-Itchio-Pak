@@ -104,7 +104,12 @@ type ImageCache struct {
 	ready    chan decodedImage
 	sem      chan struct{}
 	notify   func()
+	// frameCount counts textures owned by cached artwork. The bridge registry
+	// also contains QR/detail textures, so cache uploads retain a fixed margin.
+	frameCount int
 }
+
+const imageCacheTextureReserve = 32
 
 func NewImageCache(maximum int, client *http.Client) *ImageCache {
 	if maximum < 1 {
@@ -189,7 +194,11 @@ func (c *ImageCache) ProcessPending(ctx *Context) (bool, error) {
 		select {
 		case decoded := <-c.ready:
 			if err := c.insert(ctx, decoded.key, decoded.image); err != nil {
-				return uploaded, err
+				c.mu.Lock()
+				c.failed[decoded.key] = struct{}{}
+				c.mu.Unlock()
+				logger.Warn("catui image cache: skipping artwork %s after upload failure: %v", decoded.key, err)
+				continue
 			}
 			uploaded = true
 		default:
@@ -246,29 +255,63 @@ func (c *ImageCache) Clear() {
 	}
 	c.lru.Init()
 	c.items = make(map[string]*list.Element)
+	c.frameCount = 0
 }
 
 func (c *ImageCache) insert(ctx *Context, key string, decoded *media.DecodedImage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing, ok := c.items[key]; ok {
+		c.removeLocked(existing)
+	}
+	incomingFrames := 0
+	if decoded != nil {
+		incomingFrames = len(decoded.Frames)
+	}
+	capacity := 0
+	otherTextures := 0
+	if ctx != nil {
+		capacity = ctx.TextureCapacity()
+		otherTextures = ctx.TextureCount() - c.frameCount
+		if otherTextures < 0 {
+			otherTextures = 0
+		}
+	}
+	budget := capacity - imageCacheTextureReserve - otherTextures
+	if budget < 1 || incomingFrames < 1 || !c.reserveLocked(incomingFrames, budget) {
+		return fmt.Errorf("catui image cache: texture budget exhausted (incoming=%d cached=%d budget=%d)",
+			incomingFrames, c.frameCount, budget)
+	}
 	animation, err := newAnimatedTexture(ctx, decoded)
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if existing, ok := c.items[key]; ok {
-		existing.Value.(*catImageEntry).animation.destroy()
-		c.lru.Remove(existing)
-	}
 	element := c.lru.PushFront(&catImageEntry{key: key, animation: animation})
 	c.items[key] = element
-	for c.lru.Len() > c.maximum {
-		back := c.lru.Back()
-		entry := back.Value.(*catImageEntry)
-		entry.animation.destroy()
-		delete(c.items, entry.key)
-		c.lru.Remove(back)
-	}
+	c.frameCount += len(animation.frames)
 	return nil
+}
+
+func (c *ImageCache) reserveLocked(incomingFrames, budget int) bool {
+	for c.lru.Len() > 0 && (c.lru.Len() >= c.maximum || c.frameCount+incomingFrames > budget) {
+		c.removeLocked(c.lru.Back())
+	}
+	return c.frameCount+incomingFrames <= budget
+}
+
+func (c *ImageCache) removeLocked(element *list.Element) {
+	if element == nil {
+		return
+	}
+	entry := element.Value.(*catImageEntry)
+	frames := len(entry.animation.frames)
+	entry.animation.destroy()
+	delete(c.items, entry.key)
+	c.lru.Remove(element)
+	c.frameCount -= frames
+	if c.frameCount < 0 {
+		c.frameCount = 0
+	}
 }
 
 func (c *ImageCache) fetch(key string) {
