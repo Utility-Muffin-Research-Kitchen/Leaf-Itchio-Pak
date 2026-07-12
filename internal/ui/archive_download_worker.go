@@ -180,8 +180,8 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		if len(s.extracted) > 0 {
 			gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 
-			// Cover art: artRef is <gameDir>.p8 so CoverArtPath places the image
-			// in the PARENT directory's .media/ — where Jawaka looks for directory art.
+			// Cover art: artRef is <gameDir>.p8 so the canonical image uses the
+			// directory name as its Jawaka-visible ROM stem.
 			artRef := gameDir + ".p8"
 			artwork := ensureROMArtwork(s.client, s.inv, s.game, artRef)
 			if artwork.Path != "" {

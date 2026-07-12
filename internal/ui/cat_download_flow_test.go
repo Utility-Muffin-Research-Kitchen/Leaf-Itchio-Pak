@@ -18,11 +18,13 @@ func newCatDownloadFlowForTest(t *testing.T) (*CatDownloadFlow, *appui.DownloadS
 	t.Helper()
 	root := t.TempDir()
 	systems := map[string]string{}
+	images := map[string]string{}
 	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		systems[id] = filepath.Join(root, "Roms", id)
+		images[id] = filepath.Join(root, "Images", id)
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
-		SystemDirs: systems, SourceID: "primary", PrimaryRoot: root,
+		SystemDirs: systems, ImageDirs: images, SourceID: "primary", PrimaryRoot: root,
 		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
 	}); err != nil {
 		t.Fatal(err)

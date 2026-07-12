@@ -88,6 +88,7 @@ func runSDL() {
 		os.Exit(1)
 	}
 	systemDirs := make(map[string]string, 7)
+	imageDirs := make(map[string]string, 7)
 	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		dir, resolveErr := catalog.ROMDir(primary, id)
 		if resolveErr != nil {
@@ -95,10 +96,17 @@ func runSDL() {
 			os.Exit(1)
 		}
 		systemDirs[id] = dir
+		imageDir, resolveErr := catalog.ImageDir(primary, id)
+		if resolveErr != nil {
+			logger.Error("leaf systems: %v", resolveErr)
+			os.Exit(1)
+		}
+		imageDirs[id] = imageDir
 	}
 	sourcePaths := make([]roms.SourcePathConfig, 0, len(runtimeEnv.Sources))
 	for _, source := range runtimeEnv.Sources {
 		dirs := make(map[string]string, 7)
+		images := make(map[string]string, 7)
 		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 			dir, resolveErr := catalog.ROMDir(source, id)
 			if resolveErr != nil {
@@ -106,14 +114,21 @@ func runSDL() {
 				os.Exit(1)
 			}
 			dirs[id] = dir
+			imageDir, resolveErr := catalog.ImageDir(source, id)
+			if resolveErr != nil {
+				logger.Error("leaf systems: source %s: %v", source.ID, resolveErr)
+				os.Exit(1)
+			}
+			images[id] = imageDir
 		}
 		sourcePaths = append(sourcePaths, roms.SourcePathConfig{
 			SourceID: source.ID, Root: source.Root, MusicRoot: source.MusicPath,
-			StatesRoot: source.StatesPath, SystemDirs: dirs,
+			StatesRoot: source.StatesPath, SystemDirs: dirs, ImageDirs: images,
 		})
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
 		SystemDirs:  systemDirs,
+		ImageDirs:   imageDirs,
 		SourceID:    primary.ID,
 		PrimaryRoot: primary.Root,
 		MusicRoot:   primary.MusicPath,
@@ -206,6 +221,11 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	imageCache.SetNotify(func() { _ = ctx.Wake() })
 	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() { _ = ctx.Wake() })
 	updateSvc.SetSources(sources)
+	updateSvc.SetLibraryScanRequester(func() (string, error) {
+		requestCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return leaf.RequestLibraryScan(requestCtx)
+	})
 	updateSvc.Start(nil)
 	defer updateSvc.Stop()
 	list := ui.NewCatalogController(client, cfg, cfgPath, cachePath, inv, inventoryPath,

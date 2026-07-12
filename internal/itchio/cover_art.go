@@ -11,24 +11,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/media"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 type ArtworkResult struct {
 	Path    string
 	SHA256  string
 	Created bool
-}
-
-// coverArtBasename returns the exact ROM filename stem (no extension).
-// Jawaka's cover art lookup matches on the full stem including tags like [v1.2],
-// even though it strips those tags for the display name in the ROM browser.
-func coverArtBasename(romDestPath string) string {
-	return strings.TrimSuffix(filepath.Base(romDestPath), filepath.Ext(romDestPath))
 }
 
 func artworkFileResult(path string, created bool) (ArtworkResult, error) {
@@ -70,10 +63,11 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	}
 	defer lease.Release()
 
-	dir := filepath.Dir(romDestPath)
-	mediaDir := filepath.Join(dir, ".media")
-	base := coverArtBasename(romDestPath)
-	artPath := filepath.Join(mediaDir, base+".png")
+	artPath := roms.ArtworkPath(romDestPath)
+	if artPath == "" {
+		return ArtworkResult{}, fmt.Errorf("cover-art: ROM is outside a configured Leaf system")
+	}
+	mediaDir := filepath.Dir(artPath)
 	if existing, found, err := existingArtwork(artPath); found || err != nil {
 		if err == nil {
 			logger.Info("cover-art: preserving existing user artwork %s", artPath)
@@ -156,20 +150,21 @@ func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
 	return err
 }
 
-// CopyCoverArt copies the ROM file at romDestPath into the .media/ directory
-// alongside it, using the same art filename that DownloadCoverArt would produce.
-// Used for .p8.png cartridges, which are themselves valid PNG images — no
-// separate network request is needed.
+// EnsureCopiedCoverArt copies the ROM file into Jawaka's source-local canonical
+// image directory, using the same art filename that EnsureCoverArt would
+// produce. Used for .p8.png cartridges, which are themselves valid PNG images
+// and need no separate network request.
 func EnsureCopiedCoverArt(romDestPath string) (ArtworkResult, error) {
 	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
 	if guardErr != nil {
 		return ArtworkResult{}, fmt.Errorf("protect artwork conversion: %w", guardErr)
 	}
 	defer lease.Release()
-	dir := filepath.Dir(romDestPath)
-	mediaDir := filepath.Join(dir, ".media")
-	base := coverArtBasename(romDestPath)
-	artPath := filepath.Join(mediaDir, base+".png")
+	artPath := roms.ArtworkPath(romDestPath)
+	if artPath == "" {
+		return ArtworkResult{}, fmt.Errorf("cover-art: ROM is outside a configured Leaf system")
+	}
+	mediaDir := filepath.Dir(artPath)
 	if existing, found, err := existingArtwork(artPath); found || err != nil {
 		if err == nil {
 			logger.Info("cover-art: preserving existing user artwork %s", artPath)

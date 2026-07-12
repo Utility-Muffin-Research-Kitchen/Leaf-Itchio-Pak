@@ -19,20 +19,26 @@ func configureManageFixture(t *testing.T, sources leaf.SourceList, catalog *leaf
 	configs := make([]roms.SourcePathConfig, 0, len(sources))
 	for _, source := range sources {
 		dirs := make(map[string]string)
+		images := make(map[string]string)
 		for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 			dir, err := catalog.ROMDir(source, id)
 			if err != nil {
 				t.Fatal(err)
 			}
 			dirs[id] = dir
+			imageDir, err := catalog.ImageDir(source, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			images[id] = imageDir
 		}
 		configs = append(configs, roms.SourcePathConfig{
 			SourceID: source.ID, Root: source.Root, MusicRoot: source.MusicPath,
-			StatesRoot: source.StatesPath, SystemDirs: dirs,
+			StatesRoot: source.StatesPath, SystemDirs: dirs, ImageDirs: images,
 		})
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
-		SystemDirs: configs[0].SystemDirs, SourceID: sources[0].ID, PrimaryRoot: sources[0].Root,
+		SystemDirs: configs[0].SystemDirs, ImageDirs: configs[0].ImageDirs, SourceID: sources[0].ID, PrimaryRoot: sources[0].Root,
 		MusicRoot: sources[0].MusicPath, StatesRoot: sources[0].StatesPath, Sources: configs,
 	}); err != nil {
 		t.Fatal(err)
@@ -59,11 +65,14 @@ func TestCatManageDeletesSourceOwnedFile(t *testing.T) {
 	gameURL := "https://example.invalid/game"
 	romPath := filepath.Join(sources[0].RomsPath, "GBC", "Game.gbc")
 	addManagedROM(t, inv, gameURL, "Game", romPath)
-	mediaDir := filepath.Join(filepath.Dir(romPath), ".media")
-	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
+	imageDir, err := catalog.ImageDir(sources[0], "GBC")
+	if err != nil {
 		t.Fatal(err)
 	}
-	userArt := filepath.Join(mediaDir, "Game.png")
+	if err := os.MkdirAll(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userArt := filepath.Join(imageDir, "Game.png")
 	if err := os.WriteFile(userArt, []byte("user art"), 0o644); err != nil {
 		t.Fatal(err)
 	}

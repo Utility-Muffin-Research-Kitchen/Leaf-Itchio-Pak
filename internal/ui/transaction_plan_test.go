@@ -25,8 +25,10 @@ func transactionPaths(t *testing.T) (string, string) {
 		id, root string
 	}{{"primary", primary}, {"secondary_sd", secondary}} {
 		dirs := make(map[string]string, len(systems))
+		images := make(map[string]string, len(systems))
 		for _, system := range systems {
 			dirs[system] = filepath.Join(source.root, "Roms", system)
+			images[system] = filepath.Join(source.root, "Images", system)
 			if err := os.MkdirAll(dirs[system], 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -37,12 +39,13 @@ func transactionPaths(t *testing.T) (string, string) {
 		}
 		configs = append(configs, roms.SourcePathConfig{
 			SourceID: source.id, Root: source.root, MusicRoot: music,
-			StatesRoot: filepath.Join(source.root, "States"), SystemDirs: dirs,
+			StatesRoot: filepath.Join(source.root, "States"), SystemDirs: dirs, ImageDirs: images,
 		})
 	}
 	if err := roms.ConfigurePaths(roms.PathConfig{
 		SourceID: "primary", PrimaryRoot: primary, MusicRoot: configs[0].MusicRoot,
-		StatesRoot: configs[0].StatesRoot, SystemDirs: configs[0].SystemDirs, Sources: configs,
+		StatesRoot: configs[0].StatesRoot, SystemDirs: configs[0].SystemDirs,
+		ImageDirs: configs[0].ImageDirs, Sources: configs,
 	}); err != nil {
 		t.Fatal(err)
 	}

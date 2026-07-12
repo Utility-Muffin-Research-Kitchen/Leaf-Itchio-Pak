@@ -17,7 +17,26 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func configureArtworkRoot(t *testing.T, root string) string {
+	t.Helper()
+	systemDirs := make(map[string]string)
+	imageDirs := make(map[string]string)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systemDirs[id] = filepath.Join(root, "unused", id)
+		imageDirs[id] = filepath.Join(root, "Images", id)
+	}
+	systemDirs["GB"] = root
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: systemDirs, ImageDirs: imageDirs, SourceID: "primary", PrimaryRoot: root,
+		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return imageDirs["GB"]
+}
 
 // minimalJPEG encodes a 1×1 white pixel as a JPEG.
 func minimalJPEG() []byte {
@@ -46,17 +65,18 @@ func minimalGIF() []byte {
 }
 
 // TestDownloadCoverArtEmptyURL verifies that an empty coverURL is a no-op
-// and does not create the .media directory.
+// and does not create the canonical image directory.
 func TestDownloadCoverArtEmptyURL(t *testing.T) {
 	c := itchio.NewClientWithBase("http://localhost")
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "game.gbc")
 
 	if err := c.DownloadCoverArt("", romPath); err != nil {
 		t.Fatalf("expected nil error for empty URL, got: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".media")); !os.IsNotExist(statErr) {
-		t.Error(".media dir must not be created when coverURL is empty")
+	if _, statErr := os.Stat(imageDir); !os.IsNotExist(statErr) {
+		t.Error("image directory must not be created when coverURL is empty")
 	}
 }
 
@@ -69,6 +89,7 @@ func TestDownloadCoverArtHTTP404(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "game.gbc")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.png", romPath); err == nil {
@@ -89,6 +110,7 @@ func TestDownloadCoverArtSuccess(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "Wario Land II.gbc")
 
 	result, err := c.EnsureCoverArt(srv.URL+"/cover.png", romPath)
@@ -96,7 +118,7 @@ func TestDownloadCoverArtSuccess(t *testing.T) {
 		t.Fatalf("DownloadCoverArt: %v", err)
 	}
 
-	artPath := filepath.Join(dir, ".media", "Wario Land II.png")
+	artPath := filepath.Join(imageDir, "Wario Land II.png")
 	fi, err := os.Stat(artPath)
 	if os.IsNotExist(err) {
 		t.Fatalf("expected art file at %s, not found", artPath)
@@ -117,8 +139,9 @@ func TestEnsureCoverArtPreservesExistingUserArtwork(t *testing.T) {
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "game.gbc")
-	artPath := filepath.Join(dir, ".media", "game.png")
+	artPath := filepath.Join(imageDir, "game.png")
 	if err := os.MkdirAll(filepath.Dir(artPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +181,7 @@ func TestDownloadCoverArtGIFConvertedToPNG(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "Opossum Country.gbc")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.gif", romPath); err != nil {
@@ -165,7 +189,7 @@ func TestDownloadCoverArtGIFConvertedToPNG(t *testing.T) {
 	}
 
 	// Must be saved as .png, not .gif
-	artPath := filepath.Join(dir, ".media", "Opossum Country.png")
+	artPath := filepath.Join(imageDir, "Opossum Country.png")
 	fi, err := os.Stat(artPath)
 	if os.IsNotExist(err) {
 		t.Fatalf("expected .png at %s (gif should be converted), not found", artPath)
@@ -173,7 +197,7 @@ func TestDownloadCoverArtGIFConvertedToPNG(t *testing.T) {
 	if fi.Size() == 0 {
 		t.Errorf("art file at %s is empty", artPath)
 	}
-	if _, gifErr := os.Stat(filepath.Join(dir, ".media", "Opossum Country.gif")); !os.IsNotExist(gifErr) {
+	if _, gifErr := os.Stat(filepath.Join(imageDir, "Opossum Country.gif")); !os.IsNotExist(gifErr) {
 		t.Errorf(".gif file must not be saved; only .png should exist")
 	}
 }
@@ -189,13 +213,14 @@ func TestDownloadCoverArtPNGRoundTrip(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "game.gbc")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.png", romPath); err != nil {
 		t.Fatalf("DownloadCoverArt (png): %v", err)
 	}
 
-	artPath := filepath.Join(dir, ".media", "game.png")
+	artPath := filepath.Join(imageDir, "game.png")
 	if _, err := os.Stat(artPath); os.IsNotExist(err) {
 		t.Fatalf("expected .png at %s (png should be converted), not found", artPath)
 	}
@@ -214,6 +239,7 @@ func TestDownloadCoverArtFullStemPreserved(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "Kero Kero Cowboy [v1.2].gbc")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.png", romPath); err != nil {
@@ -221,12 +247,12 @@ func TestDownloadCoverArtFullStemPreserved(t *testing.T) {
 	}
 
 	// Full stem must be preserved: "Kero Kero Cowboy [v1.2].png"
-	artPath := filepath.Join(dir, ".media", "Kero Kero Cowboy [v1.2].png")
+	artPath := filepath.Join(imageDir, "Kero Kero Cowboy [v1.2].png")
 	if _, err := os.Stat(artPath); os.IsNotExist(err) {
 		t.Fatalf("expected art at %q (full stem), not found", artPath)
 	}
 	// Stripped name must NOT exist
-	if _, err := os.Stat(filepath.Join(dir, ".media", "Kero Kero Cowboy.png")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(imageDir, "Kero Kero Cowboy.png")); !os.IsNotExist(err) {
 		t.Errorf("stripped filename should not exist; full stem must be preserved")
 	}
 }
@@ -268,13 +294,14 @@ func TestDownloadCoverArtAnimatedGIFFirstFrame(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "Moon Escape.gb")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.gif", romPath); err != nil {
 		t.Fatalf("DownloadCoverArt: %v", err)
 	}
 
-	artPath := filepath.Join(dir, ".media", "Moon Escape.png")
+	artPath := filepath.Join(imageDir, "Moon Escape.png")
 	f, err := os.Open(artPath)
 	if err != nil {
 		t.Fatalf("open saved PNG: %v", err)
@@ -295,9 +322,10 @@ func TestDownloadCoverArtAnimatedGIFFirstFrame(t *testing.T) {
 }
 
 // TestCopyCoverArt verifies that CopyCoverArt copies the ROM file to the
-// .media/ sibling directory with the correct art filename.
+// canonical image directory with the correct art filename.
 func TestCopyCoverArt(t *testing.T) {
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "game.p8.png")
 
 	// Write a small PNG as the "ROM" (CopyCoverArt treats it as opaque bytes).
@@ -310,9 +338,8 @@ func TestCopyCoverArt(t *testing.T) {
 		t.Fatalf("CopyCoverArt: %v", err)
 	}
 
-	// coverArtBasename strips the last ext: "game.p8.png" → stem "game.p8"
-	// → art path ".media/game.p8.png"
-	artPath := filepath.Join(dir, ".media", "game.p8.png")
+	// Jawaka strips the compound cartridge extension: "game.p8.png" → "game".
+	artPath := filepath.Join(imageDir, "game.png")
 	if _, err := os.Stat(artPath); os.IsNotExist(err) {
 		t.Fatalf("art file not created at %s", artPath)
 	}
@@ -373,13 +400,14 @@ func TestDownloadCoverArtDoesNotSelectLaterGIFFrame(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
+	imageDir := configureArtworkRoot(t, dir)
 	romPath := filepath.Join(dir, "Colour Test.gb")
 
 	if err := c.DownloadCoverArt(srv.URL+"/cover.gif", romPath); err != nil {
 		t.Fatalf("DownloadCoverArt: %v", err)
 	}
 
-	artPath := filepath.Join(dir, ".media", "Colour Test.png")
+	artPath := filepath.Join(imageDir, "Colour Test.png")
 	f, err := os.Open(artPath)
 	if err != nil {
 		t.Fatalf("open saved PNG: %v", err)
@@ -409,12 +437,12 @@ func TestDownloadCoverArtOtherExtensionsPreserved(t *testing.T) {
 
 	c := itchio.NewClientWithBase(srv.URL)
 	dir := t.TempDir()
-	mediaDir := filepath.Join(dir, ".media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+	imageDir := configureArtworkRoot(t, dir)
+	if err := os.MkdirAll(imageDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a stale .gif left over from a previous download.
-	staleGIF := filepath.Join(mediaDir, "Opossum Country.gif")
+	staleGIF := filepath.Join(imageDir, "Opossum Country.gif")
 	if err := os.WriteFile(staleGIF, []byte("stale"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +453,7 @@ func TestDownloadCoverArtOtherExtensionsPreserved(t *testing.T) {
 	}
 
 	// New .png must exist.
-	if _, err := os.Stat(filepath.Join(mediaDir, "Opossum Country.png")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(imageDir, "Opossum Country.png")); os.IsNotExist(err) {
 		t.Fatalf("expected Opossum Country.png to exist after download")
 	}
 	// Existing alternate art is user-owned and must remain untouched.

@@ -17,10 +17,12 @@ func archiveFlowFixture(t *testing.T, cfg *settings.Config, manifest roms.ZIPMan
 	t.Helper()
 	root := t.TempDir()
 	systems := make(map[string]string)
+	images := make(map[string]string)
 	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
 		systems[id] = filepath.Join(root, "Roms", id) + string(filepath.Separator)
+		images[id] = filepath.Join(root, "Images", id) + string(filepath.Separator)
 	}
-	if err := roms.ConfigurePaths(roms.PathConfig{SystemDirs: systems, SourceID: "primary",
+	if err := roms.ConfigurePaths(roms.PathConfig{SystemDirs: systems, ImageDirs: images, SourceID: "primary",
 		PrimaryRoot: root, MusicRoot: filepath.Join(root, "Music") + string(filepath.Separator),
 		StatesRoot: filepath.Join(root, "States")}); err != nil {
 		t.Fatal(err)

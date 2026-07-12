@@ -64,6 +64,7 @@ func ScoreUpload(filename string) int {
 
 type PathConfig struct {
 	SystemDirs  map[string]string
+	ImageDirs   map[string]string
 	SourceID    string
 	PrimaryRoot string
 	MusicRoot   string
@@ -73,7 +74,7 @@ type PathConfig struct {
 
 type SourcePathConfig struct {
 	SourceID, Root, MusicRoot, StatesRoot string
-	SystemDirs                            map[string]string
+	SystemDirs, ImageDirs                 map[string]string
 }
 
 var pathConfig atomic.Pointer[PathConfig]
@@ -89,13 +90,21 @@ func withTrailingSlash(path string) string {
 // environment and canonical systems catalog. It must run before UI workers.
 func ConfigurePaths(config PathConfig) error {
 	required := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"}
-	copyConfig := &PathConfig{SystemDirs: make(map[string]string, len(config.SystemDirs))}
+	copyConfig := &PathConfig{
+		SystemDirs: make(map[string]string, len(config.SystemDirs)),
+		ImageDirs:  make(map[string]string, len(config.ImageDirs)),
+	}
 	for _, id := range required {
 		path := config.SystemDirs[id]
 		if path == "" {
 			return fmt.Errorf("missing Leaf destination for system %s", id)
 		}
 		copyConfig.SystemDirs[id] = withTrailingSlash(path)
+		imagePath := config.ImageDirs[id]
+		if imagePath == "" {
+			return fmt.Errorf("missing Leaf image destination for system %s", id)
+		}
+		copyConfig.ImageDirs[id] = withTrailingSlash(imagePath)
 	}
 	if config.MusicRoot == "" {
 		return fmt.Errorf("missing Leaf music root")
@@ -116,7 +125,7 @@ func ConfigurePaths(config PathConfig) error {
 	if len(config.Sources) == 0 {
 		config.Sources = []SourcePathConfig{{
 			SourceID: config.SourceID, Root: config.PrimaryRoot, MusicRoot: config.MusicRoot,
-			StatesRoot: config.StatesRoot, SystemDirs: config.SystemDirs,
+			StatesRoot: config.StatesRoot, SystemDirs: config.SystemDirs, ImageDirs: config.ImageDirs,
 		}}
 	}
 	seenSources := make(map[string]bool, len(config.Sources))
@@ -129,12 +138,17 @@ func ConfigurePaths(config PathConfig) error {
 			SourceID: source.SourceID, Root: withTrailingSlash(source.Root),
 			MusicRoot: withTrailingSlash(source.MusicRoot), StatesRoot: withTrailingSlash(source.StatesRoot),
 			SystemDirs: make(map[string]string, len(source.SystemDirs)),
+			ImageDirs:  make(map[string]string, len(source.ImageDirs)),
 		}
 		for _, id := range required {
 			if source.SystemDirs[id] == "" {
 				return fmt.Errorf("missing Leaf destination for source %s system %s", source.SourceID, id)
 			}
 			copySource.SystemDirs[id] = withTrailingSlash(source.SystemDirs[id])
+			if source.ImageDirs[id] == "" {
+				return fmt.Errorf("missing Leaf image destination for source %s system %s", source.SourceID, id)
+			}
+			copySource.ImageDirs[id] = withTrailingSlash(source.ImageDirs[id])
 		}
 		copyConfig.Sources = append(copyConfig.Sources, copySource)
 	}
@@ -206,6 +220,37 @@ func SourceSystemDir(sourceID, systemID string) string {
 		}
 	}
 	return ""
+}
+
+// SourceImageDir returns the canonical Jawaka image directory for one system
+// on one configured Leaf source.
+func SourceImageDir(sourceID, systemID string) string {
+	config := pathConfig.Load()
+	if config == nil {
+		return ""
+	}
+	for _, source := range config.Sources {
+		if source.SourceID == sourceID {
+			return source.ImageDirs[systemID]
+		}
+	}
+	return ""
+}
+
+// ArtworkPath resolves Jawaka's source-local Images/<system>/<ROM stem>.png
+// path from a configured ROM destination. Paths outside canonical systems are
+// rejected instead of guessed.
+func ArtworkPath(romDestPath string) string {
+	identity, ok := DescribeDestination(romDestPath)
+	if !ok || identity.CanonicalSystem == "" {
+		return ""
+	}
+	dir := SourceImageDir(identity.SourceID, identity.CanonicalSystem)
+	if dir == "" {
+		return ""
+	}
+	base := strings.TrimSuffix(filepath.Base(romDestPath), ROMExt(romDestPath))
+	return filepath.Join(dir, base+".png")
 }
 
 func SourceMusicRoot(sourceID string) string {

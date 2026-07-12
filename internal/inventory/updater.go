@@ -1,7 +1,12 @@
 package inventory
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,19 +22,27 @@ import (
 // games, and new upstream files. It runs once at startup and re-runs each time
 // TriggerNow is called.
 type UpdateService struct {
-	inv           *Inventory
-	inventoryPath string
-	client        *itchio.Client
-	notify        func()
-	triggerCh     chan struct{} // buffered(1): absorbs duplicate triggers
-	stopCh        chan struct{}
-	stopOnce      sync.Once
-	running       atomic.Bool
-	sources       leaf.SourceList
+	inv            *Inventory
+	inventoryPath  string
+	client         *itchio.Client
+	notify         func()
+	triggerCh      chan struct{} // buffered(1): absorbs duplicate triggers
+	stopCh         chan struct{}
+	stopOnce       sync.Once
+	running        atomic.Bool
+	sources        leaf.SourceList
+	scanLibrary    func() (string, error)
+	artworkChanged bool
 }
 
 func (s *UpdateService) SetSources(sources leaf.SourceList) {
 	s.sources = append(leaf.SourceList(nil), sources...)
+}
+
+// SetLibraryScanRequester installs the Jawaka rescan hook used after startup
+// artwork repair. It is configured before Start and remains optional in tests.
+func (s *UpdateService) SetLibraryScanRequester(request func() (string, error)) {
+	s.scanLibrary = request
 }
 
 // NewUpdateService constructs an UpdateService. notify (may be nil) is called
@@ -104,6 +117,7 @@ func (s *UpdateService) LatestCheckedAt() time.Time {
 }
 
 func (s *UpdateService) runCheck() {
+	s.artworkChanged = false
 	s.inv.VerifyAndCleanWithSources(s.inventoryPath, s.sources)
 
 	s.inv.mu.Lock()
@@ -131,6 +145,13 @@ func (s *UpdateService) runCheck() {
 	if err := s.inv.Save(s.inventoryPath); err != nil {
 		logger.Error("update-svc: save: %v", err)
 	}
+	if s.artworkChanged && s.scanLibrary != nil {
+		if message, err := s.scanLibrary(); err != nil {
+			logger.Warn("update-svc: artwork repaired but library rescan failed: %v", err)
+		} else {
+			logger.Info("update-svc: artwork repaired; Leaf library rescan requested: %s", message)
+		}
+	}
 
 	logger.Info("update-svc: check complete")
 }
@@ -157,18 +178,25 @@ func (s *UpdateService) checkEntry(gameURL string) []UpstreamFile {
 			roms.IsPSXSupportExt(roms.ROMExt(f.DestPath)) {
 			continue
 		}
-		result, err := s.client.EnsureCoverArt(coverURL, f.DestPath)
+		result, migrated := s.migrateOwnedArtwork(f)
+		var err error
+		if !migrated {
+			result, err = s.client.EnsureCoverArt(coverURL, f.DestPath)
+		}
 		if err != nil {
 			logger.Error("update-svc: cover art repair failed for %s: %v", f.Filename, err)
 			continue
 		}
 		if result.Path != "" {
 			created := result.Created
-			if !created && f.ArtworkCreated && f.ArtworkPath == result.Path &&
+			if !created && f.ArtworkCreated && filepath.Clean(f.ArtworkPath) == filepath.Clean(result.Path) &&
 				(f.ArtworkHash == "" || f.ArtworkHash == result.SHA256) {
 				created = true
 			}
 			s.inv.SetArtwork(gameURL, f.DestPath, result.Path, result.SHA256, created)
+			if result.Created {
+				s.artworkChanged = true
+			}
 		}
 	}
 
@@ -178,6 +206,56 @@ func (s *UpdateService) checkEntry(gameURL string) []UpstreamFile {
 	}
 	s.checkPaidGame(gameURL)
 	return nil
+}
+
+func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.ArtworkResult, bool) {
+	expected := CanonicalArtworkPath(file.DestPath)
+	oldPath := filepath.Clean(file.ArtworkPath)
+	if !file.ArtworkCreated || file.ArtworkHash == "" || expected == "" || file.ArtworkPath == "" ||
+		oldPath == filepath.Clean(expected) || filepath.Base(filepath.Dir(oldPath)) != ".media" {
+		return itchio.ArtworkResult{}, false
+	}
+	identity, ok := roms.DescribeDestination(file.DestPath)
+	if !ok {
+		return itchio.ArtworkResult{}, false
+	}
+	source, ok := s.sources.ByID(identity.SourceID)
+	if !ok || !source.Available() {
+		return itchio.ArtworkResult{}, false
+	}
+	if _, err := leaf.RelativeWithin(source.Root, oldPath); err != nil {
+		return itchio.ArtworkResult{}, false
+	}
+	if _, err := leaf.RelativeWithin(source.Root, expected); err != nil {
+		return itchio.ArtworkResult{}, false
+	}
+	info, err := os.Lstat(oldPath)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return itchio.ArtworkResult{}, false
+	}
+	fileHandle, err := os.Open(oldPath)
+	if err != nil {
+		return itchio.ArtworkResult{}, false
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, fileHandle)
+	closeErr := fileHandle.Close()
+	actualHash := fmt.Sprintf("%x", hash.Sum(nil))
+	if copyErr != nil || closeErr != nil || actualHash != file.ArtworkHash {
+		return itchio.ArtworkResult{}, false
+	}
+	if _, err := os.Lstat(expected); err == nil || !os.IsNotExist(err) {
+		return itchio.ArtworkResult{}, false
+	}
+	if err := os.MkdirAll(filepath.Dir(expected), 0o755); err != nil {
+		return itchio.ArtworkResult{}, false
+	}
+	if err := os.Rename(oldPath, expected); err != nil {
+		return itchio.ArtworkResult{}, false
+	}
+	_ = os.Remove(filepath.Dir(oldPath))
+	logger.Info("update-svc: moved app-owned artwork to canonical Leaf image root: %s", expected)
+	return itchio.ArtworkResult{Path: expected, SHA256: actualHash, Created: true}, true
 }
 
 // isGameRemoved reports whether err indicates a 404 or 410 HTTP response.

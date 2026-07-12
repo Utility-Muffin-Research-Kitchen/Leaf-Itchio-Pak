@@ -596,11 +596,9 @@ func (inv *Inventory) AllURLs() []string {
 	return urls
 }
 
-// CoverArtPath returns the filesystem path for the cover art of a downloaded ROM,
-// mirroring the naming convention used by itchio.DownloadCoverArt.
-// Cover art is always stored as .jpg using the exact ROM filename stem so it
-// matches Jawaka's cover art lookup (which uses the full filename including
-// bracket/paren tags like [v1.2]).
+// CoverArtPath returns the source-local canonical Jawaka image path for a
+// downloaded ROM, mirroring the naming convention used by
+// itchio.DownloadCoverArt.
 // Returns "" if either argument is empty.
 func CoverArtPath(coverURL, romDestPath string) string {
 	if coverURL == "" || romDestPath == "" {
@@ -610,12 +608,7 @@ func CoverArtPath(coverURL, romDestPath string) string {
 }
 
 func CanonicalArtworkPath(romDestPath string) string {
-	if romDestPath == "" {
-		return ""
-	}
-	base := strings.TrimSuffix(filepath.Base(romDestPath), filepath.Ext(romDestPath))
-	dir := filepath.Dir(romDestPath)
-	return filepath.Join(dir, ".media", base+".png")
+	return roms.ArtworkPath(romDestPath)
 }
 
 // SetUnifiedNamingDisabled sets the per-game unified-naming opt-out flag.

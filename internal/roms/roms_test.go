@@ -13,6 +13,10 @@ func TestMain(m *testing.M) {
 			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
 			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 		},
+		ImageDirs: map[string]string{
+			"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+			"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+		},
 		SourceID:    "primary",
 		PrimaryRoot: "/leaf",
 		MusicRoot:   "/leaf/Music",
@@ -21,10 +25,12 @@ func TestMain(m *testing.M) {
 			{
 				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
 				SystemDirs: map[string]string{"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA", "FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX"},
+				ImageDirs:  map[string]string{"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA", "FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX"},
 			},
 			{
 				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
 				SystemDirs: map[string]string{"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA", "FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX"},
+				ImageDirs:  map[string]string{"GB": "/secondary/Images/GB", "GBC": "/secondary/Images/GBC", "GBA": "/secondary/Images/GBA", "FC": "/secondary/Images/NES", "MD": "/secondary/Images/GENESIS", "PICO8": "/secondary/Images/PICO8", "PS": "/secondary/Images/PSX"},
 			},
 		},
 	})
@@ -41,6 +47,23 @@ func TestDescribeDestinationPreservesSecondarySource(t *testing.T) {
 	}
 	if got.SourceID != "secondary_sd" || got.RelativePath != "Roms/GBC/RPG/game.gbc" || got.CanonicalSystem != "GBC" {
 		t.Fatalf("identity = %#v", got)
+	}
+}
+
+func TestArtworkPathUsesSourceCanonicalImageRootAndJawakaStem(t *testing.T) {
+	tests := map[string]string{
+		"/leaf/Roms/PSX/nolibgs_demo.cue":         "/leaf/Images/PSX/nolibgs_demo.png",
+		"/secondary/Roms/GBC/RPG/game [v1.2].gbc": "/secondary/Images/GBC/game [v1.2].png",
+		"/leaf/Roms/PICO8/cart.p8.png":            "/leaf/Images/PICO8/cart.png",
+		"/leaf/Roms/PICO8/Multi/Multi.m3u":        "/leaf/Images/PICO8/Multi.png",
+	}
+	for romPath, want := range tests {
+		if got := roms.ArtworkPath(romPath); got != want {
+			t.Errorf("ArtworkPath(%q) = %q, want %q", romPath, got, want)
+		}
+	}
+	if got := roms.ArtworkPath("/outside/game.gb"); got != "" {
+		t.Fatalf("outside artwork path = %q, want empty", got)
 	}
 }
 

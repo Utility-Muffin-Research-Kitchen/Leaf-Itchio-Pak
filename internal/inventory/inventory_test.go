@@ -18,6 +18,10 @@ func TestMain(m *testing.M) {
 			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
 			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 		},
+		ImageDirs: map[string]string{
+			"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+			"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+		},
 		SourceID: "primary", PrimaryRoot: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
 		Sources: []roms.SourcePathConfig{
 			{
@@ -26,12 +30,20 @@ func TestMain(m *testing.M) {
 					"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
 					"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
 				},
+				ImageDirs: map[string]string{
+					"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+					"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+				},
 			},
 			{
 				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
 				SystemDirs: map[string]string{
 					"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA",
 					"FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX",
+				},
+				ImageDirs: map[string]string{
+					"GB": "/secondary/Images/GB", "GBC": "/secondary/Images/GBC", "GBA": "/secondary/Images/GBA",
+					"FC": "/secondary/Images/NES", "MD": "/secondary/Images/GENESIS", "PICO8": "/secondary/Images/PICO8", "PS": "/secondary/Images/PSX",
 				},
 			},
 		},
@@ -182,7 +194,7 @@ func TestAddPreservesArtworkOwnershipWhenRedownloadHasNoNewArt(t *testing.T) {
 	const gameURL = "https://dev.itch.io/game"
 	first := inventory.DownloadedFile{
 		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb",
-		ArtworkPath: "/leaf/Roms/GB/.media/game.png", ArtworkHash: "abc123", ArtworkCreated: true,
+		ArtworkPath: "/leaf/Images/GB/game.png", ArtworkHash: "abc123", ArtworkCreated: true,
 	}
 	inv.Add(gameURL, inventory.Entry{Title: "Game"}, first)
 	inv.Add(gameURL, inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
@@ -201,7 +213,7 @@ func TestAddPreservesArtworkOwnershipWhenRedownloadHasNoNewArt(t *testing.T) {
 func TestArtworkPathForPrefersRecordedPath(t *testing.T) {
 	file := inventory.DownloadedFile{
 		DestPath:    "/leaf/Roms/PICO8/Game/cart.p8",
-		ArtworkPath: "/leaf/Roms/PICO8/.media/Game.png",
+		ArtworkPath: "/leaf/Images/PICO8/Game.png",
 	}
 	if got := inventory.ArtworkPathFor("cover", file); got != file.ArtworkPath {
 		t.Fatalf("ArtworkPathFor = %q, want %q", got, file.ArtworkPath)
@@ -210,7 +222,7 @@ func TestArtworkPathForPrefersRecordedPath(t *testing.T) {
 
 func TestArtworkReferencedOutsideExcludesPendingDeletion(t *testing.T) {
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
-	artPath := "/leaf/Roms/GB/.media/Game.png"
+	artPath := "/leaf/Images/GB/Game.png"
 	first := inventory.DownloadedFile{Filename: "Game.gb", DestPath: "/leaf/Roms/GB/Game.gb", ArtworkCreated: true}
 	second := inventory.DownloadedFile{Filename: "Game.zip", DestPath: "/leaf/Roms/GB/Game.zip", ArtworkCreated: true}
 	inv.Add("one", inventory.Entry{CoverURL: "cover"}, first)
@@ -508,10 +520,10 @@ func TestRemoveFile_UnknownURL(t *testing.T) {
 func TestCoverArtPath_WithPNGCover(t *testing.T) {
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/cover.png",
-		"/mnt/SDCARD/Roms/Game Boy (GB)/my-game.gb",
+		"/leaf/Roms/GB/my-game.gb",
 	)
 	// Cover art is always stored as .png regardless of source format.
-	want := "/mnt/SDCARD/Roms/Game Boy (GB)/.media/my-game.png"
+	want := "/leaf/Images/GB/my-game.png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
@@ -527,10 +539,10 @@ func TestCoverArtPath_EmptyCoverURL(t *testing.T) {
 func TestCoverArtPath_NoExtensionInURL(t *testing.T) {
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/coverimage",
-		"/roms/game.gb",
+		"/leaf/Roms/GB/game.gb",
 	)
 	// Always .png regardless of whether source URL has an extension.
-	want := "/roms/.media/game.png"
+	want := "/leaf/Images/GB/game.png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
@@ -540,9 +552,9 @@ func TestCoverArtPath_FullStemPreserved(t *testing.T) {
 	// Jawaka looks up cover art by the full ROM stem (including [v1.2]).
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/cover.png",
-		"/roms/Game Boy Color (GBC)/Kero Kero Cowboy [v1.2].gbc",
+		"/leaf/Roms/GBC/Kero Kero Cowboy [v1.2].gbc",
 	)
-	want := "/roms/Game Boy Color (GBC)/.media/Kero Kero Cowboy [v1.2].png"
+	want := "/leaf/Images/GBC/Kero Kero Cowboy [v1.2].png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
