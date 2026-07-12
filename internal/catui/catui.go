@@ -177,17 +177,6 @@ func (c *Context) Close() error {
 // Keyboard runs Catastrophe's device-native blocking keyboard widget. A
 // cancelled edit returns the original text with accepted=false.
 func (c *Context) Keyboard(initial string) (value string, accepted bool, err error) {
-	return c.keyboard(initial, false)
-}
-
-// SecretKeyboard uses the full Catastrophe keyboard while covering the input
-// field before every present. It starts blank so an existing secret is never
-// copied into widget state or revealed during replacement.
-func (c *Context) SecretKeyboard() (value string, accepted bool, err error) {
-	return c.keyboard("", true)
-}
-
-func (c *Context) keyboard(initial string, masked bool) (value string, accepted bool, err error) {
 	if err := c.ensureOpen(); err != nil {
 		return initial, false, err
 	}
@@ -200,13 +189,7 @@ func (c *Context) keyboard(initial string, masked bool) (value string, accepted 
 	}
 	defer C.free(output)
 	var acceptedC C.int
-	var status C.int
-	if masked {
-		status = C.catui_keyboard_masked(initialC, (*C.char)(output), C.size_t(outputSize), &acceptedC)
-	} else {
-		status = C.catui_keyboard(initialC, (*C.char)(output), C.size_t(outputSize), &acceptedC)
-	}
-	if err := statusError(status); err != nil {
+	if err := statusError(C.catui_keyboard(initialC, (*C.char)(output), C.size_t(outputSize), &acceptedC)); err != nil {
 		return initial, false, err
 	}
 	if acceptedC == 0 {

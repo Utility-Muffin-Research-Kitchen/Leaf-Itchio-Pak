@@ -1,14 +1,7 @@
-/* Intercept presents only inside this translation unit so secret-keyboard
-   input can be covered before the frame reaches the display. Shared
-   Catastrophe remains unmodified. */
-static int catui__keyboard_mask_active;
-static const char *catui__keyboard_mask_text;
-#define SDL_RenderPresent catui__render_present
 #define CAT_IMPLEMENTATION
 #include "catastrophe.h"
 #define CAT_WIDGETS_IMPLEMENTATION
 #include "catastrophe_widgets.h"
-#undef SDL_RenderPresent
 #include "cjson/cJSON.c"
 
 #include "cat_bridge.h"
@@ -56,60 +49,19 @@ static int catui__guard(void) {
     return catui__owner() ? CATUI_OK : CATUI_WRONG_THREAD;
 }
 
-extern DECLSPEC void SDLCALL SDL_RenderPresent(SDL_Renderer *renderer);
-
-void SDLCALL catui__render_present(SDL_Renderer *renderer) {
-    if (catui__keyboard_mask_active && catui__keyboard_mask_text &&
-        catui__keyboard_mask_text[0] && renderer == cat_get_renderer()) {
-        cat_theme *theme = cat_get_theme();
-        TTF_Font *font = cat_get_font(CAT_FONT_MEDIUM);
-        int screen_w = cat_get_screen_width();
-        int screen_h = cat_get_screen_height();
-        int footer_h = cat_get_footer_height();
-        int kb_area_h = screen_h * 85 / 100 - footer_h;
-        int input_h = screen_h / 10;
-        int input_y = (screen_h - kb_area_h - footer_h - input_h) / 2;
-        int input_x = CAT_S(40);
-        int input_w = screen_w - CAT_S(80);
-        const char *mask = "********";
-
-        cat_draw_pill(input_x, input_y, input_w, input_h, theme->highlight);
-        if (font) {
-            int text_y = input_y + (input_h - TTF_FontHeight(font)) / 2;
-            cat_draw_text(font, mask, input_x + CAT_S(16), text_y,
-                          theme->highlighted_text);
-        }
-    }
-    SDL_RenderPresent(renderer);
-}
-
-static int catui__keyboard_run(const char *initial_text, char *out_text,
-                               size_t out_size, int *accepted, int masked) {
+int catui_keyboard(const char *initial_text, char *out_text,
+                   size_t out_size, int *accepted) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
     if (!out_text || out_size == 0 || !accepted) return CATUI_ERROR;
 
     cat_keyboard_result result = {0};
-    catui__keyboard_mask_active = masked;
-    catui__keyboard_mask_text = result.text;
     int rc = cat_keyboard(initial_text ? initial_text : "", NULL,
                           CAT_KB_GENERAL, &result);
-    catui__keyboard_mask_active = 0;
-    catui__keyboard_mask_text = NULL;
     if (rc == CAT_ERROR) return CATUI_ERROR;
     *accepted = rc == CAT_OK ? 1 : 0;
     snprintf(out_text, out_size, "%s", result.text);
     return CATUI_OK;
-}
-
-int catui_keyboard(const char *initial_text, char *out_text,
-                   size_t out_size, int *accepted) {
-    return catui__keyboard_run(initial_text, out_text, out_size, accepted, 0);
-}
-
-int catui_keyboard_masked(const char *initial_text, char *out_text,
-                          size_t out_size, int *accepted) {
-    return catui__keyboard_run(initial_text, out_text, out_size, accepted, 1);
 }
 
 static cat_draw_color catui__color(uint32_t color) {

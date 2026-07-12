@@ -336,7 +336,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	handleSettingsAction := func(action ui.CatSettingsAction) error {
 		switch action {
 		case ui.CatSettingsEditAPIKey:
-			value, accepted, keyboardErr := ctx.SecretKeyboard()
+			// Product decision: newly typed characters remain visible because a
+			// fully masked field proved too frustrating on a controller keyboard.
+			// Always start blank so the persisted key itself is never revealed.
+			value, accepted, keyboardErr := ctx.Keyboard("")
 			if keyboardErr != nil {
 				return keyboardErr
 			}
