@@ -315,6 +315,34 @@ func (controller *CatalogController) CycleCatSort(direction int) {
 	controller.SetFilter(controller.platformFilter, string(next), controller.searchQuery)
 }
 
+func (controller *CatalogController) CycleCatPlatform(direction int) {
+	if !controller.cacheReady {
+		return
+	}
+	controller.SetFilter(cyclePlatformFilter(controller.platformFilter, direction),
+		string(controller.sortMode), controller.searchQuery)
+}
+
+func cyclePlatformFilter(current string, direction int) string {
+	index := 0
+	for candidate, platform := range appui.FilterPlatforms {
+		if platform == current {
+			index = candidate
+			break
+		}
+	}
+	if direction < 0 {
+		index--
+	} else if direction > 0 {
+		index++
+	}
+	index %= len(appui.FilterPlatforms)
+	if index < 0 {
+		index += len(appui.FilterPlatforms)
+	}
+	return appui.FilterPlatforms[index]
+}
+
 func (controller *CatalogController) SetFilter(platform, sort, query string) {
 	controller.platformFilter = platform
 	controller.sortMode = itchio.SortMode(sort)

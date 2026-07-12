@@ -33,6 +33,27 @@ func TestCatalogControllerBindsFilteredGamesToCatModel(t *testing.T) {
 	}
 }
 
+func TestCyclePlatformFilterWrapsAcrossAllSystems(t *testing.T) {
+	tests := []struct {
+		current   string
+		direction int
+		want      string
+	}{
+		{current: "", direction: 1, want: "GB"},
+		{current: "GB", direction: 1, want: "GBC"},
+		{current: "P8", direction: 1, want: "PSX"},
+		{current: "PSX", direction: 1, want: ""},
+		{current: "", direction: -1, want: "PSX"},
+		{current: "GBC", direction: -1, want: "GB"},
+	}
+	for _, test := range tests {
+		if got := cyclePlatformFilter(test.current, test.direction); got != test.want {
+			t.Errorf("cyclePlatformFilter(%q, %d) = %q, want %q",
+				test.current, test.direction, got, test.want)
+		}
+	}
+}
+
 func TestCatalogControllerDismissesUpdateNotice(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "inventory.json")
 	gameURL := "https://example.invalid/update"

@@ -951,6 +951,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					list.CycleCatSort(-1)
 				case appui.ListIntentNextSort:
 					list.CycleCatSort(1)
+				case appui.ListIntentPreviousPlatform:
+					list.CycleCatPlatform(-1)
+				case appui.ListIntentNextPlatform:
+					list.CycleCatPlatform(1)
 				case appui.ListIntentFilter:
 					platform, sort, query := list.CatFilter()
 					filterModel = appui.NewFilterModel(platform, sort, query)

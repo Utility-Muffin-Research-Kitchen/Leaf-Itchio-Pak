@@ -67,3 +67,12 @@ func TestMenuIsNotApplicationBack(t *testing.T) {
 		t.Fatalf("B maps to %v, want app back", got)
 	}
 }
+
+func TestTriggersMapToPlatformControls(t *testing.T) {
+	if got := appButton(ButtonL2); got != appui.ButtonL2 {
+		t.Fatalf("L2 maps to %v, want app L2", got)
+	}
+	if got := appButton(ButtonR2); got != appui.ButtonR2 {
+		t.Fatalf("R2 maps to %v, want app R2", got)
+	}
+}

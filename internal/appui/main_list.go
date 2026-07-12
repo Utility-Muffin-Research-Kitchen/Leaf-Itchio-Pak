@@ -21,7 +21,9 @@ const (
 	ButtonX
 	ButtonY
 	ButtonL1
+	ButtonL2
 	ButtonR1
+	ButtonR2
 	ButtonStart
 	ButtonSelect
 	ButtonQuit
@@ -58,6 +60,8 @@ const (
 	ListIntentSettings
 	ListIntentPreviousSort
 	ListIntentNextSort
+	ListIntentPreviousPlatform
+	ListIntentNextPlatform
 	ListIntentDismissNotice
 )
 
@@ -172,6 +176,10 @@ func (m *MainListModel) Handle(event InputEvent) ListIntent {
 		return ListIntentPreviousSort
 	case ButtonR1:
 		return ListIntentNextSort
+	case ButtonL2:
+		return ListIntentPreviousPlatform
+	case ButtonR2:
+		return ListIntentNextPlatform
 	}
 	return ListIntentNone
 }

@@ -27,6 +27,12 @@ func TestMainListNavigationAndIntents(t *testing.T) {
 	if got := model.Handle(InputEvent{Button: ButtonStart, Pressed: true}); got != ListIntentSettings {
 		t.Fatalf("START intent = %v, want settings", got)
 	}
+	if got := model.Handle(InputEvent{Button: ButtonL2, Pressed: true}); got != ListIntentPreviousPlatform {
+		t.Fatalf("L2 intent = %v, want previous platform", got)
+	}
+	if got := model.Handle(InputEvent{Button: ButtonR2, Pressed: true}); got != ListIntentNextPlatform {
+		t.Fatalf("R2 intent = %v, want next platform", got)
+	}
 }
 
 func TestMainListAlphaJump(t *testing.T) {

@@ -57,8 +57,12 @@ func appButton(button Button) appui.Button {
 		return appui.ButtonY
 	case ButtonL1:
 		return appui.ButtonL1
+	case ButtonL2:
+		return appui.ButtonL2
 	case ButtonR1:
 		return appui.ButtonR1
+	case ButtonR2:
+		return appui.ButtonR2
 	case ButtonStart:
 		return appui.ButtonStart
 	case ButtonSelect:
@@ -79,7 +83,7 @@ func (screen *MainListScreen) Draw() error {
 	case appui.ListReady, appui.ListEmpty:
 		footer = []FooterHint{
 			{Button: ButtonSelect, Label: "Filter"},
-			{Button: ButtonL1, Label: "Sort -/+", NarrowLabel: "Sort"},
+			{Button: ButtonL2, Label: "System -/+", NarrowLabel: "System"},
 			{Button: ButtonStart, Label: "Set"},
 			{Button: ButtonA, Label: "Open", IsConfirm: true},
 		}
