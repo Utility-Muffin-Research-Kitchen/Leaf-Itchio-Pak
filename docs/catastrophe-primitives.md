@@ -30,7 +30,7 @@ footer after content.
 | List selection and settings values | `DrawListRow`, `DrawValueRow` |
 | Modal and warning overlays | `CenteredModalRect`, `DrawModal`, `DrawWarningCover` |
 | Transfer state | `DrawProgressView` |
-| Text entry | `DrawTextField`, `LayoutKeyboard`, `DrawKeyboard` |
+| Text field and fixture keyboard geometry | `DrawTextField`, `LayoutKeyboard`, `DrawKeyboard` |
 | Remote tags | `DrawTagPills` |
 | Artwork and screenshots | `FitImage`, `DrawImageFit`, `LayoutGallery`, `DrawGallery` |
 | Empty/loading/offline/error | `DrawState` |
@@ -44,6 +44,11 @@ do not carry screen-height font formulas or literal UI colors.
 Remote strings and images are clipped to their content rectangles. Text uses
 the bridge's primary/fallback font runs, while textures remain opaque,
 generation-checked handles owned by the main render thread.
+
+Production search and API-key entry call Catastrophe's standard keyboard through
+`Context.Keyboard`. The app-local keyboard layout/draw helpers remain only as
+shared primitive geometry and offline-fixture coverage; they are not a second
+production keyboard implementation.
 
 ## Footer policy
 

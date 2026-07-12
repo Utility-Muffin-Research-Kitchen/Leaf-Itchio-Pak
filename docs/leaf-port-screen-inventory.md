@@ -1,4 +1,10 @@
-# Leaf port screen and interaction inventory
+# Historical upstream screen and interaction inventory
+
+> **Historical baseline:** this file records the `v1.0.19` fork-point UI used
+> to plan the port. The inherited screen interface, renderer, settings choices,
+> and Pico-8 migration routes described below were removed. See the
+> [README](../README.md) and [current user guide](user-guide.md) for supported
+> Leaf behavior and controls.
 
 This document freezes the public UI surface at the `v1.0.19` fork point before
 the SDL renderer is replaced by the Catastrophe box-model bridge. It describes
@@ -6,7 +12,7 @@ behavior to preserve, not a promise of NextUI layout compatibility.
 
 ## Shared screen contract
 
-Every production screen implements `ui.Screen`:
+At the fork point, every production screen implemented `ui.Screen`:
 
 - `Draw(*renderer.Renderer)` draws the current state;
 - `HandleEvent(sdl.Event) Screen` processes one event and returns self, a new
@@ -58,7 +64,7 @@ calls with retained box trees.
 
 ## Control vocabulary
 
-The current UI uses D-pad navigation plus `A`, `B`, `X`, `Y`, `L1`, `R1`,
+The fork-point UI used D-pad navigation plus `A`, `B`, `X`, `Y`, `L1`, `R1`,
 `SELECT`, `START`, and the power key. Labels are not stable across the port:
 Catastrophe must bind semantic actions first, then render Leaf-appropriate
 footer hints. Required action families are:

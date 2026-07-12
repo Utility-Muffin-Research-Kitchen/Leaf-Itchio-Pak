@@ -22,12 +22,12 @@ body:
     attributes:
       label: Pak Version
       description: |
-        **Preferred:** Open the Pak → press **Start** to open Settings → scroll to **About**. The version is shown there (e.g. `v1.2.0`).
+        **Preferred:** Open the Pak → press **Start** to open Settings → scroll to **About**. The version is shown there (e.g. `0.1.0`).
 
         **If the app won't open or is crashing**, you can find the version two other ways:
-        - **Log file:** The first line of the log file contains the version (e.g. `itchio-pak v1.2.0 starting`). See the Log File field below for how to find it.
-        - **pak.json on SD card:** Remove the SD card, open `Apps/mlp1/Itch-io.pak/pak.json` in a text editor, and read the `"version"` field.
-      placeholder: "e.g. v1.2.0"
+        - **Log file:** The first line of the log file contains the version (e.g. `itchio-pak 0.1.0 starting`). See the Log File field below for how to find it.
+        - **pak.json on SD card:** Remove the SD card, open `Apps/mlp1/Itch-io.pak/pak.json` in a text editor, and read the `"pak_version"` field.
+      placeholder: "e.g. 0.1.0"
     validations:
       required: true
 

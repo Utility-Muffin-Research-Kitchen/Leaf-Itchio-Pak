@@ -57,6 +57,11 @@ selects the first font providing each codepoint, groups matching codepoints
 into bounded runs, and uses the same run logic for measurement and drawing.
 Unsupported codepoints are omitted rather than rendered as tofu.
 
+Search and API-key entry use the standard Catastrophe keyboard through the
+bridge's blocking `Context.Keyboard` call on the owner thread. The persisted API
+key is never supplied as its initial value; search may supply the current staged
+query. App-local keyboard drawing is fixture-only.
+
 Box operations are direct calls to `cat_box_content`, both carve functions,
 `cat_box_split_cols`, and `cat_box_fit_rows`. They use final pixels. Shared
 composition policy is documented in `catastrophe-primitives.md`.
