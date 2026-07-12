@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -40,6 +41,7 @@ FAT_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 FAT_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
     f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
 }
+EXPECTED_ICON_SHA256 = "b5ea2fbf5d7c6fbc77af40f7dc069c4f7a900f0a6aab4f848eed54604aa14a11"
 
 
 def fail(message: str) -> None:
@@ -151,6 +153,9 @@ def main() -> None:
     width, height = struct.unpack(">II", icon[16:24])
     if (width, height) != (256, 256):
         fail(f"res/icon.png must be 256x256, got {width}x{height}")
+    icon_hash = hashlib.sha256(icon).hexdigest()
+    if icon_hash != EXPECTED_ICON_SHA256:
+        fail(f"res/icon.png hash {icon_hash} does not match canonical export")
 
     launcher_text = launcher.read_text(encoding="utf-8")
     for prefix in ("/Users/", "/Volumes/", "/home/"):

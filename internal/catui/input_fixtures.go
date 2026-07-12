@@ -147,7 +147,6 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.SetSources([]appui.DestinationItem{
 				{Kind: appui.DestinationItemSource, Label: "Primary SD", Detail: "Available", Enabled: true},
 				{Kind: appui.DestinationItemSource, Label: "Secondary SD", Detail: "Available", Enabled: true},
-				{Kind: appui.DestinationItemSource, Label: "SD card 3", Detail: "Not mounted", Enabled: false},
 			})
 		case "destination-folder":
 			model.SetFolders("Choose GBC folder (1/2)", "Secondary SD / RPG", []appui.DestinationItem{

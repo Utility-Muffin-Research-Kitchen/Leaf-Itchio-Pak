@@ -14,16 +14,19 @@ export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
 export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
 
 .DEFAULT_GOAL := native
-.PHONY: test test-race cat-only-audit native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
+.PHONY: test test-race cat-only-audit public-assets-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots public-screenshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
-test: cat-only-audit
+test: cat-only-audit public-assets-check
 	go test -count=1 -tags headless ./...
 
-test-race: cat-only-audit
+test-race: cat-only-audit public-assets-check
 	go test -count=1 -race -tags headless ./...
 
 cat-only-audit:
 	./scripts/cat-only-audit.sh
+
+public-assets-check:
+	./scripts/public-assets-check.py
 
 check-catastrophe:
 	@test -f "$(CATASTROPHE_DIR)/include/catastrophe.h" || { \
@@ -72,6 +75,9 @@ cat-main-list-snapshots: mac
 
 cat-input-snapshots: mac
 	./scripts/cat-input-smoke.sh
+
+public-screenshots:
+	./scripts/capture-public-screenshots.sh
 
 mlp1: check-catastrophe cat-only-audit
 	./scripts/build.sh mlp1

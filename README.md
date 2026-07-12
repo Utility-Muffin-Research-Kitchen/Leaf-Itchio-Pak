@@ -33,6 +33,8 @@ set, release archive, or bootstrap flow.
 See the [user guide](docs/user-guide.md) for controls, settings, storage,
 security, and troubleshooting.
 
+![Leaf Itch.io main list](docs/screenshots/main-list.png)
+
 ## Installation
 
 Pak Rat is the primary distribution route for a public release. The app must
@@ -200,6 +202,7 @@ make run-mac
 make cat-fixture-snapshots
 make cat-main-list-snapshots
 make cat-input-snapshots
+make public-screenshots
 make package-smoke
 ```
 
@@ -232,6 +235,13 @@ input, presentation, and shutdown. Retained Go catalogue/download workers are
 headless backends and cannot be selected as an alternate UI. See the
 [bridge contract](docs/catastrophe-bridge.md) and
 [screen primitives](docs/catastrophe-primitives.md).
+
+The original icon's editable source and generator live in the private
+`umrk-assets` aggregate while this repository vendors the release PNG for
+offline builds. Its exact source revision, export command, license, and hashes
+are recorded in [icon provenance](docs/icon-provenance.md). The public-safe
+preview set and regeneration sources are recorded under
+[docs/screenshots](docs/screenshots/README.md).
 
 This repository preserves upstream history through release `v1.0.19`, commit
 `42171a5a764ff341d581b6e3ec6cd02adb936eb7`. See
