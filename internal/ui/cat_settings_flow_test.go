@@ -64,7 +64,6 @@ func TestCatSettingsExposeOnlyLeafChoicesAndSourceLabels(t *testing.T) {
 			"GB":  {SourceID: "primary", RelativePath: "."},
 		},
 		MusicDestination: &settings.RememberedDestination{SourceID: "secondary_sd", RelativePath: "Albums"},
-		NextUITheme:      true, Pico8Core: "pico8",
 	}
 	_, model, _, _ := settingsFixture(t, cfg, nil)
 	for _, row := range model.Rows {

@@ -76,7 +76,7 @@ func (plan ZIPPlan) extractionRequirements(cfg *settings.Config, manifest roms.Z
 			ext := strings.ToLower(roms.ROMExt(entry.Name))
 			dir = plan.ROMDirs[ext]
 			if dir == "" {
-				dir = roms.DestinationDir(ext, cfg.Pico8Core)
+				dir = roms.DestinationDir(ext)
 			}
 		} else if entry.Kind == roms.KindMusic && plan.DownloadMusic {
 			dir = plan.MusicDir

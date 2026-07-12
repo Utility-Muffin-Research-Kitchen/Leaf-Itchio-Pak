@@ -147,7 +147,7 @@ func TestEnsureCoverArtPreservesExistingUserArtwork(t *testing.T) {
 }
 
 // TestDownloadCoverArtGIFConvertedToPNG verifies that a GIF source is decoded
-// and re-encoded as PNG (the only format NextUI displays for cover art).
+// and re-encoded as PNG (the canonical Jawaka cover-art format).
 func TestDownloadCoverArtGIFConvertedToPNG(t *testing.T) {
 	gifBytes := minimalGIF()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +202,7 @@ func TestDownloadCoverArtPNGRoundTrip(t *testing.T) {
 }
 
 // TestDownloadCoverArtFullStemPreserved verifies that bracket/paren tags in the
-// ROM filename are kept in the cover art name. NextUI looks up art by the full
+// ROM filename are kept in the cover art name. Jawaka looks up art by the full
 // ROM stem (including [v1.2] etc.), even though it strips them for display.
 func TestDownloadCoverArtFullStemPreserved(t *testing.T) {
 	imgBytes := minimalJPEG()

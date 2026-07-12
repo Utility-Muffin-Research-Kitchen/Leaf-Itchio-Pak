@@ -122,7 +122,7 @@ func main() {
 	}
 
 	// When profiling to files, install a signal handler so that SIGTERM/SIGINT/
-	// SIGHUP (e.g. Ctrl-C in the terminal, adb disconnect, or NextUI killing the
+	// SIGHUP (e.g. Ctrl-C in the terminal, adb disconnect, or the launcher killing the
 	// process) still flushes profiles before exit. Without this, Go's deferred
 	// cleanup is skipped and the profile files are never written.
 	if *cpuProfile != "" || *memProfile != "" {

@@ -272,7 +272,7 @@ func (flow *CatArchiveFlow) prepareInitialAction() {
 				flow.direct.Kind = CatDownloadPlanDestination
 				flow.direct.LogicalExts = []string{ext}
 			} else {
-				dest := roms.DestinationDir(ext, flow.cfg.Pico8Core) + patched.Filename
+				dest := roms.DestinationDir(ext) + patched.Filename
 				if existing := flow.inv.ExistingDestPath(flow.game.URL, patched.Filename); existing != "" {
 					dest = existing
 				}
@@ -301,7 +301,7 @@ func (flow *CatArchiveFlow) prepareInitialAction() {
 	}
 	if m.IsPico8MultiFileGame() {
 		flow.plan.DownloadROMs = true
-		flow.plan.Pico8GameDir = roms.Pico8GameSubDir(flow.cfg.Pico8Core, flow.game.Title)
+		flow.plan.Pico8GameDir = roms.Pico8GameSubDir(flow.game.Title)
 		flow.skipROMChoices = true
 		if m.HasMusic() && flow.cfg.MusicDownload == "ask" {
 			flow.action = CatArchiveChooseContents

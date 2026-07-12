@@ -32,7 +32,7 @@ func newCatDownloadFlowForTest(t *testing.T) (*CatDownloadFlow, *appui.DownloadS
 		t.Fatal(err)
 	}
 	flow := &CatDownloadFlow{
-		cfg:  &settings.Config{ROMLocation: "auto", Pico8Core: "fake08"},
+		cfg:  &settings.Config{ROMLocation: "auto"},
 		game: itchio.Game{Title: "Fixture", URL: "https://example.invalid/game"}, inv: inv,
 	}
 	return flow, appui.NewDownloadSelectModel("Fixture")

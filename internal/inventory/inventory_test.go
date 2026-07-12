@@ -537,7 +537,7 @@ func TestCoverArtPath_NoExtensionInURL(t *testing.T) {
 }
 
 func TestCoverArtPath_FullStemPreserved(t *testing.T) {
-	// NextUI looks up cover art by the full ROM stem (including [v1.2]).
+	// Jawaka looks up cover art by the full ROM stem (including [v1.2]).
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/cover.png",
 		"/roms/Game Boy Color (GBC)/Kero Kero Cowboy [v1.2].gbc",

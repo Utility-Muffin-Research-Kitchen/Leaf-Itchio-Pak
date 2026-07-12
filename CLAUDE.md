@@ -11,8 +11,8 @@ runtime or layout compatibility target.
 - Publish through Pak Rat only after every verification gate passes.
 - Keep the Go catalogue, download, inventory, content-filter, GIF, API-key, and
   music behavior unless the port plan explicitly replaces it.
-- Replace SDL renderer ownership with an app-local CGo bridge to Catastrophe's
-  retained box-model GUI.
+- Keep the single app-local CGo bridge to Catastrophe's box-model GUI; do not
+  restore the removed Go/SDL renderer.
 - Support both SD cards through Leaf's runtime environment and explicit
   destination selection.
 
@@ -23,20 +23,22 @@ Pak entrypoint when present. Prefer the public variables documented in
 `../umrk-workspace/docs/runtime-paths.md`; do not hardcode `/mnt/SDCARD` or
 NextUI paths in new code.
 
-Durable app state belongs under `.userdata/mlp1/itchio`; release-managed files
+Durable app state belongs under `.userdata/mlp1/Itch-io`; release-managed files
 belong under `.system/leaf/platforms/mlp1`. The launcher stack is entered
 through `jawakad`, and suspend inhibition must use a generic Jawaka contract.
 
 ## Build and test
 
 ```sh
-./scripts/test.sh
-go test -race -tags headless ./...
+make test
+make test-race
+make mac
+make package-smoke
 ```
 
-The containerized Linux suite is canonical. The host command is an additional
-fast check. Device packaging and staging will move to an MLP1-only lane as the
-Leaf port lands.
+The headless and native race suites are both required. Device packaging is
+MLP1-only; explicit device staging is dispatched through Leaf's `stage-app`
+target and never changes the default Leaf payload.
 
 ## Code constraints
 

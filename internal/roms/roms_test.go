@@ -81,33 +81,30 @@ func TestScoreUpload(t *testing.T) {
 func TestDestinationDir(t *testing.T) {
 	tests := []struct {
 		ext  string
-		core string
 		want string
 	}{
-		{".gbc", "fakeo8", "/leaf/Roms/GBC/"},
-		{".GBC", "fakeo8", "/leaf/Roms/GBC/"},
-		{".gb", "fakeo8", "/leaf/Roms/GB/"},
-		{".gba", "fakeo8", "/leaf/Roms/GBA/"},
-		{".nes", "fakeo8", "/leaf/Roms/NES/"},
-		{".md", "fakeo8", "/leaf/Roms/GENESIS/"},
-		{".gen", "fakeo8", "/leaf/Roms/GENESIS/"},
-		{".smd", "fakeo8", "/leaf/Roms/GENESIS/"},
-		{".p8", "fakeo8", "/leaf/Roms/PICO8/"},
-		{".P8", "fakeo8", "/leaf/Roms/PICO8/"},
-		{".p8.png", "fakeo8", "/leaf/Roms/PICO8/"},
-		{".p8", "pico8", "/leaf/Roms/PICO8/"},
-		{".p8.png", "pico8", "/leaf/Roms/PICO8/"},
-		{".zip", "fakeo8", "/leaf/Roms/GBC/"},
-		{".chd", "fakeo8", "/leaf/Roms/PSX/"},
-		{".cue", "fakeo8", "/leaf/Roms/PSX/"},
-		{".bin", "fakeo8", "/leaf/Roms/PSX/"},
-		{".m3u", "fakeo8", "/leaf/Roms/PSX/"},
-		{".unknown", "fakeo8", ""},
+		{".gbc", "/leaf/Roms/GBC/"},
+		{".GBC", "/leaf/Roms/GBC/"},
+		{".gb", "/leaf/Roms/GB/"},
+		{".gba", "/leaf/Roms/GBA/"},
+		{".nes", "/leaf/Roms/NES/"},
+		{".md", "/leaf/Roms/GENESIS/"},
+		{".gen", "/leaf/Roms/GENESIS/"},
+		{".smd", "/leaf/Roms/GENESIS/"},
+		{".p8", "/leaf/Roms/PICO8/"},
+		{".P8", "/leaf/Roms/PICO8/"},
+		{".p8.png", "/leaf/Roms/PICO8/"},
+		{".zip", "/leaf/Roms/GBC/"},
+		{".chd", "/leaf/Roms/PSX/"},
+		{".cue", "/leaf/Roms/PSX/"},
+		{".bin", "/leaf/Roms/PSX/"},
+		{".m3u", "/leaf/Roms/PSX/"},
+		{".unknown", ""},
 	}
 	for _, tt := range tests {
-		got := roms.DestinationDir(tt.ext, tt.core)
+		got := roms.DestinationDir(tt.ext)
 		if got != tt.want {
-			t.Errorf("DestinationDir(%q, %q) = %q, want %q", tt.ext, tt.core, got, tt.want)
+			t.Errorf("DestinationDir(%q) = %q, want %q", tt.ext, got, tt.want)
 		}
 	}
 }
@@ -131,37 +128,23 @@ func TestPSXFormatPolicy(t *testing.T) {
 }
 
 func TestPico8ROMDir(t *testing.T) {
-	cases := []struct {
-		core string
-		want string
-	}{
-		{"fakeo8", "/leaf/Roms/PICO8/"},
-		{"pico8", "/leaf/Roms/PICO8/"},
-		{"", "/leaf/Roms/PICO8/"},
-		{"other", "/leaf/Roms/PICO8/"},
-	}
-	for _, tc := range cases {
-		got := roms.Pico8ROMDir(tc.core)
-		if got != tc.want {
-			t.Errorf("Pico8ROMDir(%q) = %q, want %q", tc.core, got, tc.want)
-		}
+	if got := roms.Pico8ROMDir(); got != "/leaf/Roms/PICO8/" {
+		t.Errorf("Pico8ROMDir() = %q, want %q", got, "/leaf/Roms/PICO8/")
 	}
 }
 
 func TestPico8GameSubDir(t *testing.T) {
 	cases := []struct {
-		core  string
 		title string
 		want  string
 	}{
-		{"fakeo8", "Poom", "/leaf/Roms/PICO8/Poom/"},
-		{"pico8", "Poom", "/leaf/Roms/PICO8/Poom/"},
-		{"fakeo8", "Celeste", "/leaf/Roms/PICO8/Celeste/"},
+		{"Poom", "/leaf/Roms/PICO8/Poom/"},
+		{"Celeste", "/leaf/Roms/PICO8/Celeste/"},
 	}
 	for _, tc := range cases {
-		got := roms.Pico8GameSubDir(tc.core, tc.title)
+		got := roms.Pico8GameSubDir(tc.title)
 		if got != tc.want {
-			t.Errorf("Pico8GameSubDir(%q, %q) = %q, want %q", tc.core, tc.title, got, tc.want)
+			t.Errorf("Pico8GameSubDir(%q) = %q, want %q", tc.title, got, tc.want)
 		}
 	}
 }
@@ -205,7 +188,7 @@ func TestMusicDestinationDir(t *testing.T) {
 	}
 }
 
-func TestPico8GameSubDirLegacy(t *testing.T) {
+func TestPico8GameSubDirSanitizesTitle(t *testing.T) {
 	tests := []struct {
 		title string
 		want  string
@@ -215,7 +198,7 @@ func TestPico8GameSubDirLegacy(t *testing.T) {
 		{"", "/leaf/Roms/PICO8/Unknown/"},
 	}
 	for _, tt := range tests {
-		got := roms.Pico8GameSubDir("fakeo8", tt.title)
+		got := roms.Pico8GameSubDir(tt.title)
 		if got != tt.want {
 			t.Errorf("Pico8GameSubDir(%q) = %q, want %q", tt.title, got, tt.want)
 		}

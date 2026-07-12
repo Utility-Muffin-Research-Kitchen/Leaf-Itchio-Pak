@@ -16,9 +16,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
-type catDestinationTarget struct {
-	key, label, legacyExt string
-}
+type catDestinationTarget struct{ key, label string }
 
 type CatDestinationFlow struct {
 	sources leaf.SourceList
@@ -90,7 +88,7 @@ func newCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 		if !exists {
 			targetIndex = len(flow.targets)
 			byKey[canonical] = targetIndex
-			flow.targets = append(flow.targets, catDestinationTarget{key: canonical, label: canonical, legacyExt: ext})
+			flow.targets = append(flow.targets, catDestinationTarget{key: canonical, label: canonical})
 		}
 		flow.uploadTargets[index] = targetIndex
 		flow.archiveExts[canonical] = append(flow.archiveExts[canonical], ext)
@@ -250,12 +248,6 @@ func (flow *CatDestinationFlow) rememberedStart(target catDestinationTarget) str
 	}
 	if found && preference.SourceID == flow.selected.ID {
 		if candidate, err := leaf.JoinWithin(flow.root, preference.RelativePath); err == nil && catDestinationDirectorySafe(flow.root, candidate, false) == nil {
-			return candidate
-		}
-	}
-	// One-way compatibility for the old absolute primary-only preference.
-	if !flow.music && flow.selected.Primary && flow.cfg.LastROMDirs != nil {
-		if candidate := flow.cfg.LastROMDirs[target.legacyExt]; candidate != "" && catDestinationDirectorySafe(flow.root, candidate, false) == nil {
 			return candidate
 		}
 	}

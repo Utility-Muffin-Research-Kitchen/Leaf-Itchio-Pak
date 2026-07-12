@@ -32,7 +32,7 @@ type Game struct {
 	IsFree      bool      `json:"is_free"`
 	Tags        []string  `json:"tags,omitempty"`     // extracted from [Tag] brackets in the RSS title
 	PublishedAt time.Time `json:"published_at"`       // parsed from <pubDate> in RSS feed
-	Platform    string    `json:"platform,omitempty"` // NextUI system code set by FetchAllGames, e.g. "GB"
+	Platform    string    `json:"platform,omitempty"` // Leaf system code set by FetchAllGames, e.g. "GB"
 }
 
 var (

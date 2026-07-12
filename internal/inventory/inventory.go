@@ -599,7 +599,7 @@ func (inv *Inventory) AllURLs() []string {
 // CoverArtPath returns the filesystem path for the cover art of a downloaded ROM,
 // mirroring the naming convention used by itchio.DownloadCoverArt.
 // Cover art is always stored as .jpg using the exact ROM filename stem so it
-// matches NextUI's cover art lookup (which uses the full filename including
+// matches Jawaka's cover art lookup (which uses the full filename including
 // bracket/paren tags like [v1.2]).
 // Returns "" if either argument is empty.
 func CoverArtPath(coverURL, romDestPath string) string {

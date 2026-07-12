@@ -193,7 +193,7 @@ func TestIsRunStartLine(t *testing.T) {
 		{"[INFO]  itchio-pak v1.0.9 starting\n", true},
 		{"[INFO]  itchio-pak v1.0.10-rc1 starting\n", true},
 		{"[INFO]  itchio-pak dev starting\n", true},
-		{"[INFO]  platform=tg5040 nextui=v2.0\n", false},
+		{"[INFO]  platform=legacy launcher=v2.0\n", false},
 		{"[ERROR] something went wrong\n", false},
 		{"[INFO]  Git commit: abc1234\n", false},
 		{"", false},

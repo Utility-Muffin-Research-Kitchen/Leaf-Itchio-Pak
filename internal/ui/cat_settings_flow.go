@@ -212,7 +212,6 @@ func (flow *CatSettingsFlow) Confirm(model *appui.SettingsModel) (CatSettingsAct
 	case catSettingsConfirmResetDestinations:
 		flow.cfg.ROMDestinations = nil
 		flow.cfg.MusicDestination = nil
-		flow.cfg.LastROMDirs = nil
 		if err := flow.cfg.Save(flow.cfgPath); err != nil {
 			return CatSettingsNone, err
 		}

@@ -58,18 +58,15 @@ type Config struct {
 	APIKeyWarningAccepted bool                             `json:"api_key_physical_warning_accepted,omitempty"`
 	ROMSelection          string                           `json:"rom_selection"`
 	ROMLocation           string                           `json:"rom_location"`
-	LastROMDirs           map[string]string                `json:"last_rom_dirs,omitempty"`
 	ROMDestinations       map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`
 	MusicDestination      *RememberedDestination           `json:"remembered_music_destination,omitempty"`
 	Filter                ContentFilter                    `json:"content_filter"`
 	LogLevel              string                           `json:"log_level,omitempty"`       // "debug" | "" (resolves to "info")
 	SortMode              string                           `json:"sort_mode,omitempty"`       // "az" | "za" | "new" | "dl" | "free" | "paid" | "" (empty = [RSS])
 	PlatformFilter        string                           `json:"platform_filter,omitempty"` // "" = All; persisted to config.json
-	NextUITheme           bool                             `json:"nextui_theme"`
-	UnifiedNaming         bool                             `json:"unified_naming"`           // default true — no omitempty so false survives save/load
-	MusicDownload         string                           `json:"music_download,omitempty"` // "auto" | "ask" | "off"
-	MusicLocation         string                           `json:"music_location,omitempty"` // "auto" | "ask"
-	Pico8Core             string                           `json:"pico8_core,omitempty"`     // "fakeo8" | "pico8"
+	UnifiedNaming         bool                             `json:"unified_naming"`            // default true — no omitempty so false survives save/load
+	MusicDownload         string                           `json:"music_download,omitempty"`  // "auto" | "ask" | "off"
+	MusicLocation         string                           `json:"music_location,omitempty"`  // "auto" | "ask"
 }
 
 func defaults() *Config {
@@ -80,7 +77,6 @@ func defaults() *Config {
 		UnifiedNaming: true,
 		MusicDownload: "off",
 		MusicLocation: "auto",
-		Pico8Core:     "fakeo8",
 		Filter: ContentFilter{
 			AdultContent: CategoryFilter{Enabled: true},
 			HeavyThemes:  CategoryFilter{Enabled: true},

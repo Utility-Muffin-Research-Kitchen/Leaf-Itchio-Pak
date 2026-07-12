@@ -339,7 +339,7 @@ func (flow *CatDownloadFlow) planForUpload(upload roms.Upload) *CatDownloadPlan 
 		return &CatDownloadPlan{Kind: CatDownloadPlanDestination, Uploads: []roms.Upload{upload}}
 	}
 	ext := strings.ToLower(roms.ROMExt(upload.Filename))
-	dest := roms.DestinationDir(ext, flow.cfg.Pico8Core) + upload.Filename
+	dest := roms.DestinationDir(ext) + upload.Filename
 	if existing := flow.inv.ExistingDestPath(flow.game.URL, upload.Filename); existing != "" {
 		dest = existing
 	}
@@ -353,7 +353,7 @@ func (flow *CatDownloadFlow) planForUploads(uploads []roms.Upload) *CatDownloadP
 	plan := &CatDownloadPlan{Kind: CatDownloadPlanMulti, Uploads: append([]roms.Upload(nil), uploads...)}
 	for _, upload := range uploads {
 		ext := strings.ToLower(roms.ROMExt(upload.Filename))
-		dest := roms.DestinationDir(ext, flow.cfg.Pico8Core) + upload.Filename
+		dest := roms.DestinationDir(ext) + upload.Filename
 		if existing := flow.inv.ExistingDestPath(flow.game.URL, upload.Filename); existing != "" {
 			dest = existing
 		}

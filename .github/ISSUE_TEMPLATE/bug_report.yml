@@ -13,10 +13,7 @@ body:
       label: Device
       description: Which device are you running the Pak on?
       options:
-        - TrimUI Brick
-        - TrimUI Smart Pro
-        - TrimUI Smart Pro S
-        - Miyoo Flip
+        - Miniloong Pocket 1
     validations:
       required: true
 
@@ -29,17 +26,8 @@ body:
 
         **If the app won't open or is crashing**, you can find the version two other ways:
         - **Log file:** The first line of the log file contains the version (e.g. `itchio-pak v1.2.0 starting`). See the Log File field below for how to find it.
-        - **pak.json on SD card:** Remove the SD card, open `Tools/<device-folder>/Itch-io.pak/pak.json` in a text editor, and read the `"version"` field.
+        - **pak.json on SD card:** Remove the SD card, open `Apps/mlp1/Itch-io.pak/pak.json` in a text editor, and read the `"version"` field.
       placeholder: "e.g. v1.2.0"
-    validations:
-      required: true
-
-  - type: input
-    id: nextui-version
-    attributes:
-      label: NextUI Version
-      description: The version of NextUI installed on your device (shown in the NextUI main menu or About section).
-      placeholder: "e.g. v1.0.0"
     validations:
       required: true
 
@@ -72,17 +60,11 @@ body:
       description: |
         The log file contains the most useful information for debugging. Please attach it or paste its contents here.
 
-        **How to find it** — power off the device, remove the SD card, and insert it into your computer. The log file is at:
-
-        | Device | Log path on SD card |
-        |--------|-------------------|
-        | TrimUI Brick / Smart Pro | `.userdata/tg5040/logs/itchio-pak.log` |
-        | TrimUI Smart Pro S | `.userdata/tg5050/logs/itchio-pak.log` |
-        | Miyoo Flip | `.userdata/my355/logs/itchio-pak.log` |
+        **How to find it** — power off the device, remove the SD card, and insert it into your computer. The log is at `.userdata/mlp1/logs/itchio-pak.log` unless Leaf's runtime environment configures another `LOGS_PATH`.
 
         You can drag the file into this text box or paste its contents directly.
 
-        > If the bug involves a network or download failure, set **Log Level → Debug** in Settings (press **Start** from any screen, scroll to **Log Level**, press **B** to toggle), reproduce the issue, then attach the log. Debug logs capture the full HTTP flow and are much more useful for diagnosing scraping or download problems.
+        > If the bug involves a network or download failure, set **Log Level → Debug** in Settings (press **Start** from the main screen, select **Log Level**, and press **A**), reproduce the issue, then attach the log. Credentials and private runtime roots remain redacted.
       placeholder: "Paste log contents here, or drag-and-drop the file above..."
     validations:
       required: false

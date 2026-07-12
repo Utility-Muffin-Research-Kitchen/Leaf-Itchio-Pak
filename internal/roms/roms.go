@@ -245,13 +245,12 @@ func SystemDir(id string) string {
 	return config.SystemDirs[id]
 }
 
-// Pico8ROMDir returns Leaf's single canonical PICO8 directory. core remains in
-// the signature until the legacy settings screen is removed.
-func Pico8ROMDir(_ string) string {
+// Pico8ROMDir returns Leaf's single canonical PICO8 directory.
+func Pico8ROMDir() string {
 	return SystemDir("PICO8")
 }
 
-func DestinationDir(ext, _ string) string {
+func DestinationDir(ext string) string {
 	switch strings.ToLower(ext) {
 	case ".gbc":
 		return SystemDir("GBC")
@@ -315,10 +314,10 @@ func MusicDestinationDir(gameTitle string) string {
 
 // Pico8GameSubDir returns the subdirectory for a Pico-8 game that ships with
 // multiple files (.p8/.p8.png/.lua). All game files are extracted here.
-func Pico8GameSubDir(core, gameTitle string) string {
+func Pico8GameSubDir(gameTitle string) string {
 	safe := SanitiseFilename(gameTitle, "")
 	if safe == "" {
 		safe = "Unknown"
 	}
-	return Pico8ROMDir(core) + safe + "/"
+	return Pico8ROMDir() + safe + "/"
 }

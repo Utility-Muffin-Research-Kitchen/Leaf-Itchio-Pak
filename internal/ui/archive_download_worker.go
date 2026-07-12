@@ -181,7 +181,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 
 			// Cover art: artRef is <gameDir>.p8 so CoverArtPath places the image
-			// in the PARENT directory's .media/ — where NextUI looks for directory art.
+			// in the PARENT directory's .media/ — where Jawaka looks for directory art.
 			artRef := gameDir + ".p8"
 			artwork := ensureROMArtwork(s.client, s.inv, s.game, artRef)
 			if artwork.Path != "" {
@@ -512,7 +512,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
-		destDir = roms.DestinationDir(ext, s.cfg.Pico8Core)
+		destDir = roms.DestinationDir(ext)
 	}
 	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
 	safeName := roms.SanitiseFilename(stem, ext)
@@ -703,7 +703,7 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
-		destDir = roms.DestinationDir(ext, s.cfg.Pico8Core)
+		destDir = roms.DestinationDir(ext)
 	}
 	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
 	safeName := roms.SanitiseFilename(stem, ext)

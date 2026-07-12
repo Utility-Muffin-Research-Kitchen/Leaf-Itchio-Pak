@@ -25,7 +25,7 @@ type ArtworkResult struct {
 }
 
 // coverArtBasename returns the exact ROM filename stem (no extension).
-// NextUI's cover art lookup matches on the full stem including tags like [v1.2],
+// Jawaka's cover art lookup matches on the full stem including tags like [v1.2],
 // even though it strips those tags for the display name in the ROM browser.
 func coverArtBasename(romDestPath string) string {
 	return strings.TrimSuffix(filepath.Base(romDestPath), filepath.Ext(romDestPath))
