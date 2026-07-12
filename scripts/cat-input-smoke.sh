@@ -51,8 +51,10 @@ capture destination-music 960 720 1 0
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
+capture manage-result 960 720 1 0
 capture rename-saves 960 720 1 0
 capture rename-states 1280 800 0 5
+capture rename-done 960 720 1 0
 capture settings 960 720 1 0
 capture settings 1280 800 0 5
 capture settings-confirm 960 720 1 0

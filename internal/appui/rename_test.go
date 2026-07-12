@@ -16,3 +16,12 @@ func TestRenamePromptsUseBackThenSkip(t *testing.T) {
 		t.Fatalf("save A = %v, want confirm", got)
 	}
 }
+
+func TestRenameDoneKeepsLibraryStatusSeparate(t *testing.T) {
+	model := NewRenameModel("Rename")
+	model.SetDone("ROM renamed.")
+	model.SetLibraryStatus("Files changed · automatic rescan failed; use Rescan in Leaf.")
+	if model.State != RenameDone || model.Message != "ROM renamed." || model.LibraryStatus == "" {
+		t.Fatalf("rename result = %#v", model)
+	}
+}

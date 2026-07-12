@@ -244,6 +244,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	downloadGeneration := 0
 	downloadScanStarted := false
 	downloadLibraryStatus := ""
+	type managementScanResult struct {
+		manage  *appui.ManageModel
+		rename  *appui.RenameModel
+		message string
+		err     error
+	}
+	managementScanResults := make(chan managementScanResult, 2)
+	managementScansPending := 0
 	var archiveFlow *ui.CatArchiveFlow
 	var archiveInspectModel *appui.DownloadProgressModel
 	var archiveInspectScreen *catui.DownloadProgressScreen
@@ -381,6 +389,55 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		route = catRouteManage
 		return nil
+	}
+	requestManagementScan := func(manage *appui.ManageModel, rename *appui.RenameModel) {
+		const pending = "Requesting Leaf library rescan…"
+		if manage != nil {
+			manage.SetLibraryStatus(pending)
+		}
+		if rename != nil {
+			rename.SetLibraryStatus(pending)
+		}
+		managementScansPending++
+		go func() {
+			requestCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			message, scanErr := leaf.RequestLibraryScan(requestCtx)
+			managementScanResults <- managementScanResult{
+				manage: manage, rename: rename, message: message, err: scanErr,
+			}
+			_ = ctx.Wake()
+		}()
+	}
+	syncManagementScans := func() bool {
+		changed := false
+		for {
+			select {
+			case result := <-managementScanResults:
+				if managementScansPending > 0 {
+					managementScansPending--
+				}
+				status := "Leaf library rescan requested."
+				if result.err != nil {
+					logger.Warn("manage: automatic library rescan failed: %v", result.err)
+					status = "Files changed · automatic rescan failed; use Rescan in Leaf."
+				} else if strings.Contains(strings.ToLower(result.message), "queued") {
+					logger.Info("manage: Leaf library rescan queued")
+					status = "Leaf library rescan queued."
+				} else {
+					logger.Info("manage: Leaf library rescan requested")
+				}
+				if result.manage != nil {
+					result.manage.SetLibraryStatus(status)
+				}
+				if result.rename != nil {
+					result.rename.SetLibraryStatus(status)
+				}
+				changed = true
+			default:
+				return changed
+			}
+		}
 	}
 	startBackend := func(backend ui.CatDownloadBackend) error {
 		downloadBackend = backend
@@ -648,6 +705,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			syncDownloadProgress()
 			redraw = true
 		}
+		if syncManagementScans() {
+			redraw = true
+		}
 		if uploaded, processErr := imageCache.ProcessPending(ctx); processErr != nil {
 			return processErr
 		} else if uploaded {
@@ -847,6 +907,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.ManageIntentConfirm:
 					if _, flowErr := manageFlow.Confirm(manageModel); flowErr != nil {
 						manageModel.SetError(flowErr.Error())
+					} else if manageFlow.TakeLibraryScanRequest() {
+						requestManagementScan(manageModel, nil)
 					}
 					list.ScheduleRebuild()
 				}
@@ -864,10 +926,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.RenameIntentConfirm:
 					if flowErr := renameFlow.Confirm(renameModel); flowErr != nil {
 						renameModel.SetError(flowErr.Error())
+					} else if renameFlow.TakeLibraryScanRequest() {
+						requestManagementScan(nil, renameModel)
 					}
 				case appui.RenameIntentSkip:
 					if flowErr := renameFlow.Skip(renameModel); flowErr != nil {
 						renameModel.SetError(flowErr.Error())
+					} else if renameFlow.TakeLibraryScanRequest() {
+						requestManagementScan(nil, renameModel)
 					}
 				}
 			case catRouteSettings:
@@ -1019,6 +1085,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			busy = busy || archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning
 			busy = busy || downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning
 			busy = busy || downloadLibraryStatus == "Requesting Leaf library rescan…"
+			busy = busy || managementScansPending > 0
 			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
 			busy = busy || settingsFlow != nil && settingsFlow.Busy()
 			if !busy {

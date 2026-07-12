@@ -37,15 +37,16 @@ const (
 )
 
 type ManageModel struct {
-	State       ManageState
-	Title       string
-	Subtitle    string
-	Items       []ManageItem
-	Cursor      int
-	VisibleRows int
-	PromptTitle string
-	PromptLines []string
-	Message     string
+	State         ManageState
+	Title         string
+	Subtitle      string
+	Items         []ManageItem
+	Cursor        int
+	VisibleRows   int
+	PromptTitle   string
+	PromptLines   []string
+	Message       string
+	LibraryStatus string
 }
 
 func NewManageModel(title string) *ManageModel {
@@ -56,7 +57,7 @@ func (m *ManageModel) SetItems(subtitle string, items []ManageItem) {
 	m.State = ManageList
 	m.Subtitle = subtitle
 	m.Items = append([]ManageItem(nil), items...)
-	m.PromptTitle, m.PromptLines, m.Message = "", nil, ""
+	m.PromptTitle, m.PromptLines, m.Message, m.LibraryStatus = "", nil, "", ""
 	if m.Cursor >= len(m.Items) {
 		m.Cursor = len(m.Items) - 1
 	}
@@ -69,16 +70,18 @@ func (m *ManageModel) SetConfirm(title string, lines []string) {
 	m.State = ManageConfirm
 	m.PromptTitle = title
 	m.PromptLines = append([]string(nil), lines...)
-	m.Message = ""
+	m.Message, m.LibraryStatus = "", ""
 }
 
 func (m *ManageModel) SetResult(message string) {
-	m.State, m.Message = ManageResult, message
+	m.State, m.Message, m.LibraryStatus = ManageResult, message, ""
 }
 
 func (m *ManageModel) SetError(message string) {
-	m.State, m.Message = ManageError, message
+	m.State, m.Message, m.LibraryStatus = ManageError, message, ""
 }
+
+func (m *ManageModel) SetLibraryStatus(status string) { m.LibraryStatus = status }
 
 func (m *ManageModel) Handle(event InputEvent) ManageIntent {
 	if !event.Pressed {

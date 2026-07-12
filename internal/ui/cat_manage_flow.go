@@ -17,13 +17,14 @@ import (
 )
 
 type CatManageFlow struct {
-	inv           *inventory.Inventory
-	inventoryPath string
-	gameURL       string
-	sources       leaf.SourceList
-	catalog       *leaf.Catalog
-	entry         inventory.Entry
-	pending       []int
+	inv                *inventory.Inventory
+	inventoryPath      string
+	gameURL            string
+	sources            leaf.SourceList
+	catalog            *leaf.Catalog
+	entry              inventory.Entry
+	pending            []int
+	libraryScanPending bool
 }
 
 func NewCatManageFlow(inv *inventory.Inventory, inventoryPath, gameURL string,
@@ -197,6 +198,7 @@ func (flow *CatManageFlow) Back(model *appui.ManageModel) bool {
 }
 
 func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
+	flow.libraryScanPending = false
 	if len(flow.pending) == 0 {
 		return false, fmt.Errorf("no files were selected")
 	}
@@ -246,7 +248,21 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 		return !stillPresent, deleteErr
 	}
 	model.SetResult(fmt.Sprintf("Deleted %d managed file(s).", len(deleted)))
+	for _, file := range deleted {
+		if managedContentKind(file) == inventory.ContentKindROM {
+			flow.libraryScanPending = true
+			break
+		}
+	}
 	return !stillPresent, nil
+}
+
+// TakeLibraryScanRequest consumes the single Jawaka scan required by one
+// committed deletion batch, regardless of how many ROM files it contained.
+func (flow *CatManageFlow) TakeLibraryScanRequest() bool {
+	pending := flow.libraryScanPending
+	flow.libraryScanPending = false
+	return pending
 }
 
 func (flow *CatManageFlow) indicesByKind(kind string) []int {
@@ -347,17 +363,18 @@ func allFileIndices(files []inventory.DownloadedFile) []int {
 type renamePair struct{ oldPath, newPath string }
 
 type CatRenameFlow struct {
-	inv           *inventory.Inventory
-	inventoryPath string
-	gameURL       string
-	entry         inventory.Entry
-	file          inventory.DownloadedFile
-	source        leaf.Source
-	enable        bool
-	targetPath    string
-	saves, states []renamePair
-	renameSaves   bool
-	renameStates  bool
+	inv                *inventory.Inventory
+	inventoryPath      string
+	gameURL            string
+	entry              inventory.Entry
+	file               inventory.DownloadedFile
+	source             leaf.Source
+	enable             bool
+	targetPath         string
+	saves, states      []renamePair
+	renameSaves        bool
+	renameStates       bool
+	libraryScanPending bool
 }
 
 func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, fileIndex int,
@@ -537,6 +554,7 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 		rollback()
 		return fmt.Errorf("commit renamed inventory: %w", err)
 	}
+	flow.libraryScanPending = true
 	parts := []string{"ROM renamed"}
 	if flow.renameSaves {
 		parts = append(parts, fmt.Sprintf("%d save(s)", len(flow.saves)))
@@ -546,6 +564,14 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	}
 	model.SetDone(strings.Join(parts, ", ") + ".")
 	return nil
+}
+
+// TakeLibraryScanRequest consumes the single Jawaka scan required by the
+// committed ROM/save/state/artwork rename transaction.
+func (flow *CatRenameFlow) TakeLibraryScanRequest() bool {
+	pending := flow.libraryScanPending
+	flow.libraryScanPending = false
+	return pending
 }
 
 func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []string {

@@ -46,7 +46,11 @@ func (screen *RenameScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	switch screen.model.State {
 	case appui.RenameDone:
-		err = screen.ui.DrawState(body, StateEmpty, "Rename complete", screen.model.Message)
+		lines := []string{screen.model.Message}
+		if screen.model.LibraryStatus != "" {
+			lines = append(lines, screen.model.LibraryStatus)
+		}
+		err = screen.ui.DrawScrollingBody(body, "Rename complete", lines, 0)
 	case appui.RenameError:
 		err = screen.ui.DrawState(body, StateError, "Rename failed", screen.model.Message)
 	default:

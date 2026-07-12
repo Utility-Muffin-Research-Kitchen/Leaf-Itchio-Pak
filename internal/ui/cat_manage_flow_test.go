@@ -92,6 +92,42 @@ func TestCatManageDeletesSourceOwnedFile(t *testing.T) {
 	if _, err := os.Stat(userArt); err != nil {
 		t.Fatalf("user-owned artwork was deleted: %v", err)
 	}
+	if !flow.TakeLibraryScanRequest() {
+		t.Fatal("committed ROM deletion did not request a library rescan")
+	}
+	if flow.TakeLibraryScanRequest() {
+		t.Fatal("one deletion batch requested more than one library rescan")
+	}
+}
+
+func TestCatManageMusicDeletionDoesNotRequestGameLibraryScan(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	configureManageFixture(t, sources, catalog)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := "https://example.invalid/music"
+	musicPath := filepath.Join(sources[0].MusicPath, "Album", "track.ogg")
+	if err := os.MkdirAll(filepath.Dir(musicPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(musicPath, []byte("music"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv.Add(gameURL, inventory.Entry{Title: "Album"}, inventory.DownloadedFile{
+		Filename: "track.ogg", DestPath: musicPath, FileType: inventory.FileTypeMusic,
+	})
+	flow, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Confirm(model); err != nil {
+		t.Fatal(err)
+	}
+	if flow.TakeLibraryScanRequest() {
+		t.Fatal("music-only deletion requested a game-library rescan")
+	}
 }
 
 func TestCatManageRechecksCardBeforeDeletion(t *testing.T) {
@@ -215,6 +251,12 @@ func TestCatRenameKeepsSaveAndStatesOnROMSource(t *testing.T) {
 	entry, _ := inv.Lookup(gameURL)
 	if entry.Files[0].SourceID != "primary" || entry.Files[0].RelativePath != "Roms/GBC/Leaf Title.gbc" {
 		t.Fatalf("renamed identity = %+v", entry.Files[0])
+	}
+	if !flow.TakeLibraryScanRequest() {
+		t.Fatal("committed ROM rename did not request a library rescan")
+	}
+	if flow.TakeLibraryScanRequest() {
+		t.Fatal("one rename transaction requested more than one library rescan")
 	}
 }
 

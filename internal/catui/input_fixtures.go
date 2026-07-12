@@ -171,7 +171,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm":
+	case "manage-list", "manage-confirm", "manage-result":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("3 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
@@ -184,6 +184,9 @@ func RunInputFixture(config InputFixtureConfig) error {
 		})
 		if config.Screen == "manage-confirm" {
 			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+		} else if config.Screen == "manage-result" {
+			model.SetResult("Deleted 2 managed ROM files.")
+			model.SetLibraryStatus("Leaf library rescan queued.")
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
 		if screenErr != nil {
@@ -193,7 +196,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
-	case "rename-saves", "rename-states":
+	case "rename-saves", "rename-states", "rename-done":
 		model := appui.NewRenameModel("Leafbound 葉")
 		state, subtitle, heading := appui.RenameConfirmSaves, "Save files", "Rename these save files?"
 		lines := []string{"Saves/GBC/leafbound.srm", "→ Saves/GBC/Leafbound 葉.srm"}
@@ -205,6 +208,10 @@ func RunInputFixture(config InputFixtureConfig) error {
 			}
 		}
 		model.SetPrompt(state, subtitle, heading, lines)
+		if config.Screen == "rename-done" {
+			model.SetDone("ROM renamed, 1 save, 2 state files.")
+			model.SetLibraryStatus("Files changed · automatic rescan failed; use Rescan in Leaf.")
+		}
 		screen, screenErr := NewRenameScreen(ctx, model)
 		if screenErr != nil {
 			return screenErr

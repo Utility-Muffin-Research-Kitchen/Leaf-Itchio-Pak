@@ -31,3 +31,13 @@ func TestManageConfirmationControls(t *testing.T) {
 		t.Fatalf("B = %v, want cancel", got)
 	}
 }
+
+func TestManageResultKeepsLibraryStatusSeparate(t *testing.T) {
+	model := NewManageModel("Manage")
+	model.SetResult("Deleted 2 managed files.")
+	model.SetLibraryStatus("Leaf library rescan queued.")
+	if model.State != ManageResult || model.Message != "Deleted 2 managed files." ||
+		model.LibraryStatus != "Leaf library rescan queued." {
+		t.Fatalf("management result = %#v", model)
+	}
+}

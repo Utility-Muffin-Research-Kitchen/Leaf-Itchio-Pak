@@ -20,14 +20,15 @@ const (
 )
 
 type RenameModel struct {
-	State      RenameState
-	Title      string
-	Subtitle   string
-	Heading    string
-	Lines      []string
-	Message    string
-	ScrollLine int
-	ScrollMax  int
+	State         RenameState
+	Title         string
+	Subtitle      string
+	Heading       string
+	Lines         []string
+	Message       string
+	LibraryStatus string
+	ScrollLine    int
+	ScrollMax     int
 }
 
 func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: title} }
@@ -35,16 +36,18 @@ func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: titl
 func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, lines []string) {
 	m.State, m.Subtitle, m.Heading = state, subtitle, heading
 	m.Lines = append([]string(nil), lines...)
-	m.Message, m.ScrollLine = "", 0
+	m.Message, m.LibraryStatus, m.ScrollLine = "", "", 0
 }
 
 func (m *RenameModel) SetDone(message string) {
-	m.State, m.Subtitle, m.Message = RenameDone, "Rename complete", message
+	m.State, m.Subtitle, m.Message, m.LibraryStatus = RenameDone, "Rename complete", message, ""
 }
 
 func (m *RenameModel) SetError(message string) {
-	m.State, m.Subtitle, m.Message = RenameError, "Rename failed", message
+	m.State, m.Subtitle, m.Message, m.LibraryStatus = RenameError, "Rename failed", message, ""
 }
+
+func (m *RenameModel) SetLibraryStatus(status string) { m.LibraryStatus = status }
 
 func (m *RenameModel) SetScrollBounds(maximum int) {
 	if maximum < 0 {
