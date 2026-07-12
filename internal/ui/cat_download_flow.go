@@ -163,6 +163,10 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 			model.SetChoices("Choose purchase source", choices)
 		case catDownloadUpdateDetected:
 			if update.ext == "" {
+				if roms.IsPSXSupportExt(roms.ROMExt(update.upload.Filename)) {
+					model.SetError("This standalone BIN is not a recognized cartridge ROM. A PlayStation BIN track requires its matching CUE descriptor.")
+					return true
+				}
 				flow.mode = catDownloadModeFormats
 				flow.uploads = []roms.Upload{update.upload}
 				model.SetChoices("Type not detected — choose a format", []appui.DownloadChoice{{
@@ -172,9 +176,7 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 				return true
 			}
 			upload := update.upload
-			if strings.ToLower(roms.ROMExt(upload.Filename)) != update.ext {
-				upload.Filename += update.ext
-			}
+			upload.Filename = filenameWithFormat(upload.Filename, update.ext)
 			upload.NeedsFormat = false
 			flow.plan = flow.planForUpload(upload)
 		default:
@@ -215,9 +217,7 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 			return
 		}
 		ext := formatExtension(label)
-		if strings.ToLower(roms.ROMExt(upload.Filename)) != ext {
-			upload.Filename += ext
-		}
+		upload.Filename = filenameWithFormat(upload.Filename, ext)
 		upload.NeedsFormat = false
 		flow.plan = flow.planForUpload(upload)
 	}
@@ -252,6 +252,18 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		return
 	}
 	flow.uploads = uploads
+	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {
+		// BIN is ambiguous: it is commonly a PlayStation companion track, but
+		// Mega Drive homebrew is also frequently published as a lone .bin.
+		// Require content detection before applying the orphan-PSX guard.
+		upload := uploads[0]
+		upload.NeedsFormat = true
+		flow.mode, flow.uploads = catDownloadModeFormats, []roms.Upload{upload}
+		model.SetChoices("Detect standalone BIN format", []appui.DownloadChoice{{
+			Title: upload.Filename, Badge: "AUTO", FormatOptions: append([]string(nil), allFormatLabels()...),
+		}})
+		return
+	}
 	var known, unknown []roms.Upload
 	for _, upload := range uploads {
 		if upload.NeedsFormat {
@@ -261,10 +273,6 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		}
 	}
 	if len(known) == 1 {
-		if roms.IsPSXSupportExt(roms.ROMExt(known[0].Filename)) {
-			model.SetError("A PlayStation BIN track requires its matching CUE descriptor. Download a CUE/BIN archive or upload set instead.")
-			return
-		}
 		flow.plan = flow.planForUpload(known[0])
 		return
 	}
@@ -359,4 +367,15 @@ func formatExtension(label string) string {
 	default:
 		return "." + strings.ToLower(label)
 	}
+}
+
+func filenameWithFormat(filename, ext string) string {
+	current := roms.ROMExt(filename)
+	if strings.EqualFold(current, ext) {
+		return filename
+	}
+	if strings.EqualFold(current, ".bin") {
+		return strings.TrimSuffix(filename, current) + ext
+	}
+	return filename + ext
 }

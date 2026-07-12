@@ -59,14 +59,58 @@ func TestCatDownloadFlowClassifiesDirectAndMulti(t *testing.T) {
 	}
 
 	flow.setUploads(model, []roms.Upload{{Filename: "orphan.bin"}})
-	if plan = flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectError {
-		t.Fatalf("orphan BIN was accepted: plan=%#v model=%#v", plan, model)
+	if plan = flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectChoices ||
+		len(model.Choices) != 1 || model.Choices[0].Badge != "AUTO" {
+		t.Fatalf("standalone BIN did not require detection: plan=%#v model=%#v", plan, model)
 	}
 
 	flow.setUploads(model, []roms.Upload{{Filename: "one.gb"}, {Filename: "two.gbc"}})
 	plan = flow.TakePlan()
 	if plan == nil || plan.Kind != CatDownloadPlanMulti || len(plan.DestPaths) != 2 {
 		t.Fatalf("multi plan = %#v", plan)
+	}
+}
+
+func TestCatDownloadFlowRoutesDetectedGenesisBINToMegaDrive(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.updates = make(chan catDownloadUpdate, 1)
+	flow.updates <- catDownloadUpdate{
+		kind: catDownloadUpdateDetected,
+		upload: roms.Upload{
+			Filename: "Black Jewel Reborn DEMO 2.11.bin",
+			URL:      "https://example.invalid/download",
+		},
+		ext: ".md",
+	}
+	if !flow.Sync(model) {
+		t.Fatal("detected BIN update was not consumed")
+	}
+	plan := flow.TakePlan()
+	if plan == nil || plan.Kind != CatDownloadPlanDirect || plan.Uploads[0].Filename != "Black Jewel Reborn DEMO 2.11.md" {
+		t.Fatalf("detected Genesis plan = %#v", plan)
+	}
+	if got := filepath.Clean(plan.DestPaths[0]); got != filepath.Join(roms.SystemDir("MD"), "Black Jewel Reborn DEMO 2.11.md") {
+		t.Fatalf("Genesis destination = %q", got)
+	}
+}
+
+func TestCatDownloadFlowRejectsUndetectedStandaloneBIN(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.updates = make(chan catDownloadUpdate, 1)
+	flow.updates <- catDownloadUpdate{
+		kind: catDownloadUpdateDetected, upload: roms.Upload{Filename: "track.bin"},
+	}
+	if !flow.Sync(model) || model.State != appui.DownloadSelectError || !strings.Contains(model.Message, "matching CUE") {
+		t.Fatalf("undetected BIN model = %#v", model)
+	}
+}
+
+func TestFilenameWithFormatReplacesAmbiguousBIN(t *testing.T) {
+	if got := filenameWithFormat("game.bin", ".md"); got != "game.md" {
+		t.Fatalf("BIN format = %q", got)
+	}
+	if got := filenameWithFormat("mystery", ".gbc"); got != "mystery.gbc" {
+		t.Fatalf("extensionless format = %q", got)
 	}
 }
 
