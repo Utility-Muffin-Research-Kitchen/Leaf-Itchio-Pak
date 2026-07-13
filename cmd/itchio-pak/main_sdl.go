@@ -158,7 +158,17 @@ func runSDL() {
 	if inventoryErr != nil {
 		logger.Warn("inventory reset: %v", inventoryErr)
 	}
+	repairedArchiveROMs := inv.RepairArchiveRootROMs(inventoryPath, runtimeEnv.Sources)
 	inv.VerifyAndCleanWithSources(inventoryPath, runtimeEnv.Sources)
+	if repairedArchiveROMs > 0 {
+		requestCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if message, scanErr := leaf.RequestLibraryScan(requestCtx); scanErr != nil {
+			logger.Warn("inventory: archive repair library rescan failed: %v", scanErr)
+		} else {
+			logger.Info("inventory: archive repair library rescan: %s", message)
+		}
+		cancel()
+	}
 	client := itchio.NewClientWithVersion(version)
 	if err := runCatApp(client, cfg, cfgPath, cachePath, ownedCachePath, inv, inventoryPath,
 		runtimeEnv.Sources, catalog); err != nil {

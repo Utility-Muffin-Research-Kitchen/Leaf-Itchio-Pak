@@ -519,7 +519,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := destDir + safeName
+	dest := archiveOutputPath(destDir, safeName)
 
 	// Skip when an identical ROM already exists.
 	if existing := s.findIdenticalFromOpener(open, size, ext); existing != "" {
@@ -584,7 +584,7 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := s.plan.MusicDir + safeName
+	dest := archiveOutputPath(s.plan.MusicDir, safeName)
 	if err := extractEntry(open, size, dest); err != nil {
 		return "", err
 	}
@@ -710,7 +710,7 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := destDir + safeName
+	dest := archiveOutputPath(destDir, safeName)
 
 	// Skip extraction when the game already has an identical ROM on disk.
 	if existing := s.findIdenticalROMInInventory(f, ext); existing != "" {
@@ -774,7 +774,7 @@ func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now t
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := s.plan.MusicDir + safeName
+	dest := archiveOutputPath(s.plan.MusicDir, safeName)
 
 	if err := extractZIPEntry(f, dest); err != nil {
 		return "", err

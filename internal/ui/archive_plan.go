@@ -48,6 +48,14 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return cloned
 }
 
+// archiveOutputPath joins picker-selected directories with extracted names.
+// Picker paths are canonical clean paths and deliberately do not carry a
+// trailing separator; string concatenation would place the file beside the
+// selected system or album directory instead of inside it.
+func archiveOutputPath(dir, name string) string {
+	return filepath.Join(dir, name)
+}
+
 func (plan ZIPPlan) shouldExtractROM(name string) bool {
 	if !plan.DownloadROMs {
 		return false

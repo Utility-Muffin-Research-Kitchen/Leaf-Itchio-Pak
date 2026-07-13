@@ -191,3 +191,13 @@ func TestArchivePlanSealDeepCopiesSelections(t *testing.T) {
 		t.Fatalf("sealed archive plan changed: %#v", sealed)
 	}
 }
+
+func TestArchiveOutputPathKeepsFileInsidePickerDirectory(t *testing.T) {
+	dir := filepath.Join("card", "Roms", "GBA")
+	want := filepath.Join(dir, "Loonies 8192.gba")
+	for _, selected := range []string{dir, dir + string(filepath.Separator)} {
+		if got := archiveOutputPath(selected, "Loonies 8192.gba"); got != want {
+			t.Fatalf("archive output for %q = %q, want %q", selected, got, want)
+		}
+	}
+}

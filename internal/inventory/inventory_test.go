@@ -12,8 +12,8 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
-func TestMain(m *testing.M) {
-	err := roms.ConfigurePaths(roms.PathConfig{
+func configureInventoryTestPaths() error {
+	return roms.ConfigurePaths(roms.PathConfig{
 		SystemDirs: map[string]string{
 			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
 			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
@@ -48,6 +48,11 @@ func TestMain(m *testing.M) {
 			},
 		},
 	})
+
+}
+
+func TestMain(m *testing.M) {
+	err := configureInventoryTestPaths()
 	if err != nil {
 		panic(err)
 	}
@@ -268,6 +273,126 @@ func TestVerifyAndCleanRemovesMissingFileOnAvailableSource(t *testing.T) {
 	}
 	if _, ok := inv.Lookup("game"); ok {
 		t.Fatal("missing file on mounted source remained in inventory")
+	}
+}
+
+func TestRepairArchiveRootROMsMovesOnlyAppOwnedMisplacedFile(t *testing.T) {
+	t.Cleanup(func() {
+		if err := configureInventoryTestPaths(); err != nil {
+			panic(err)
+		}
+	})
+	root := t.TempDir()
+	primary := filepath.Join(root, "primary")
+	secondary := filepath.Join(root, "secondary")
+	systems := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"}
+	pathSources := make([]roms.SourcePathConfig, 0, 2)
+	for _, source := range []struct{ id, root string }{{"primary", primary}, {"secondary_sd", secondary}} {
+		dirs, images := make(map[string]string), make(map[string]string)
+		for _, system := range systems {
+			dirs[system] = filepath.Join(source.root, "Roms", system)
+			images[system] = filepath.Join(source.root, "Images", system)
+		}
+		pathSources = append(pathSources, roms.SourcePathConfig{
+			SourceID: source.id, Root: source.root, MusicRoot: filepath.Join(source.root, "Music"),
+			StatesRoot: filepath.Join(source.root, "States"), SystemDirs: dirs, ImageDirs: images,
+		})
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SourceID: "primary", PrimaryRoot: primary, MusicRoot: pathSources[0].MusicRoot,
+		StatesRoot: pathSources[0].StatesRoot, SystemDirs: pathSources[0].SystemDirs,
+		ImageDirs: pathSources[0].ImageDirs, Sources: pathSources,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(secondary, "Roms"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	misplaced := filepath.Join(secondary, "Roms", "Loonies 8192.gba")
+	if err := os.WriteFile(misplaced, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invPath := filepath.Join(root, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Loonies"}, inventory.DownloadedFile{
+		Filename: "Loonies 8192.gba", DestPath: misplaced, SourceArchive: "loonies.zip",
+		ContentKind: inventory.ContentKindROM,
+	})
+	sources := leaf.SourceList{
+		{ID: "primary", Root: primary, Primary: true},
+		{ID: "secondary_sd", Root: secondary},
+	}
+	if repaired := inv.RepairArchiveRootROMs(invPath, sources); repaired != 1 {
+		t.Fatalf("repaired = %d, want 1", repaired)
+	}
+	target := filepath.Join(secondary, "Roms", "GBA", "Loonies 8192.gba")
+	if _, err := os.Stat(misplaced); !os.IsNotExist(err) {
+		t.Fatalf("misplaced source remains: %v", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "rom" {
+		t.Fatalf("canonical target = %q, %v", data, err)
+	}
+	entry, ok := inv.Lookup("game")
+	if !ok || len(entry.Files) != 1 || entry.Files[0].DestPath != target ||
+		entry.Files[0].RelativePath != "Roms/GBA/Loonies 8192.gba" || entry.Files[0].CanonicalSystem != "GBA" {
+		t.Fatalf("repaired inventory = %#v", entry)
+	}
+	reloaded, err := inventory.Load(invPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted, ok := reloaded.Lookup("game"); !ok || persisted.Files[0].DestPath != target {
+		t.Fatalf("persisted repair = %#v", persisted)
+	}
+}
+
+func TestRepairArchiveRootROMsDoesNotMoveUserOrOccupiedFiles(t *testing.T) {
+	t.Cleanup(func() {
+		if err := configureInventoryTestPaths(); err != nil {
+			panic(err)
+		}
+	})
+	root := t.TempDir()
+	romRoot := filepath.Join(root, "Roms")
+	gbaRoot := filepath.Join(romRoot, "GBA")
+	if err := os.MkdirAll(gbaRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	systems, images := make(map[string]string), make(map[string]string)
+	for _, system := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systems[system] = filepath.Join(romRoot, system)
+		images[system] = filepath.Join(root, "Images", system)
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SourceID: "primary", PrimaryRoot: root, MusicRoot: filepath.Join(root, "Music"),
+		StatesRoot: filepath.Join(root, "States"), SystemDirs: systems, ImageDirs: images,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	userFile := filepath.Join(romRoot, "User.gba")
+	occupiedSource := filepath.Join(romRoot, "Occupied.gba")
+	occupiedTarget := filepath.Join(gbaRoot, "Occupied.gba")
+	for path, data := range map[string]string{userFile: "user", occupiedSource: "source", occupiedTarget: "target"} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("user", inventory.Entry{Title: "User"}, inventory.DownloadedFile{
+		Filename: "User.gba", DestPath: userFile, ContentKind: inventory.ContentKindROM,
+	})
+	inv.Add("occupied", inventory.Entry{Title: "Occupied"}, inventory.DownloadedFile{
+		Filename: "Occupied.gba", DestPath: occupiedSource, SourceArchive: "archive.zip",
+		ContentKind: inventory.ContentKindROM,
+	})
+	if repaired := inv.RepairArchiveRootROMs(filepath.Join(root, "inventory.json"),
+		leaf.SourceList{{ID: "primary", Root: root, Primary: true}}); repaired != 0 {
+		t.Fatalf("repaired = %d, want 0", repaired)
+	}
+	for path, want := range map[string]string{userFile: "user", occupiedSource: "source", occupiedTarget: "target"} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Fatalf("preserved %s = %q, %v", path, data, err)
+		}
 	}
 }
 

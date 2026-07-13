@@ -354,6 +354,80 @@ func (inv *Inventory) VerifyAndCleanWithSources(path string, sources leaf.Source
 	return inv.verifyAndClean(path, sources)
 }
 
+// RepairArchiveRootROMs repairs files written by the pre-0.1.0 archive picker
+// join bug. That bug could place an app-owned extracted ROM directly in a
+// source's Roms directory when the selected canonical directory did not end in
+// a path separator. Only archive-backed inventory rows in exactly that shape
+// are eligible; user files and occupied canonical targets are left untouched.
+func (inv *Inventory) RepairArchiveRootROMs(path string, sources leaf.SourceList) int {
+	repaired := 0
+	inv.mu.Lock()
+	for _, entry := range inv.Entries {
+		for index := range entry.Files {
+			file := entry.Files[index]
+			if file.ContentKind != ContentKindROM || file.SourceArchive == "" ||
+				file.CanonicalSystem != "" || file.DestPath == "" {
+				continue
+			}
+			identity, ok := roms.DescribeDestination(file.DestPath)
+			if !ok || identity.SourceID == "" || identity.CanonicalSystem != "" ||
+				filepath.ToSlash(filepath.Dir(identity.RelativePath)) != "Roms" {
+				continue
+			}
+			source, ok := sources.ByID(identity.SourceID)
+			if !ok || !source.Available() {
+				continue
+			}
+			canonical, ok := leaf.CanonicalSystemForExtension(roms.ROMExt(file.DestPath))
+			if !ok {
+				continue
+			}
+			targetDir := roms.SourceSystemDir(identity.SourceID, canonical)
+			if targetDir == "" {
+				continue
+			}
+			target := filepath.Join(targetDir, filepath.Base(file.DestPath))
+			if _, err := os.Stat(target); err == nil || !os.IsNotExist(err) {
+				continue
+			}
+			info, err := os.Stat(file.DestPath)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
+				logger.Warn("inventory: create archive repair destination: %v", err)
+				continue
+			}
+			if err := os.Rename(file.DestPath, target); err != nil {
+				logger.Warn("inventory: move misplaced archive ROM: %v", err)
+				continue
+			}
+			targetIdentity, ok := roms.DescribeDestination(target)
+			if !ok || targetIdentity.CanonicalSystem != canonical {
+				if rollbackErr := os.Rename(target, file.DestPath); rollbackErr != nil {
+					logger.Error("inventory: archive repair rollback failed: %v", rollbackErr)
+				}
+				continue
+			}
+			file.DestPath = target
+			file.RelativePath = targetIdentity.RelativePath
+			file.CanonicalSystem = targetIdentity.CanonicalSystem
+			file.InstalledName = filepath.Base(target)
+			file.Filename = filepath.Base(target)
+			entry.Files[index] = file
+			repaired++
+			logger.Info("inventory: repaired archive ROM destination %s", target)
+		}
+	}
+	inv.mu.Unlock()
+	if repaired > 0 {
+		if err := inv.Save(path); err != nil {
+			logger.Error("inventory: failed to save archive destination repairs: %v", err)
+		}
+	}
+	return repaired
+}
+
 func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 	removed := 0
 	changed := false
