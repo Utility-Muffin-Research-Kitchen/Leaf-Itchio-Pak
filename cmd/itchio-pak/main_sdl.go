@@ -435,7 +435,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		route = catRouteManage
 		return nil
 	}
-	requestManagementScan := func(manage *appui.ManageModel, rename *appui.RenameModel) {
+	requestManagementScan := func(manage *appui.ManageModel, rename *appui.RenameModel,
+		titleGroups []leaf.LibraryTitleGroup) {
 		const pending = "Requesting Leaf library rescan…"
 		if manage != nil {
 			manage.SetLibraryStatus(pending)
@@ -447,7 +448,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		go func() {
 			requestCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			message, scanErr := leaf.RequestLibraryScan(requestCtx)
+			message, scanErr := leaf.RequestLibraryScanWithTitles(requestCtx, titleGroups)
 			managementScanResults <- managementScanResult{
 				manage: manage, rename: rename, message: message, err: scanErr,
 			}
@@ -504,14 +505,21 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			return
 		}
 		snapshot := downloadBackend.CatSnapshot()
-		if snapshot.State == appui.DownloadProgressDone && downloadBackend.CatNeedsLibraryScan() && !downloadScanStarted {
+		terminal := snapshot.State == appui.DownloadProgressDone ||
+			snapshot.State == appui.DownloadProgressError ||
+			snapshot.State == appui.DownloadProgressCancelled
+		var titleGroups []leaf.LibraryTitleGroup
+		if terminal {
+			titleGroups = downloadBackend.CatLibraryTitleGroups()
+		}
+		if downloadBackend.CatNeedsLibraryScan() && len(titleGroups) > 0 && !downloadScanStarted {
 			downloadScanStarted = true
 			downloadLibraryStatus = "Requesting Leaf library rescan…"
 			generation := downloadGeneration
 			go func() {
 				requestCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				message, scanErr := leaf.RequestLibraryScan(requestCtx)
+				message, scanErr := leaf.RequestLibraryScanWithTitles(requestCtx, titleGroups)
 				libraryScanResults <- libraryScanResult{generation: generation, message: message, err: scanErr}
 				_ = ctx.Wake()
 			}()
@@ -972,7 +980,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					if _, flowErr := manageFlow.Confirm(manageModel); flowErr != nil {
 						manageModel.SetError(flowErr.Error())
 					} else if manageFlow.TakeLibraryScanRequest() {
-						requestManagementScan(manageModel, nil)
+						requestManagementScan(manageModel, nil, nil)
 					}
 					list.ScheduleRebuild()
 				}
@@ -991,13 +999,15 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					if flowErr := renameFlow.Confirm(renameModel); flowErr != nil {
 						renameModel.SetError(flowErr.Error())
 					} else if renameFlow.TakeLibraryScanRequest() {
-						requestManagementScan(nil, renameModel)
+						requestManagementScan(nil, renameModel,
+							renameFlow.LibraryTitleGroups())
 					}
 				case appui.RenameIntentSkip:
 					if flowErr := renameFlow.Skip(renameModel); flowErr != nil {
 						renameModel.SetError(flowErr.Error())
 					} else if renameFlow.TakeLibraryScanRequest() {
-						requestManagementScan(nil, renameModel)
+						requestManagementScan(nil, renameModel,
+							renameFlow.LibraryTitleGroups())
 					}
 				}
 			case catRouteSettings:

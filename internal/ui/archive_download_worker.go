@@ -210,6 +210,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 					logger.Warn("zip-download: pico8 m3u write: %v", err)
 				} else {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
+					s.extracted = append(s.extracted, m3uPath)
 					file := inventory.DownloadedFile{
 						Filename:      filepath.Base(m3uPath),
 						DestPath:      m3uPath,

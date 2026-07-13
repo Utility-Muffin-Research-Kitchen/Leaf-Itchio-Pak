@@ -13,7 +13,7 @@ After publication, install **Itch.io** from Pak Rat. If Pak Rat is unavailable,
 download the matching `Itch-io.mlp1.pak.zip` GitHub release asset, verify its
 published SHA-256, and extract its single `Itch-io.pak` directory to
 `Apps/mlp1/` on the Leaf SD card. Do not rename the pak directory or place it in
-another platform folder. Jawaka `0.5.4` or newer is required.
+another platform folder. Jawaka `0.5.5` or newer is required.
 
 ## Browsing
 
@@ -107,7 +107,7 @@ without deleting downloads.
 | ROM Location | `auto` | Primary canonical directory or ask for card/folder |
 | Music Download | `off` | `off`, `auto`, or `ask` |
 | Music Location | `auto` | Primary Music root or ask for card/folder |
-| Use game title | On | Use the safe itch.io title where renaming is supported |
+| Rename ROM files | On | Rename safe standalone ROM files to the itch.io title; Leaf display titles are published independently |
 | Log Level | Info | Info or Debug |
 | Adult warnings | On | Master switch plus individual tags |
 | Heavy-theme warnings | On | Master switch plus individual tags |
@@ -154,7 +154,10 @@ Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
 
-Where safe, **Use game title** can rename a ROM plus selected saves/states.
+Where safe, **Rename ROM files** can rename a ROM plus selected saves/states.
+New downloads also publish the itch.io title to Leaf as display metadata, even
+when physical renaming is disabled or unsafe. Manual Leaf display-name edits
+take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
 names when a rename could break references. Every committed ROM/artwork change
 requests one Jawaka rescan.

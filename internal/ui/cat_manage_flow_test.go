@@ -299,6 +299,12 @@ func TestCatRenameKeepsSaveAndStatesOnROMSource(t *testing.T) {
 	if !flow.TakeLibraryScanRequest() {
 		t.Fatal("committed ROM rename did not request a library rescan")
 	}
+	titleGroups := flow.LibraryTitleGroups()
+	if len(titleGroups) != 1 || titleGroups[0].Title != "Leaf Title" ||
+		len(titleGroups[0].ROMPaths) != 1 || titleGroups[0].ROMPaths[0] !=
+		filepath.Join(sources[0].RomsPath, "GBC", "Leaf Title.gbc") {
+		t.Fatalf("rename title groups = %#v", titleGroups)
+	}
 	if flow.TakeLibraryScanRequest() {
 		t.Fatal("one rename transaction requested more than one library rescan")
 	}

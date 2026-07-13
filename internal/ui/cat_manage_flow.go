@@ -382,6 +382,7 @@ type CatRenameFlow struct {
 	renameSaves        bool
 	renameStates       bool
 	libraryScanPending bool
+	renamedROMPath     string
 }
 
 func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, fileIndex int,
@@ -565,6 +566,7 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 		return fmt.Errorf("commit renamed inventory: %w", err)
 	}
 	flow.libraryScanPending = true
+	flow.renamedROMPath = flow.targetPath
 	parts := []string{"ROM renamed"}
 	if flow.renameSaves {
 		parts = append(parts, fmt.Sprintf("%d save(s)", len(flow.saves)))
@@ -582,6 +584,17 @@ func (flow *CatRenameFlow) TakeLibraryScanRequest() bool {
 	pending := flow.libraryScanPending
 	flow.libraryScanPending = false
 	return pending
+}
+
+// LibraryTitleGroups publishes only the ROM path committed by this rename.
+// It deliberately avoids using the rest of the game inventory so a rename
+// cannot backfill display titles for older downloads.
+func (flow *CatRenameFlow) LibraryTitleGroups() []leaf.LibraryTitleGroup {
+	if flow == nil || flow.renamedROMPath == "" {
+		return nil
+	}
+	return libraryTitleGroups(flow.inv, flow.gameURL, flow.entry.Title,
+		[]string{flow.renamedROMPath})
 }
 
 func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []string {

@@ -19,9 +19,17 @@ const daemonFrameLimit = 1024 * 1024
 var ErrDaemonUnavailable = errors.New("Jawaka suspend protection unavailable")
 
 type daemonResponse struct {
-	Type    string `json:"type"`
-	Token   string `json:"token"`
-	Message string `json:"message"`
+	Type               string `json:"type"`
+	Token              string `json:"token"`
+	Message            string `json:"message"`
+	Action             string `json:"action"`
+	TitleHintsAccepted int    `json:"title_hints_accepted"`
+}
+
+type LibraryTitleGroup struct {
+	Provider string   `json:"provider"`
+	Title    string   `json:"title"`
+	ROMPaths []string `json:"rom_paths"`
 }
 
 // DaemonClient owns one reference-counted block-suspend lease for the app.
@@ -102,20 +110,51 @@ func (c *DaemonClient) Begin(ctx context.Context, reason string, allowUninhibite
 	return &OperationLease{client: c, Protected: true}, nil
 }
 
-// ScanLibrary asks Jawaka to start or queue its canonical non-destructive
-// library scan. The pak never opens library.db directly.
-func (c *DaemonClient) ScanLibrary(ctx context.Context) (string, error) {
+// ScanLibraryWithTitles asks Jawaka to start or queue its canonical
+// non-destructive library scan and optionally attach source-provided display
+// titles to the game rows created by that scan. The pak never opens library.db
+// directly.
+func (c *DaemonClient) ScanLibraryWithTitles(ctx context.Context, groups []LibraryTitleGroup) (string, error) {
 	if c == nil || c.socketPath == "" {
 		return "", ErrDaemonUnavailable
 	}
-	response, err := c.request(ctx, map[string]any{"type": "scan-library"})
+	request := map[string]any{"type": "scan-library"}
+	titlePathCount := 0
+	if len(groups) > 0 {
+		sealed := make([]LibraryTitleGroup, len(groups))
+		for i, group := range groups {
+			if group.Provider == "" || len(group.Provider) >= 96 || group.Title == "" || len(group.Title) >= 256 || len(group.ROMPaths) == 0 {
+				return "", fmt.Errorf("request library rescan: invalid title group")
+			}
+			sealed[i] = LibraryTitleGroup{Provider: group.Provider, Title: group.Title, ROMPaths: append([]string(nil), group.ROMPaths...)}
+			for _, path := range sealed[i].ROMPaths {
+				if path == "" {
+					return "", fmt.Errorf("request library rescan: empty title path")
+				}
+				titlePathCount++
+			}
+		}
+		request["title_groups"] = sealed
+	}
+	response, err := c.request(ctx, request)
 	if err != nil {
 		return "", fmt.Errorf("request library rescan: %w", err)
 	}
 	if response.Type != "ok" {
 		return "", fmt.Errorf("request library rescan: malformed reply %q", response.Type)
 	}
-	return response.Message, nil
+	if titlePathCount > 0 && response.TitleHintsAccepted != titlePathCount {
+		return "", fmt.Errorf("request library rescan: Jawaka accepted %d of %d title paths", response.TitleHintsAccepted, titlePathCount)
+	}
+	message := response.Message
+	if message == "" {
+		message = response.Action
+	}
+	return message, nil
+}
+
+func (c *DaemonClient) ScanLibrary(ctx context.Context) (string, error) {
+	return c.ScanLibraryWithTitles(ctx, nil)
 }
 
 func (lease *OperationLease) Release() {
@@ -154,6 +193,9 @@ func (c *DaemonClient) request(ctx context.Context, request any) (daemonResponse
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return response, err
+	}
+	if len(payload) == 0 || len(payload) > daemonFrameLimit {
+		return response, fmt.Errorf("invalid daemon request frame size %d", len(payload))
 	}
 	dialer := net.Dialer{Timeout: c.timeout}
 	conn, err := dialer.DialContext(ctx, "unix", c.socketPath)
@@ -230,4 +272,14 @@ func RequestLibraryScan(ctx context.Context) (string, error) {
 		return "", ErrDaemonUnavailable
 	}
 	return client.ScanLibrary(ctx)
+}
+
+func RequestLibraryScanWithTitles(ctx context.Context, groups []LibraryTitleGroup) (string, error) {
+	appDaemonMu.RLock()
+	client := appDaemon
+	appDaemonMu.RUnlock()
+	if client == nil {
+		return "", ErrDaemonUnavailable
+	}
+	return client.ScanLibraryWithTitles(ctx, groups)
 }

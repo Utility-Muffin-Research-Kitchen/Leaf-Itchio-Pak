@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 APP_VERSION ?= 0.1.0
-MIN_JAWAKA_VERSION ?= 0.5.4
+MIN_JAWAKA_VERSION ?= 0.5.5
 GIT_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || printf 0)
 WORKSPACE_ROOT ?= $(abspath ..)

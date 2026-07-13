@@ -22,6 +22,8 @@ set, release archive, or bootstrap flow.
   Leaf ROM or Music root.
 - Generate source-local Jawaka artwork under
   `Images/<system>/<ROM stem>.png`, then request a library rescan.
+- Publish new downloads' itch.io titles through Jawaka metadata, independent of
+  whether safe standalone ROM filenames are physically renamed.
 - Preserve animated GIFs in the catalogue/detail UI while using a bounded PNG
   frame for launcher art.
 - Download soundtracks for Disco Boy without requiring or installing Disco Boy.
@@ -62,7 +64,7 @@ cp -R Itch-io.pak "$LEAF_SD/Apps/mlp1/"
 `$LEAF_SD` above means the mounted root of the Leaf card, not a device-side
 hardcoded path. App updates do not remove downloads or durable settings because
 those live outside the pak directory. Restart Leaf's launcher or reboot after a
-manual install so Jawaka rescans Apps. The package requires Jawaka `0.5.4` or
+manual install so Jawaka rescans Apps. The package requires Jawaka `0.5.5` or
 newer and does not support other device/platform folders.
 
 For developer-only ADB staging from the umbrella workspace:
@@ -117,7 +119,9 @@ instead of relying on those example mounts.
 
 After a committed ROM download, rename, deletion, or artwork repair, the app
 asks Jawaka for a non-destructive library rescan. It never opens or edits
-Jawaka's `library.db` itself.
+Jawaka's `library.db` itself. New downloads attach the itch.io title to that
+request; Leaf displays a manual name first, then the imported title, then the
+scanned filename. Existing downloads are not backfilled automatically.
 
 ## Soundtracks and Disco Boy
 

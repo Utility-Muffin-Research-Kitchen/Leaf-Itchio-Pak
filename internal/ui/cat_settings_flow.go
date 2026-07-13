@@ -93,7 +93,7 @@ func (flow *CatSettingsFlow) Refresh(model *appui.SettingsModel) {
 		rows = append(rows, appui.SettingsRow{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: settingValue(flow.cfg.MusicLocation, "auto"), ActionEnabled: true})
 	}
 	rows = append(rows,
-		appui.SettingsRow{Key: appui.SettingsUnifiedNaming, Label: "Use game title", Value: onOff(flow.cfg.UnifiedNaming), ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: onOff(flow.cfg.UnifiedNaming), ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsLogLevel, Label: "Log Level", Value: logLevelValue(flow.cfg.LogLevel), ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: flow.romPreference(), ActionEnabled: false},
 		appui.SettingsRow{Key: appui.SettingsMusicDestination, Label: "Remembered Music folder", Value: flow.musicPreference(), ActionEnabled: false},

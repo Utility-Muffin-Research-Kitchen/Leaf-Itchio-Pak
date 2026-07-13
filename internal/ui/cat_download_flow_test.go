@@ -209,3 +209,70 @@ func TestCatDownloadBackendsRequestRescanOnlyForROMInstalls(t *testing.T) {
 		t.Fatal("ROM archive did not request a library rescan")
 	}
 }
+
+func TestLibraryTitleGroupsUseOnlyCurrentCommittedROMPaths(t *testing.T) {
+	root := t.TempDir()
+	systemDirs := make(map[string]string)
+	imageDirs := make(map[string]string)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systemDirs[id] = filepath.Join(root, "Roms", id)
+		imageDirs[id] = filepath.Join(root, "Images", id)
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: systemDirs,
+		ImageDirs:  imageDirs,
+		SourceID:   "primary", PrimaryRoot: root,
+		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := inventory.Load(filepath.Join(root, "inventory.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gameURL := "https://example.itch.io/black-jewel"
+	oldROM := filepath.Join(root, "Roms", "PS", "old.cue")
+	newCue := filepath.Join(root, "Roms", "PS", "game.cue")
+	newBin := filepath.Join(root, "Roms", "PS", "track.bin")
+	cartA := filepath.Join(root, "Roms", "PICO8", "cart-a.p8")
+	cartB := filepath.Join(root, "Roms", "PICO8", "cart-b.p8")
+	music := filepath.Join(root, "Music", "track.ogg")
+	for _, file := range []inventory.DownloadedFile{
+		{Filename: "old.cue", DestPath: oldROM, ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM},
+		{Filename: "game.cue", DestPath: newCue, ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM},
+		{Filename: "track.bin", DestPath: newBin, ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM},
+		{Filename: "cart-a.p8", DestPath: cartA, ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM},
+		{Filename: "cart-b.p8", DestPath: cartB, ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM},
+		{Filename: "track.ogg", DestPath: music, ContentKind: inventory.ContentKindMusic, FileType: inventory.FileTypeMusic},
+	} {
+		inv.Add(gameURL, inventory.Entry{GameURL: gameURL, Title: "Black Jewel Reborn"}, file)
+	}
+
+	groups := libraryTitleGroups(inv, gameURL, "Black Jewel Reborn", []string{newCue, newBin, music})
+	if len(groups) != 1 || groups[0].Provider != itchioLibraryTitleProvider ||
+		groups[0].Title != "Black Jewel Reborn" {
+		t.Fatalf("title groups = %#v", groups)
+	}
+	if got, want := groups[0].ROMPaths, []string{newCue, newBin}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("title paths = %#v, want %#v", got, want)
+	}
+	if got := libraryTitleGroups(inv, gameURL, "Black Jewel Reborn", []string{oldROM}); len(got) != 1 || len(got[0].ROMPaths) != 1 {
+		t.Fatalf("explicit re-download path was not published: %#v", got)
+	}
+	if got := libraryTitleGroups(inv, gameURL, "Pocket Collection", []string{cartB, cartA}); len(got) != 1 ||
+		len(got[0].ROMPaths) != 2 || got[0].ROMPaths[0] != cartA || got[0].ROMPaths[1] != cartB {
+		t.Fatalf("multi-ROM title paths = %#v", got)
+	}
+	if got := libraryTitleGroups(inv, gameURL, "Partial Collection", []string{cartB}); len(got) != 1 ||
+		len(got[0].ROMPaths) != 1 || got[0].ROMPaths[0] != cartB {
+		t.Fatalf("partial download published uncommitted paths: %#v", got)
+	}
+	partialWorker := &MultiDownloadWorker{
+		game: itchio.Game{URL: gameURL, Title: "Partial Collection"},
+		inv:  inv, finalPaths: []string{cartB, ""},
+	}
+	if got := partialWorker.CatLibraryTitleGroups(); len(got) != 1 ||
+		len(got[0].ROMPaths) != 1 || got[0].ROMPaths[0] != cartB {
+		t.Fatalf("partial worker title groups = %#v", got)
+	}
+}

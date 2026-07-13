@@ -22,7 +22,7 @@ and copies only the eight locked public states below.
 | `detail-gallery.png` | Detail with generated cover/gallery state | `40a88a823995a2e37ffe66a99bfd5516fdcf1cb17a4ada4068556e51dc5b69aa` |
 | `content-warning.png` | Tag-based content-warning gate | `b96e7549aa831035a821ad792843292643a38c5acc96dad2d4d02cd44e11b36a` |
 | `download-progress.png` | Active Catastrophe progress view | `eb569f943a779738861d005f453d094240aa2421c240f8af31203eb3401fd44b` |
-| `settings.png` | Leaf settings list | `8fc03428fbe828ebbf4d94e1ec2fd317ac3e9f1865c995403fe44a9dd01cc68f` |
+| `settings.png` | Leaf settings list | `40c39acf9fa4a2327365f1756061c7fe3846afed57d00a4fe237588aace84b2c` |
 | `dual-sd-destination.png` | Source picker with primary and secondary cards | `350be9e0d313281b15b46cf2f0328616cefb9c74fb6dcaa2d20ed313bc16d87d` |
 | `downloaded-manage.png` | Downloaded-file management list | `16c882fdf8be2c9b909c1e99d9ab8ec00e61b9a6eebd515ef1c41b59e2ffc898` |
 

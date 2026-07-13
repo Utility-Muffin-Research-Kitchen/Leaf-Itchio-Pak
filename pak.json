@@ -3,7 +3,7 @@
   "icon": "res/icon.png",
   "platform": "mlp1",
   "pak_version": "0.1.0",
-  "min_jawaka_version": "0.5.4",
+  "min_jawaka_version": "0.5.5",
   "author": "Carroarmato0 & Utility Muffin Research Kitchen",
   "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak",
   "description": "Browse itch.io games, download compatible ROMs and soundtracks, and manage the resulting Leaf library. Unofficial and not affiliated with itch.io."

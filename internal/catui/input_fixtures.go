@@ -234,7 +234,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: "auto", ActionEnabled: true},
 			{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: "ask", ActionEnabled: true},
-			{Key: appui.SettingsUnifiedNaming, Label: "Use game title", Value: "On", ActionEnabled: true},
+			{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: "On", ActionEnabled: true},
 			{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: "Primary SD + Secondary SD · 3 systems"},
 			{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
 			{Key: appui.SettingsContentModeration, Label: "Content Moderation", Value: ">", ActionEnabled: true},
