@@ -57,9 +57,9 @@ func (screen *DetailScreen) Draw() error {
 		if screen.model.Game.Downloaded {
 			footer = footer[:0]
 		}
-		footer = append(footer,
-			FooterHint{Button: ButtonL1, Label: "Image -/+", NarrowLabel: "Images"},
-			FooterHint{Button: ButtonUp, Label: "Scroll"})
+		// D-pad scrolling remains fully functional. It is conventional enough to
+		// omit from this width-constrained footer so Settings stays visible.
+		footer = append(footer, FooterHint{Button: ButtonL1, ButtonText: "L1/R1", Label: "Img."})
 		if screen.model.Game.CanDownload && !screen.model.BrowserOnly {
 			label := "Download"
 			if screen.model.Game.Downloaded {
@@ -71,10 +71,10 @@ func (screen *DetailScreen) Draw() error {
 			footer = append(footer, FooterHint{Button: ButtonA, Label: label})
 		}
 		if screen.model.Game.Downloaded {
-			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage", NarrowLabel: "Files"})
+			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
 		}
 	}
-	footer = append(footer, FooterHint{Button: ButtonStart, Label: "Settings", NarrowLabel: "Set"})
+	footer = append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set"})
 	frame, err := screen.ui.BeginScreen(ScreenSpec{
 		Title:           screen.model.Game.Title,
 		SubHeaderHeight: screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(10),
