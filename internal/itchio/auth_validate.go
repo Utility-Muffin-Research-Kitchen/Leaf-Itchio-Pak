@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // APIKeyStatus is the result of the background API key validation.
@@ -32,6 +32,13 @@ func (c *Client) StoreAPIKeyStatus(s APIKeyStatus) {
 // Returns true only on the first call — the caller should then launch the check.
 func (c *Client) MarkAPIKeyCheckStarted() bool {
 	return atomic.CompareAndSwapInt32(&c.apiKeyChecking, 0, 1)
+}
+
+// ResetAPIKeyState clears cached validation state after a key is replaced or
+// removed. It never logs or retains the previous credential.
+func (c *Client) ResetAPIKeyState() {
+	atomic.StoreInt32(&c.apiKeyStatus, int32(APIKeyStatusUnknown))
+	atomic.StoreInt32(&c.apiKeyChecking, 0)
 }
 
 // CheckAPIKey does a lightweight /profile fetch to determine whether apiKey is
@@ -76,26 +83,6 @@ type OwnedGame struct {
 	URL    string
 }
 
-// obfuscateName keeps the first and last rune visible and replaces every
-// character in between with '*', so names are recognisable but not logged in full.
-func obfuscateName(name string) string {
-	r := []rune(name)
-	if len(r) <= 2 {
-		return string(r)
-	}
-	out := make([]rune, len(r))
-	out[0] = r[0]
-	out[len(r)-1] = r[len(r)-1]
-	for i := 1; i < len(r)-1; i++ {
-		if r[i] == ' ' {
-			out[i] = ' '
-		} else {
-			out[i] = '*'
-		}
-	}
-	return string(out)
-}
-
 // ValidateAPIKey checks that apiKey is valid by fetching the caller's itch.io
 // profile, then pages through all owned-game keys and returns the account
 // username and the full owned-game list.
@@ -136,7 +123,9 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 	if profileResp.User.DisplayName != "" {
 		username = profileResp.User.DisplayName
 	}
-	logger.Info("validate: authenticated as %q", obfuscateName(username))
+	// The account name is not needed to diagnose authentication and may be a
+	// local/private identifier. Keep it in memory for callers but never log it.
+	logger.Info("validate: authenticated itch.io account")
 
 	// Step 2: page through all owned-game keys.
 	// Each entry carries a download key ID (never logged) and a public game object.

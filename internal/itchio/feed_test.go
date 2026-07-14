@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
 
 func TestSlugToTitle(t *testing.T) {
@@ -28,6 +30,31 @@ func TestSlugToTitle(t *testing.T) {
 		got := itchio.SlugToTitle(tc.url)
 		if got != tc.want {
 			t.Errorf("SlugToTitle(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}
+
+func BenchmarkFetchFirstFeedPage36(b *testing.B) {
+	page, err := os.ReadFile("../../testdata/rss_page1.xml")
+	if err != nil {
+		b.Fatalf("read fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write(page)
+	}))
+	b.Cleanup(srv.Close)
+	client := itchio.NewClientWithBase(srv.URL)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		games, fetchErr := client.FetchGamesFromURL(srv.URL + "/games/made-with-gb-studio.xml?page=1")
+		if fetchErr != nil {
+			b.Fatalf("FetchGamesFromURL: %v", fetchErr)
+		}
+		if len(games) != 36 {
+			b.Fatalf("parsed %d games, want 36", len(games))
 		}
 	}
 }
@@ -241,12 +268,20 @@ func TestFetchAllGames(t *testing.T) {
   <price>0.0</price>
 </item>
 </channel></rss>`
+	psxPage1XML := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item>
+  <title>A PSX Homebrew Game</title>
+  <link>https://psxdev.itch.io/psx-game</link>
+  <description></description>
+  <price>0.0</price>
+</item>
+</channel></rss>`
 
 	emptyFeed := `<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
-		slug := r.URL.Path   // e.g. "/games/made-with-gb-studio.xml"
+		slug := r.URL.Path // e.g. "/games/made-with-gb-studio.xml"
 		page := r.URL.Query().Get("page")
 		switch {
 		case slug == "/games/made-with-gb-studio.xml" && page == "1":
@@ -255,6 +290,8 @@ func TestFetchAllGames(t *testing.T) {
 			w.Write([]byte(page2XML))
 		case slug == "/games/tag-nes-rom.xml" && page == "1":
 			w.Write([]byte(nesPage1XML))
+		case slug == "/games/tag-homebrew/tag-psx.xml" && page == "1":
+			w.Write([]byte(psxPage1XML))
 		default:
 			w.Write([]byte(emptyFeed))
 		}
@@ -271,17 +308,25 @@ func TestFetchAllGames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
-	// rss_page1.xml has 36 items; page2 has 2 GB games; 1 NES game → total 39.
-	if len(games) != 39 {
-		t.Errorf("got %d games, want 39", len(games))
+	// rss_page1.xml has 36 items; page2 has 2 GB games; the NES and nested-path
+	// PSX feeds contribute one each → total 40.
+	if len(games) != 40 {
+		t.Errorf("got %d games, want 40", len(games))
 	}
 	// Progress fires at least once per slug that adds new games (and additionally
 	// per page via the live-count ping channel — exact count is nondeterministic).
 	if progressCalls < 1 {
 		t.Errorf("progress calls = %d, want >= 1", progressCalls)
 	}
-	if lastFetched != 39 {
-		t.Errorf("last fetched = %d, want 39", lastFetched)
+	if lastFetched != 40 {
+		t.Errorf("last fetched = %d, want 40", lastFetched)
+	}
+	foundPSX := false
+	for _, game := range games {
+		foundPSX = foundPSX || game.URL == "https://psxdev.itch.io/psx-game" && game.Platform == "PSX"
+	}
+	if !foundPSX {
+		t.Fatal("nested Homebrew + PSX feed was not fetched or classified as PSX")
 	}
 }
 
@@ -486,11 +531,11 @@ func TestFetchGamesFromURL_sendsBrowserHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := itchio.NewClientWithBase(srv.URL)
+	c := itchio.NewClientWithVersion("v0.1.0")
 	c.FetchGamesFromURL(srv.URL + "/games/made-with-gb-studio.xml?page=1")
 
-	if gotUA == "" {
-		t.Error("User-Agent header not sent")
+	if !strings.Contains(gotUA, "Mozilla/5.0") || !strings.Contains(gotUA, "Leaf-Itchio-Pak/v0.1.0") {
+		t.Errorf("User-Agent = %q, want upstream browser identity and Leaf product/version", gotUA)
 	}
 	if gotAccept == "" {
 		t.Error("Accept header not sent")
@@ -500,5 +545,97 @@ func TestFetchGamesFromURL_sendsBrowserHeaders(t *testing.T) {
 	}
 	if gotFetchMode == "" {
 		t.Error("Sec-Fetch-Mode header not sent")
+	}
+}
+
+func TestFetchGamesContextEscapesSearchQuery(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	client := itchio.NewClientWithBase(srv.URL)
+	if _, err := client.FetchGamesContext(context.Background(), 1, "cats & dogs"); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "cats & dogs" {
+		t.Fatalf("decoded query = %q, want %q", gotQuery, "cats & dogs")
+	}
+}
+
+func TestFetchGamesFromURLContext_CancelsInFlightRequest(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClient().FetchGamesFromURLContext(ctx, srv.URL)
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("FetchGamesFromURLContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("in-flight catalogue request ignored cancellation")
+	}
+}
+
+func TestFetchGamesFromURLContext_DoesNotRetryPermanentStatus(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	if _, err := itchio.NewClient().FetchGamesFromURLContext(context.Background(), srv.URL); err == nil {
+		t.Fatal("FetchGamesFromURLContext unexpectedly accepted HTTP 404")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("permanent HTTP status requests = %d, want 1", got)
+	}
+}
+
+func TestFetchGamesFromURLContext_CancelsRetryWait(t *testing.T) {
+	var requests atomic.Int32
+	first := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(first)
+		}
+		http.Error(w, "temporary", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClient().FetchGamesFromURLContext(ctx, srv.URL)
+		done <- err
+	}()
+	<-first
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("retry cancellation error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("catalogue retry wait ignored cancellation")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("requests after cancelling retry wait = %d, want 1", got)
 	}
 }

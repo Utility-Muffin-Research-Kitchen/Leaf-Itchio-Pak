@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 const (
@@ -28,9 +30,9 @@ type Game struct {
 	CoverURL    string    `json:"cover_url"`
 	Price       float64   `json:"price"`
 	IsFree      bool      `json:"is_free"`
-	Tags        []string  `json:"tags,omitempty"`   // extracted from [Tag] brackets in the RSS title
-	PublishedAt time.Time `json:"published_at"`     // parsed from <pubDate> in RSS feed
-	Platform    string    `json:"platform,omitempty"` // NextUI system code set by FetchAllGames, e.g. "GB"
+	Tags        []string  `json:"tags,omitempty"`     // extracted from [Tag] brackets in the RSS title
+	PublishedAt time.Time `json:"published_at"`       // parsed from <pubDate> in RSS feed
+	Platform    string    `json:"platform,omitempty"` // Leaf system code set by FetchAllGames, e.g. "GB"
 }
 
 var (
@@ -69,6 +71,45 @@ type rssItem struct {
 
 type rssFeed struct {
 	Items []rssItem `xml:"channel>item"`
+}
+
+type metadataHTTPError struct {
+	operation string
+	status    int
+}
+
+func (err *metadataHTTPError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d", err.operation, err.status)
+}
+
+func retryableMetadataError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrCloudflareBlocked) {
+		return false
+	}
+	var statusErr *metadataHTTPError
+	if errors.As(err, &statusErr) {
+		switch statusErr.status {
+		case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+			http.StatusInternalServerError, http.StatusBadGateway,
+			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr)
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SlugToTitle derives a display title from the URL slug when the RSS title is
@@ -145,28 +186,40 @@ func parsePubDate(raw string) time.Time {
 }
 
 func (c *Client) FetchGamesFromURL(url string) ([]Game, error) {
+	return c.FetchGamesFromURLContext(context.Background(), url)
+}
+
+// FetchGamesFromURLContext fetches idempotent catalogue metadata. Only
+// transient transport/server failures are retried, and both requests and retry
+// waits stop immediately when ctx is cancelled.
+func (c *Client) FetchGamesFromURLContext(ctx context.Context, url string) ([]Game, error) {
 	var lastErr error
 	for attempt := 0; attempt <= feedMaxRetries; attempt++ {
 		if attempt > 0 {
 			logger.Warn("feed: retry %d/%d after %v (last error: %v)", attempt, feedMaxRetries, feedRetryDelay, lastErr)
-			time.Sleep(feedRetryDelay)
+			if err := waitForRetry(ctx, feedRetryDelay); err != nil {
+				return nil, err
+			}
 		}
-		games, err := c.fetchGamesFromURLOnce(url)
+		games, err := c.fetchGamesFromURLOnce(ctx, url)
 		if err == nil {
 			return games, nil
 		}
 		lastErr = err
-		// Only retry on transient server-side errors, not permanent ones.
-		if err == ErrCloudflareBlocked {
+		if !retryableMetadataError(err) {
 			return nil, err
 		}
 	}
 	return nil, lastErr
 }
 
-func (c *Client) fetchGamesFromURLOnce(url string) ([]Game, error) {
+func (c *Client) fetchGamesFromURLOnce(ctx context.Context, url string) ([]Game, error) {
 	logger.Debug("feed: fetching %s", url)
-	resp, err := c.http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build feed request: %w", err)
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch feed: %w", err)
 	}
@@ -178,7 +231,7 @@ func (c *Client) fetchGamesFromURLOnce(url string) ([]Game, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("feed: HTTP %d from %s", resp.StatusCode, url)
-		return nil, fmt.Errorf("fetch feed: HTTP %d", resp.StatusCode)
+		return nil, &metadataHTTPError{operation: "fetch feed", status: resp.StatusCode}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -222,11 +275,15 @@ const PerPage = 36 // itch.io XML feeds return 36 items per page
 // live-feed preview when no local cache exists yet; the full multi-platform
 // catalogue is built by FetchAllGames.
 func (c *Client) FetchGames(page int, query string) ([]Game, error) {
-	url := fmt.Sprintf("%s/games/made-with-gb-studio.xml?page=%d", c.base, page)
+	return c.FetchGamesContext(context.Background(), page, query)
+}
+
+func (c *Client) FetchGamesContext(ctx context.Context, page int, query string) ([]Game, error) {
+	feedURL := fmt.Sprintf("%s/games/made-with-gb-studio.xml?page=%d", c.base, page)
 	if query != "" {
-		url += "&q=" + query
+		feedURL += "&q=" + neturl.QueryEscape(query)
 	}
-	return c.FetchGamesFromURL(url)
+	return c.FetchGamesFromURLContext(ctx, feedURL)
 }
 
 // feedConcurrency is the maximum number of feed slugs fetched in parallel.
@@ -256,7 +313,7 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 		default:
 		}
 		url := fmt.Sprintf("%s/games/%s.xml?page=%d", c.base, slug, page)
-		pageGames, err := c.FetchGamesFromURL(url)
+		pageGames, err := c.FetchGamesFromURLContext(ctx, url)
 		if err != nil {
 			logger.Warn("feed: platform=%s slug=%s page=%d error: %v", platformCode, slug, page, err)
 			return games, fmt.Errorf("platform=%s slug=%s page %d: %w", platformCode, slug, page, err)

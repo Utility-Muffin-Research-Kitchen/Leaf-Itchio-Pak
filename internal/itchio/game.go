@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
 
@@ -31,7 +31,7 @@ type Upload struct {
 	Filename    string
 	URL         string // resolver or CDN URL
 	UploadID    string // itch.io upload ID (from data-upload_id)
-	NeedsFormat bool   // true if extension unknown; user must choose GB, GBC, or ZIP
+	NeedsFormat bool   // true if extension is unknown and needs a manual format choice
 }
 
 var (
@@ -266,7 +266,7 @@ func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) 
 	logger.Debug("download-page: fetching signed download page")
 	resp, err := c.http.Get(pageURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch download page: %w", err)
+		return nil, safeRequestError("fetch download page", err)
 	}
 	defer resp.Body.Close()
 
@@ -302,9 +302,7 @@ func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) 
 		if n.Type == html.ElementNode && n.Data == "div" && nodeHasClass(n, "upload") {
 			if u, ok := extractUploadEntry(n); ok {
 				ext := strings.ToLower(roms.ROMExt(u.Filename))
-				if ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".nes" ||
-					ext == ".md" || ext == ".gen" || ext == ".smd" ||
-					ext == ".p8" || ext == ".p8.png" || ext == ".zip" || ext == ".7z" {
+				if roms.IsSupportedUploadExt(ext) {
 					logger.Debug("download-page: found ROM %s id=%s", u.Filename, u.UploadID)
 					result.Uploads = append(result.Uploads, u)
 				} else if !isSkippableExt(ext) {

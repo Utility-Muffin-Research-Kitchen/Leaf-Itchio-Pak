@@ -1,13 +1,63 @@
 package inventory_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func configureInventoryTestPaths() error {
+	return roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: map[string]string{
+			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
+		},
+		ImageDirs: map[string]string{
+			"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+			"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+		},
+		SourceID: "primary", PrimaryRoot: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+		Sources: []roms.SourcePathConfig{
+			{
+				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+				SystemDirs: map[string]string{
+					"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+					"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
+				},
+				ImageDirs: map[string]string{
+					"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+					"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+				},
+			},
+			{
+				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
+				SystemDirs: map[string]string{
+					"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA",
+					"FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX",
+				},
+				ImageDirs: map[string]string{
+					"GB": "/secondary/Images/GB", "GBC": "/secondary/Images/GBC", "GBA": "/secondary/Images/GBA",
+					"FC": "/secondary/Images/NES", "MD": "/secondary/Images/GENESIS", "PICO8": "/secondary/Images/PICO8", "PS": "/secondary/Images/PSX",
+				},
+			},
+		},
+	})
+
+}
+
+func TestMain(m *testing.M) {
+	err := configureInventoryTestPaths()
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 func TestLoad_MissingFile_ReturnsEmpty(t *testing.T) {
 	inv, err := inventory.Load("/nonexistent/path/inventory.json")
@@ -26,11 +76,14 @@ func TestLoad_CorruptFile_ReturnsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv, err := inventory.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if !errors.Is(err, inventory.ErrUnsupportedSchema) {
+		t.Fatalf("Load error = %v, want ErrUnsupportedSchema", err)
 	}
 	if len(inv.Entries) != 0 {
 		t.Errorf("expected empty entries on corrupt file, got %d", len(inv.Entries))
+	}
+	if _, err := os.Stat(path + ".corrupt.bak"); err != nil {
+		t.Fatalf("corrupt backup: %v", err)
 	}
 }
 
@@ -105,6 +158,241 @@ func TestAdd_NewEntry(t *testing.T) {
 	}
 	if len(e.Files) != 1 {
 		t.Errorf("Files len = %d, want 1", len(e.Files))
+	}
+}
+
+func TestAdd_PopulatesLeafPathIdentity(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("https://dev.itch.io/game", inventory.Entry{GameID: "42", Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb", DownloadedAt: time.Now(),
+	})
+	entry, ok := inv.Lookup("https://dev.itch.io/game")
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("expected one inventory file")
+	}
+	file := entry.Files[0]
+	if entry.GameID != "42" || file.SourceID != "primary" || file.RelativePath != "Roms/GB/game.gb" || file.CanonicalSystem != "GB" {
+		t.Fatalf("unexpected Leaf identity: entry=%+v file=%+v", entry, file)
+	}
+	if file.ContentKind != inventory.FileTypeROM || file.OriginalUpload != "game.gb" || file.InstalledName != "game.gb" {
+		t.Fatalf("missing normalized inventory fields: %+v", file)
+	}
+}
+
+func TestAdd_PreservesSecondaryLeafPathIdentity(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("https://dev.itch.io/game", inventory.Entry{GameID: "42", Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: "/secondary/Roms/GBC/RPG/game.gbc", DownloadedAt: time.Now(),
+	})
+	entry, ok := inv.Lookup("https://dev.itch.io/game")
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("expected one inventory file")
+	}
+	file := entry.Files[0]
+	if file.SourceID != "secondary_sd" || file.RelativePath != "Roms/GBC/RPG/game.gbc" || file.CanonicalSystem != "GBC" {
+		t.Fatalf("unexpected secondary identity: %+v", file)
+	}
+}
+
+func TestAddPreservesArtworkOwnershipWhenRedownloadHasNoNewArt(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	const gameURL = "https://dev.itch.io/game"
+	first := inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb",
+		ArtworkPath: "/leaf/Images/GB/game.png", ArtworkHash: "abc123", ArtworkCreated: true,
+	}
+	inv.Add(gameURL, inventory.Entry{Title: "Game"}, first)
+	inv.Add(gameURL, inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gb", DestPath: "/leaf/Roms/GB/game.gb",
+	})
+	entry, ok := inv.Lookup(gameURL)
+	if !ok || len(entry.Files) != 1 {
+		t.Fatal("redownloaded inventory row is missing")
+	}
+	file := entry.Files[0]
+	if file.ArtworkPath != first.ArtworkPath || file.ArtworkHash != first.ArtworkHash || !file.ArtworkCreated {
+		t.Fatalf("redownload lost artwork metadata: %+v", file)
+	}
+}
+
+func TestArtworkPathForPrefersRecordedPath(t *testing.T) {
+	file := inventory.DownloadedFile{
+		DestPath:    "/leaf/Roms/PICO8/Game/cart.p8",
+		ArtworkPath: "/leaf/Images/PICO8/Game.png",
+	}
+	if got := inventory.ArtworkPathFor("cover", file); got != file.ArtworkPath {
+		t.Fatalf("ArtworkPathFor = %q, want %q", got, file.ArtworkPath)
+	}
+}
+
+func TestArtworkReferencedOutsideExcludesPendingDeletion(t *testing.T) {
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	artPath := "/leaf/Images/GB/Game.png"
+	first := inventory.DownloadedFile{Filename: "Game.gb", DestPath: "/leaf/Roms/GB/Game.gb", ArtworkCreated: true}
+	second := inventory.DownloadedFile{Filename: "Game.zip", DestPath: "/leaf/Roms/GB/Game.zip", ArtworkCreated: true}
+	inv.Add("one", inventory.Entry{CoverURL: "cover"}, first)
+	inv.Add("two", inventory.Entry{CoverURL: "cover"}, second)
+	if !inv.ArtworkReferencedOutside(artPath, []inventory.DownloadedFile{first}) {
+		t.Fatal("remaining artwork owner was not detected")
+	}
+	if inv.ArtworkReferencedOutside(artPath, []inventory.DownloadedFile{first, second}) {
+		t.Fatal("pending deletion set still counted as an artwork owner")
+	}
+}
+
+func TestVerifyAndCleanKeepsFileOnUnavailableSource(t *testing.T) {
+	root := t.TempDir()
+	missingSecondary := filepath.Join(root, "removed-secondary")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: filepath.Join(missingSecondary, "Roms", "GBC", "game.gbc"),
+		SourceID: "secondary_sd", RelativePath: "Roms/GBC/game.gbc", CanonicalSystem: "GBC",
+	})
+	sources := leaf.SourceList{
+		{ID: "primary", Root: root, Primary: true},
+		{ID: "secondary_sd", Root: missingSecondary},
+	}
+	if removed := inv.VerifyAndCleanWithSources(filepath.Join(root, "inventory.json"), sources); removed != 0 {
+		t.Fatalf("removed %d unavailable-source files", removed)
+	}
+	if entry, ok := inv.Lookup("game"); !ok || len(entry.Files) != 1 {
+		t.Fatal("unavailable-source inventory row was discarded")
+	}
+}
+
+func TestVerifyAndCleanRemovesMissingFileOnAvailableSource(t *testing.T) {
+	root := t.TempDir()
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+		Filename: "game.gbc", DestPath: filepath.Join(root, "Roms", "GBC", "game.gbc"),
+		SourceID: "primary", RelativePath: "Roms/GBC/game.gbc", CanonicalSystem: "GBC",
+	})
+	if removed := inv.VerifyAndCleanWithSources(filepath.Join(root, "inventory.json"),
+		leaf.SourceList{{ID: "primary", Root: root, Primary: true}}); removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	if _, ok := inv.Lookup("game"); ok {
+		t.Fatal("missing file on mounted source remained in inventory")
+	}
+}
+
+func TestRepairArchiveRootROMsMovesOnlyAppOwnedMisplacedFile(t *testing.T) {
+	t.Cleanup(func() {
+		if err := configureInventoryTestPaths(); err != nil {
+			panic(err)
+		}
+	})
+	root := t.TempDir()
+	primary := filepath.Join(root, "primary")
+	secondary := filepath.Join(root, "secondary")
+	systems := []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"}
+	pathSources := make([]roms.SourcePathConfig, 0, 2)
+	for _, source := range []struct{ id, root string }{{"primary", primary}, {"secondary_sd", secondary}} {
+		dirs, images := make(map[string]string), make(map[string]string)
+		for _, system := range systems {
+			dirs[system] = filepath.Join(source.root, "Roms", system)
+			images[system] = filepath.Join(source.root, "Images", system)
+		}
+		pathSources = append(pathSources, roms.SourcePathConfig{
+			SourceID: source.id, Root: source.root, MusicRoot: filepath.Join(source.root, "Music"),
+			StatesRoot: filepath.Join(source.root, "States"), SystemDirs: dirs, ImageDirs: images,
+		})
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SourceID: "primary", PrimaryRoot: primary, MusicRoot: pathSources[0].MusicRoot,
+		StatesRoot: pathSources[0].StatesRoot, SystemDirs: pathSources[0].SystemDirs,
+		ImageDirs: pathSources[0].ImageDirs, Sources: pathSources,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(secondary, "Roms"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	misplaced := filepath.Join(secondary, "Roms", "Loonies 8192.gba")
+	if err := os.WriteFile(misplaced, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invPath := filepath.Join(root, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("game", inventory.Entry{Title: "Loonies"}, inventory.DownloadedFile{
+		Filename: "Loonies 8192.gba", DestPath: misplaced, SourceArchive: "loonies.zip",
+		ContentKind: inventory.ContentKindROM,
+	})
+	sources := leaf.SourceList{
+		{ID: "primary", Root: primary, Primary: true},
+		{ID: "secondary_sd", Root: secondary},
+	}
+	if repaired := inv.RepairArchiveRootROMs(invPath, sources); repaired != 1 {
+		t.Fatalf("repaired = %d, want 1", repaired)
+	}
+	target := filepath.Join(secondary, "Roms", "GBA", "Loonies 8192.gba")
+	if _, err := os.Stat(misplaced); !os.IsNotExist(err) {
+		t.Fatalf("misplaced source remains: %v", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "rom" {
+		t.Fatalf("canonical target = %q, %v", data, err)
+	}
+	entry, ok := inv.Lookup("game")
+	if !ok || len(entry.Files) != 1 || entry.Files[0].DestPath != target ||
+		entry.Files[0].RelativePath != "Roms/GBA/Loonies 8192.gba" || entry.Files[0].CanonicalSystem != "GBA" {
+		t.Fatalf("repaired inventory = %#v", entry)
+	}
+	reloaded, err := inventory.Load(invPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted, ok := reloaded.Lookup("game"); !ok || persisted.Files[0].DestPath != target {
+		t.Fatalf("persisted repair = %#v", persisted)
+	}
+}
+
+func TestRepairArchiveRootROMsDoesNotMoveUserOrOccupiedFiles(t *testing.T) {
+	t.Cleanup(func() {
+		if err := configureInventoryTestPaths(); err != nil {
+			panic(err)
+		}
+	})
+	root := t.TempDir()
+	romRoot := filepath.Join(root, "Roms")
+	gbaRoot := filepath.Join(romRoot, "GBA")
+	if err := os.MkdirAll(gbaRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	systems, images := make(map[string]string), make(map[string]string)
+	for _, system := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systems[system] = filepath.Join(romRoot, system)
+		images[system] = filepath.Join(root, "Images", system)
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SourceID: "primary", PrimaryRoot: root, MusicRoot: filepath.Join(root, "Music"),
+		StatesRoot: filepath.Join(root, "States"), SystemDirs: systems, ImageDirs: images,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	userFile := filepath.Join(romRoot, "User.gba")
+	occupiedSource := filepath.Join(romRoot, "Occupied.gba")
+	occupiedTarget := filepath.Join(gbaRoot, "Occupied.gba")
+	for path, data := range map[string]string{userFile: "user", occupiedSource: "source", occupiedTarget: "target"} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add("user", inventory.Entry{Title: "User"}, inventory.DownloadedFile{
+		Filename: "User.gba", DestPath: userFile, ContentKind: inventory.ContentKindROM,
+	})
+	inv.Add("occupied", inventory.Entry{Title: "Occupied"}, inventory.DownloadedFile{
+		Filename: "Occupied.gba", DestPath: occupiedSource, SourceArchive: "archive.zip",
+		ContentKind: inventory.ContentKindROM,
+	})
+	if repaired := inv.RepairArchiveRootROMs(filepath.Join(root, "inventory.json"),
+		leaf.SourceList{{ID: "primary", Root: root, Primary: true}}); repaired != 0 {
+		t.Fatalf("repaired = %d, want 0", repaired)
+	}
+	for path, want := range map[string]string{userFile: "user", occupiedSource: "source", occupiedTarget: "target"} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Fatalf("preserved %s = %q, %v", path, data, err)
+		}
 	}
 }
 
@@ -357,10 +645,10 @@ func TestRemoveFile_UnknownURL(t *testing.T) {
 func TestCoverArtPath_WithPNGCover(t *testing.T) {
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/cover.png",
-		"/mnt/SDCARD/Roms/Game Boy (GB)/my-game.gb",
+		"/leaf/Roms/GB/my-game.gb",
 	)
 	// Cover art is always stored as .png regardless of source format.
-	want := "/mnt/SDCARD/Roms/Game Boy (GB)/.media/my-game.png"
+	want := "/leaf/Images/GB/my-game.png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
@@ -376,22 +664,22 @@ func TestCoverArtPath_EmptyCoverURL(t *testing.T) {
 func TestCoverArtPath_NoExtensionInURL(t *testing.T) {
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/coverimage",
-		"/roms/game.gb",
+		"/leaf/Roms/GB/game.gb",
 	)
 	// Always .png regardless of whether source URL has an extension.
-	want := "/roms/.media/game.png"
+	want := "/leaf/Images/GB/game.png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
 }
 
 func TestCoverArtPath_FullStemPreserved(t *testing.T) {
-	// NextUI looks up cover art by the full ROM stem (including [v1.2]).
+	// Jawaka looks up cover art by the full ROM stem (including [v1.2]).
 	got := inventory.CoverArtPath(
 		"https://img.itch.zone/abc/cover.png",
-		"/roms/Game Boy Color (GBC)/Kero Kero Cowboy [v1.2].gbc",
+		"/leaf/Roms/GBC/Kero Kero Cowboy [v1.2].gbc",
 	)
-	want := "/roms/Game Boy Color (GBC)/.media/Kero Kero Cowboy [v1.2].png"
+	want := "/leaf/Images/GBC/Kero Kero Cowboy [v1.2].png"
 	if got != want {
 		t.Errorf("CoverArtPath = %q, want %q", got, want)
 	}
@@ -712,8 +1000,8 @@ func TestDownloadedFileFileType_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDownloadedFileFileType_BackwardCompat(t *testing.T) {
-	// Old JSON without file_type field
+func TestLoad_OldSchema_BacksUpWithoutPartialImport(t *testing.T) {
+	// Versionless NextUI inventory is deliberately not interpreted as Leaf data.
 	raw := `{"entries":{"http://example.com/game":{"game_url":"http://example.com/game","title":"Game","author":"","cover_url":"","files":[{"filename":"game.gbc","dest_path":"/mnt/SDCARD/Roms/Game Boy Color (GBC)/Game.gbc","downloaded_at":"2024-01-01T00:00:00Z"}]}}}`
 	dir := t.TempDir()
 	path := filepath.Join(dir, "inv.json")
@@ -721,19 +1009,14 @@ func TestDownloadedFileFileType_BackwardCompat(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv, err := inventory.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if !errors.Is(err, inventory.ErrUnsupportedSchema) {
+		t.Fatalf("Load error = %v, want ErrUnsupportedSchema", err)
 	}
-	entry, ok := inv.Lookup("http://example.com/game")
-	if !ok {
-		t.Fatal("entry not found")
+	if len(inv.Entries) != 0 {
+		t.Fatalf("old inventory was partially imported: %d entries", len(inv.Entries))
 	}
-	if len(entry.Files) != 1 {
-		t.Fatalf("files len = %d, want 1", len(entry.Files))
-	}
-	// Empty FileType is valid ("" == rom for display purposes)
-	if entry.Files[0].FileType != "" {
-		t.Errorf("old entry FileType = %q, want \"\" (backward compat)", entry.Files[0].FileType)
+	if _, err := os.Stat(path + ".schema-0.bak"); err != nil {
+		t.Fatalf("schema backup: %v", err)
 	}
 }
 

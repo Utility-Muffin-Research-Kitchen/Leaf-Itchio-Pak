@@ -7,8 +7,14 @@ import (
 	"time"
 )
 
+// GamesCacheRevision identifies the feed/platform coverage represented by the
+// cache. Bump it whenever AllPlatforms changes so a fresh-but-incomplete cache
+// is refreshed in the background after an app update.
+const GamesCacheRevision = 1
+
 // CacheMeta records when the cache was last populated.
 type CacheMeta struct {
+	Revision   int       `json:"revision"`
 	FetchedAt  time.Time `json:"fetched_at"`
 	TotalGames int       `json:"total_games"`
 }
@@ -19,10 +25,14 @@ type GameCache struct {
 	Games []Game    `json:"games"`
 }
 
+func (cache *GameCache) CurrentRevision() bool {
+	return cache != nil && cache.Meta.Revision == GamesCacheRevision
+}
+
 // SaveGamesCache writes games to path atomically (write to .tmp then rename).
 func SaveGamesCache(path string, games []Game) error {
 	cache := GameCache{
-		Meta:  CacheMeta{FetchedAt: time.Now(), TotalGames: len(games)},
+		Meta:  CacheMeta{Revision: GamesCacheRevision, FetchedAt: time.Now(), TotalGames: len(games)},
 		Games: games,
 	}
 	data, err := json.Marshal(cache)

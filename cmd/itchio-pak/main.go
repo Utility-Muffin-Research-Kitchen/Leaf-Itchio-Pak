@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -13,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // version is set at build time via -ldflags:
@@ -27,22 +28,41 @@ var version = "dev"
 var gitCommit = "unknown"
 
 func main() {
-	headless    := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
-	cpuProfile  := flag.String("cpuprofile", "", "write CPU profile to `file`")
-	memProfile  := flag.String("memprofile", "", "write memory profile to `file` on exit")
-	pprofAddr   := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
+	headless := flag.Bool("headless", false, "skip SDL2 init (CI mode)")
+	rotateLogOnly := flag.Bool("rotate-log-only", false, "rotate the app log and exit (launcher use)")
+	catFixtures := flag.Bool("cat-fixtures", false, "run the offline Catastrophe shared-primitives fixture")
+	catFixturePage := flag.Int("cat-fixture-page", 0, "Catastrophe fixture page (0-4)")
+	catFixtureFrames := flag.Int("cat-fixture-frames", 0, "exit Catastrophe fixture after N frames")
+	catFixtureScreenshot := flag.String("cat-fixture-screenshot", "", "save the final Catastrophe fixture frame as PNG")
+	catMainList := flag.Bool("cat-main-list", false, "run the offline Catastrophe main-list migration slice")
+	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, or empty")
+	catMainListFrames := flag.Int("cat-main-list-frames", 0, "exit Catastrophe main-list fixture after N frames")
+	catMainListScreenshot := flag.String("cat-main-list-screenshot", "", "save the final Catastrophe main-list frame as PNG")
+	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture (filter/detail/download/destination states)")
+	catInputFrames := flag.Int("cat-input-frames", 0, "exit Catastrophe input fixture after N frames")
+	catInputScreenshot := flag.String("cat-input-screenshot", "", "save the final Catastrophe input fixture as PNG")
+	appFrames := flag.Int("app-frames", 0, "exit the Catastrophe application after N rendered frames")
+	appScreenshot := flag.String("app-screenshot", "", "save the final Catastrophe application frame as PNG")
+	cpuProfile := flag.String("cpuprofile", "", "write CPU profile to `file`")
+	memProfile := flag.String("memprofile", "", "write memory profile to `file` on exit")
+	pprofAddr := flag.String("pprof", "", "start pprof HTTP server on `addr` (e.g. :6060)")
 	flag.Parse()
 
 	logPath := logFilePath()
 	_ = os.MkdirAll(filepath.Dir(logPath), 0755)
-	rotateLog(logPath)
+	if *rotateLogOnly {
+		rotateLog(logPath)
+		return
+	}
+	if os.Getenv("ITCHIO_LOG_PREPARED") != "1" {
+		rotateLog(logPath)
+	}
 	logFile, err := os.OpenFile(logPath,
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
 		log.SetOutput(logFile)
 		// Redirect fd 2 (stderr) so Go runtime panics land in the log too.
-		// Dup2 is not available on Linux ARM64; Dup3 with flags=0 is equivalent.
-		_ = syscall.Dup3(int(logFile.Fd()), 2, 0)
+		redirectStderr(logFile.Fd())
 		defer logFile.Close()
 	}
 
@@ -56,7 +76,7 @@ func main() {
 	logger.Info("git commit: %s", gitCommit)
 	p := readPlatform()
 	logger.Info("platform:   %s (%s)", p, platformDescription(p))
-	logger.Info("nextui:     %s", readNextUIVersion())
+	logger.Info("leaf:       %s", readLeafVersion())
 	profilingDesc := "off"
 	if *cpuProfile != "" || *memProfile != "" || *pprofAddr != "" {
 		var parts []string
@@ -102,7 +122,7 @@ func main() {
 	}
 
 	// When profiling to files, install a signal handler so that SIGTERM/SIGINT/
-	// SIGHUP (e.g. Ctrl-C in the terminal, adb disconnect, or NextUI killing the
+	// SIGHUP (e.g. Ctrl-C in the terminal, adb disconnect, or the launcher killing the
 	// process) still flushes profiles before exit. Without this, Go's deferred
 	// cleanup is skipped and the profile files are never written.
 	if *cpuProfile != "" || *memProfile != "" {
@@ -134,6 +154,25 @@ func main() {
 		logger.Info("headless mode: exiting cleanly")
 		os.Exit(0)
 	}
+	if *catFixtures {
+		_ = os.Setenv("ITCHIO_CAT_FIXTURES", "1")
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_PAGE", fmt.Sprintf("%d", *catFixturePage))
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_FRAMES", fmt.Sprintf("%d", *catFixtureFrames))
+		_ = os.Setenv("ITCHIO_CAT_FIXTURE_SCREENSHOT", *catFixtureScreenshot)
+	}
+	if *catMainList {
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST", "1")
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_STATE", *catMainListState)
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_FRAMES", fmt.Sprintf("%d", *catMainListFrames))
+		_ = os.Setenv("ITCHIO_CAT_MAIN_LIST_SCREENSHOT", *catMainListScreenshot)
+	}
+	if *catInput != "" {
+		_ = os.Setenv("ITCHIO_CAT_INPUT", *catInput)
+		_ = os.Setenv("ITCHIO_CAT_INPUT_FRAMES", fmt.Sprintf("%d", *catInputFrames))
+		_ = os.Setenv("ITCHIO_CAT_INPUT_SCREENSHOT", *catInputScreenshot)
+	}
+	_ = os.Setenv("ITCHIO_APP_FRAMES", fmt.Sprintf("%d", *appFrames))
+	_ = os.Setenv("ITCHIO_APP_SCREENSHOT", *appScreenshot)
 
 	runSDL()
 
@@ -152,16 +191,13 @@ func main() {
 	}
 }
 
-// logFilePath returns the path for the log file.
-// On device, NextUI sets PLATFORM (e.g. "tg5040") and logs are written to the
-// conventional location used by other Paks:
-//
-//	/mnt/SDCARD/.userdata/<PLATFORM>/logs/itchio-pak.log
-//
-// When PLATFORM is unset (development / CI), it falls back to $HOME/itchio-pak.log.
+// logFilePath uses Leaf's public log root. Development/CI falls back to HOME.
 func logFilePath() string {
-	if platform := os.Getenv("PLATFORM"); platform != "" {
-		return filepath.Join("/mnt/SDCARD/.userdata", platform, "logs", "itchio-pak.log")
+	if logs := os.Getenv("LOGS_PATH"); logs != "" {
+		return filepath.Join(logs, "itchio-pak.log")
+	}
+	if userdata := os.Getenv("USERDATA_PATH"); userdata != "" {
+		return filepath.Join(userdata, "logs", "itchio-pak.log")
 	}
 	return filepath.Join(os.Getenv("HOME"), "itchio-pak.log")
 }
@@ -174,32 +210,21 @@ func readPlatform() string {
 	return "unknown"
 }
 
-// platformDescription returns a human-readable device name for a NextUI platform code.
+// platformDescription returns the supported Leaf device name.
 func platformDescription(platform string) string {
 	switch platform {
-	case "tg5040":
-		return "TrimUI Brick / Smart Pro"
-	case "tg5050":
-		return "TrimUI Smart Pro S"
-	case "my355":
-		return "Miyoo Flip"
+	case "mlp1":
+		return "Miniloong Pocket 1"
 	default:
 		return "unknown device"
 	}
 }
 
-// readNextUIVersion reads the first non-empty line of the NextUI version file.
-// Returns "unknown" if the file is absent, empty, or unreadable — absence is
-// expected when running outside NextUI (dev machine, other launchers).
-func readNextUIVersion() string {
-	data, err := os.ReadFile("/mnt/SDCARD/.system/version.txt")
-	if err != nil {
-		return "unknown"
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
+// readLeafVersion returns a launcher-provided release identifier when present.
+func readLeafVersion() string {
+	for _, name := range []string{"LEAF_VERSION", "UMRK_RELEASE_ID"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
 		}
 	}
 	return "unknown"

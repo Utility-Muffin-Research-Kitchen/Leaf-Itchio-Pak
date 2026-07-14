@@ -1,10 +1,71 @@
 package roms_test
 
 import (
+	"os"
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func TestMain(m *testing.M) {
+	err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: map[string]string{
+			"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA",
+			"FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX",
+		},
+		ImageDirs: map[string]string{
+			"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA",
+			"FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX",
+		},
+		SourceID:    "primary",
+		PrimaryRoot: "/leaf",
+		MusicRoot:   "/leaf/Music",
+		StatesRoot:  "/leaf/States",
+		Sources: []roms.SourcePathConfig{
+			{
+				SourceID: "primary", Root: "/leaf", MusicRoot: "/leaf/Music", StatesRoot: "/leaf/States",
+				SystemDirs: map[string]string{"GB": "/leaf/Roms/GB", "GBC": "/leaf/Roms/GBC", "GBA": "/leaf/Roms/GBA", "FC": "/leaf/Roms/NES", "MD": "/leaf/Roms/GENESIS", "PICO8": "/leaf/Roms/PICO8", "PS": "/leaf/Roms/PSX"},
+				ImageDirs:  map[string]string{"GB": "/leaf/Images/GB", "GBC": "/leaf/Images/GBC", "GBA": "/leaf/Images/GBA", "FC": "/leaf/Images/NES", "MD": "/leaf/Images/GENESIS", "PICO8": "/leaf/Images/PICO8", "PS": "/leaf/Images/PSX"},
+			},
+			{
+				SourceID: "secondary_sd", Root: "/secondary", MusicRoot: "/secondary/Music", StatesRoot: "/secondary/States",
+				SystemDirs: map[string]string{"GB": "/secondary/Roms/GB", "GBC": "/secondary/Roms/GBC", "GBA": "/secondary/Roms/GBA", "FC": "/secondary/Roms/NES", "MD": "/secondary/Roms/GENESIS", "PICO8": "/secondary/Roms/PICO8", "PS": "/secondary/Roms/PSX"},
+				ImageDirs:  map[string]string{"GB": "/secondary/Images/GB", "GBC": "/secondary/Images/GBC", "GBA": "/secondary/Images/GBA", "FC": "/secondary/Images/NES", "MD": "/secondary/Images/GENESIS", "PICO8": "/secondary/Images/PICO8", "PS": "/secondary/Images/PSX"},
+			},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestDescribeDestinationPreservesSecondarySource(t *testing.T) {
+	got, ok := roms.DescribeDestination("/secondary/Roms/GBC/RPG/game.gbc")
+	if !ok {
+		t.Fatal("secondary destination was not described")
+	}
+	if got.SourceID != "secondary_sd" || got.RelativePath != "Roms/GBC/RPG/game.gbc" || got.CanonicalSystem != "GBC" {
+		t.Fatalf("identity = %#v", got)
+	}
+}
+
+func TestArtworkPathUsesSourceCanonicalImageRootAndJawakaStem(t *testing.T) {
+	tests := map[string]string{
+		"/leaf/Roms/PSX/nolibgs_demo.cue":         "/leaf/Images/PSX/nolibgs_demo.png",
+		"/secondary/Roms/GBC/RPG/game [v1.2].gbc": "/secondary/Images/GBC/game [v1.2].png",
+		"/leaf/Roms/PICO8/cart.p8.png":            "/leaf/Images/PICO8/cart.png",
+		"/leaf/Roms/PICO8/Multi/Multi.m3u":        "/leaf/Images/PICO8/Multi.png",
+	}
+	for romPath, want := range tests {
+		if got := roms.ArtworkPath(romPath); got != want {
+			t.Errorf("ArtworkPath(%q) = %q, want %q", romPath, got, want)
+		}
+	}
+	if got := roms.ArtworkPath("/outside/game.gb"); got != "" {
+		t.Fatalf("outside artwork path = %q, want empty", got)
+	}
+}
 
 func TestScoreUpload(t *testing.T) {
 	tests := []struct {
@@ -25,6 +86,9 @@ func TestScoreUpload(t *testing.T) {
 		{"game.P8.PNG", 2},
 		{"game.p8", 1},
 		{"game.P8", 1},
+		{"game.chd", 1},
+		{"game.pbp", 1},
+		{"game.cue", 1},
 		{"game.zip", 0},
 		{"game.pocket", 0},
 		{"game.pdf", 0},
@@ -40,65 +104,70 @@ func TestScoreUpload(t *testing.T) {
 func TestDestinationDir(t *testing.T) {
 	tests := []struct {
 		ext  string
-		core string
 		want string
 	}{
-		{".gbc", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
-		{".GBC", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
-		{".gb", "fakeo8", "/mnt/SDCARD/Roms/Game Boy (GB)/"},
-		{".gba", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Advance (GBA)/"},
-		{".nes", "fakeo8", "/mnt/SDCARD/Roms/Nintendo Entertainment System (FC)/"},
-		{".md", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".gen", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".smd", "fakeo8", "/mnt/SDCARD/Roms/Sega Genesis (MD)/"},
-		{".p8", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".P8", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".p8.png", "fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{".p8", "pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{".p8.png", "pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{".zip", "fakeo8", "/mnt/SDCARD/Roms/Game Boy Color (GBC)/"},
-		{".unknown", "fakeo8", ""},
+		{".gbc", "/leaf/Roms/GBC/"},
+		{".GBC", "/leaf/Roms/GBC/"},
+		{".gb", "/leaf/Roms/GB/"},
+		{".gba", "/leaf/Roms/GBA/"},
+		{".nes", "/leaf/Roms/NES/"},
+		{".md", "/leaf/Roms/GENESIS/"},
+		{".gen", "/leaf/Roms/GENESIS/"},
+		{".smd", "/leaf/Roms/GENESIS/"},
+		{".p8", "/leaf/Roms/PICO8/"},
+		{".P8", "/leaf/Roms/PICO8/"},
+		{".p8.png", "/leaf/Roms/PICO8/"},
+		{".zip", "/leaf/Roms/GBC/"},
+		{".chd", "/leaf/Roms/PSX/"},
+		{".cue", "/leaf/Roms/PSX/"},
+		{".bin", "/leaf/Roms/PSX/"},
+		{".m3u", "/leaf/Roms/PSX/"},
+		{".unknown", ""},
 	}
 	for _, tt := range tests {
-		got := roms.DestinationDir(tt.ext, tt.core)
+		got := roms.DestinationDir(tt.ext)
 		if got != tt.want {
-			t.Errorf("DestinationDir(%q, %q) = %q, want %q", tt.ext, tt.core, got, tt.want)
+			t.Errorf("DestinationDir(%q) = %q, want %q", tt.ext, got, tt.want)
+		}
+	}
+}
+
+func TestPSXFormatPolicy(t *testing.T) {
+	for _, ext := range []string{".cbn", ".chd", ".cue", ".img", ".iso", ".mdf", ".pbp", ".toc", ".m3u", ".bin"} {
+		if !roms.IsSupportedUploadExt(ext) || !roms.IsPSXExt(ext) {
+			t.Errorf("PSX extension %q is not supported", ext)
+		}
+	}
+	for _, name := range []string{"disc.cue", "track.bin", "set.m3u", "disc.img", "disc.iso", "disc.cbn", "disc.mdf"} {
+		if roms.SupportsUnifiedNaming(name) {
+			t.Errorf("reference-sensitive %q allowed unified naming", name)
+		}
+	}
+	for _, name := range []string{"game.chd", "eboot.pbp"} {
+		if !roms.SupportsUnifiedNaming(name) {
+			t.Errorf("standalone %q rejected unified naming", name)
 		}
 	}
 }
 
 func TestPico8ROMDir(t *testing.T) {
-	cases := []struct {
-		core string
-		want string
-	}{
-		{"fakeo8", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{"pico8", "/mnt/SDCARD/Roms/Pico-8 (PICO)/"},
-		{"", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-		{"other", "/mnt/SDCARD/Roms/Pico-8 (P8)/"},
-	}
-	for _, tc := range cases {
-		got := roms.Pico8ROMDir(tc.core)
-		if got != tc.want {
-			t.Errorf("Pico8ROMDir(%q) = %q, want %q", tc.core, got, tc.want)
-		}
+	if got := roms.Pico8ROMDir(); got != "/leaf/Roms/PICO8/" {
+		t.Errorf("Pico8ROMDir() = %q, want %q", got, "/leaf/Roms/PICO8/")
 	}
 }
 
 func TestPico8GameSubDir(t *testing.T) {
 	cases := []struct {
-		core  string
 		title string
 		want  string
 	}{
-		{"fakeo8", "Poom", "/mnt/SDCARD/Roms/Pico-8 (P8)/Poom/"},
-		{"pico8", "Poom", "/mnt/SDCARD/Roms/Pico-8 (PICO)/Poom/"},
-		{"fakeo8", "Celeste", "/mnt/SDCARD/Roms/Pico-8 (P8)/Celeste/"},
+		{"Poom", "/leaf/Roms/PICO8/Poom/"},
+		{"Celeste", "/leaf/Roms/PICO8/Celeste/"},
 	}
 	for _, tc := range cases {
-		got := roms.Pico8GameSubDir(tc.core, tc.title)
+		got := roms.Pico8GameSubDir(tc.title)
 		if got != tc.want {
-			t.Errorf("Pico8GameSubDir(%q, %q) = %q, want %q", tc.core, tc.title, got, tc.want)
+			t.Errorf("Pico8GameSubDir(%q) = %q, want %q", tc.title, got, tc.want)
 		}
 	}
 }
@@ -130,9 +199,9 @@ func TestMusicDestinationDir(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"Solastra", "/mnt/SDCARD/Music/Solastra/"},
-		{"Game: Title?", "/mnt/SDCARD/Music/Game Title/"},
-		{"", "/mnt/SDCARD/Music/Unknown/"},
+		{"Solastra", "/leaf/Music/Solastra/"},
+		{"Game: Title?", "/leaf/Music/Game Title/"},
+		{"", "/leaf/Music/Unknown/"},
 	}
 	for _, tt := range tests {
 		got := roms.MusicDestinationDir(tt.title)
@@ -142,17 +211,17 @@ func TestMusicDestinationDir(t *testing.T) {
 	}
 }
 
-func TestPico8GameSubDirLegacy(t *testing.T) {
+func TestPico8GameSubDirSanitizesTitle(t *testing.T) {
 	tests := []struct {
 		title string
 		want  string
 	}{
-		{"Celeste Classic", "/mnt/SDCARD/Roms/Pico-8 (P8)/Celeste Classic/"},
-		{"Game: Title?", "/mnt/SDCARD/Roms/Pico-8 (P8)/Game Title/"},
-		{"", "/mnt/SDCARD/Roms/Pico-8 (P8)/Unknown/"},
+		{"Celeste Classic", "/leaf/Roms/PICO8/Celeste Classic/"},
+		{"Game: Title?", "/leaf/Roms/PICO8/Game Title/"},
+		{"", "/leaf/Roms/PICO8/Unknown/"},
 	}
 	for _, tt := range tests {
-		got := roms.Pico8GameSubDir("fakeo8", tt.title)
+		got := roms.Pico8GameSubDir(tt.title)
 		if got != tt.want {
 			t.Errorf("Pico8GameSubDir(%q) = %q, want %q", tt.title, got, tt.want)
 		}

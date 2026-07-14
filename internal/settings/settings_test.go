@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/settings"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -20,6 +20,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.APIKey != "" {
 		t.Errorf("default APIKey = %q, want %q", cfg.APIKey, "")
 	}
+	if cfg.ROMSelection != "auto" {
+		t.Errorf("default ROMSelection = %q, want %q", cfg.ROMSelection, "auto")
+	}
 	if cfg.ROMLocation != "auto" {
 		t.Errorf("default ROMLocation = %q, want %q", cfg.ROMLocation, "auto")
 	}
@@ -29,7 +32,7 @@ func TestRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	cfg := &settings.Config{APIKey: "abc123", ROMLocation: "ask"}
+	cfg := &settings.Config{APIKey: "abc123", ROMSelection: "ask", ROMLocation: "ask"}
 	if err := cfg.Save(path); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -41,8 +44,35 @@ func TestRoundTrip(t *testing.T) {
 	if loaded.APIKey != "abc123" {
 		t.Errorf("APIKey = %q, want %q", loaded.APIKey, "abc123")
 	}
+	if loaded.ROMSelection != "ask" {
+		t.Errorf("ROMSelection = %q, want %q", loaded.ROMSelection, "ask")
+	}
 	if loaded.ROMLocation != "ask" {
 		t.Errorf("ROMLocation = %q, want %q", loaded.ROMLocation, "ask")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
+	}
+}
+
+func TestLoadRepairsConfigModeWhereSupported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"api_key":"secret"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := settings.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("repaired config mode = %v; want 0600", info.Mode().Perm())
 	}
 }
 
@@ -59,6 +89,9 @@ func TestLoadCorruptedFileReturnsDefaults(t *testing.T) {
 	}
 	if cfg.ROMLocation != "auto" {
 		t.Errorf("corrupted load should return defaults, got ROMLocation = %q", cfg.ROMLocation)
+	}
+	if cfg.ROMSelection != "auto" {
+		t.Errorf("corrupted load should return defaults, got ROMSelection = %q", cfg.ROMSelection)
 	}
 }
 
@@ -86,7 +119,7 @@ func TestContentFilterRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 
 	cfg := &settings.Config{
-		APIKey:       "",
+		APIKey:      "",
 		ROMLocation: "auto",
 		Filter: settings.ContentFilter{
 			AdultContent: settings.CategoryFilter{Enabled: true, Disabled: []string{"ecchi", "suggestive"}},
@@ -159,56 +192,55 @@ func TestROMLocationDefault(t *testing.T) {
 	if cfg.ROMLocation != "auto" {
 		t.Errorf("default ROMLocation = %q, want %q", cfg.ROMLocation, "auto")
 	}
-	if cfg.LastROMDirs != nil {
-		t.Errorf("default LastROMDirs should be nil, got %v", cfg.LastROMDirs)
-	}
 }
 
-func TestLastROMDirsRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-
-	cfg := &settings.Config{
-		ROMLocation: "ask",
-		LastROMDirs: map[string]string{
-			".gbc": "/mnt/SDCARD/Roms/RPG/GBC/",
-			".gb":  "/mnt/SDCARD/Roms/RPG/GB/",
-		},
+func TestRemovedLegacySettingsAreIgnoredAndNotRewritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	legacy := `{"nextui_theme":true,"pico8_core":"pico8","last_rom_dirs":{".gb":"/legacy/GB"},"rom_location":"ask"}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	loaded, err := settings.Load(path)
+	cfg, err := settings.Load(path)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatal(err)
 	}
-	if loaded.ROMLocation != "ask" {
-		t.Errorf("ROMLocation = %q, want %q", loaded.ROMLocation, "ask")
+	if cfg.ROMLocation != "ask" {
+		t.Fatalf("maintained setting ROMLocation = %q, want ask", cfg.ROMLocation)
 	}
-	if loaded.LastROMDirs[".gbc"] != "/mnt/SDCARD/Roms/RPG/GBC/" {
-		t.Errorf(".gbc dir = %q, want %q", loaded.LastROMDirs[".gbc"], "/mnt/SDCARD/Roms/RPG/GBC/")
-	}
-	if loaded.LastROMDirs[".gb"] != "/mnt/SDCARD/Roms/RPG/GB/" {
-		t.Errorf(".gb dir = %q, want %q", loaded.LastROMDirs[".gb"], "/mnt/SDCARD/Roms/RPG/GB/")
-	}
-}
-
-func TestLastROMDirsOmittedWhenNil(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-
-	cfg := &settings.Config{ROMLocation: "ask"} // LastROMDirs is nil
 	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
+		t.Fatal(err)
 	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte("last_rom_dirs")) {
-		t.Errorf("last_rom_dirs should be omitted when nil, found in JSON:\n%s", data)
+	for _, removed := range []string{"nextui_theme", "pico8_core", "last_rom_dirs", "/legacy/GB"} {
+		if bytes.Contains(data, []byte(removed)) {
+			t.Errorf("removed setting %q was rewritten:\n%s", removed, data)
+		}
+	}
+}
+
+func TestRememberedDestinationsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := &settings.Config{
+		ROMDestinations: map[string]settings.RememberedDestination{
+			"GBC": {SourceID: "secondary_sd", RelativePath: "RPG"},
+		},
+		MusicDestination: &settings.RememberedDestination{SourceID: "primary", RelativePath: "Albums"},
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := settings.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.ROMDestinations["GBC"]; got.SourceID != "secondary_sd" || got.RelativePath != "RPG" {
+		t.Fatalf("ROM destination = %#v", got)
+	}
+	if loaded.MusicDestination == nil || loaded.MusicDestination.SourceID != "primary" || loaded.MusicDestination.RelativePath != "Albums" {
+		t.Fatalf("music destination = %#v", loaded.MusicDestination)
 	}
 }
 
@@ -320,35 +352,6 @@ func TestSortModeBackwardsCompatible(t *testing.T) {
 	}
 	if loaded.SortMode != "" {
 		t.Errorf("old config SortMode = %q, want empty string", loaded.SortMode)
-	}
-}
-
-func TestNextUIThemeDefault(t *testing.T) {
-	cfg, err := settings.Load("/nonexistent/path/config.json")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	// Default must be false.
-	if cfg.NextUITheme {
-		t.Errorf("default NextUITheme = %v, want %v", cfg.NextUITheme, false)
-	}
-}
-
-func TestNextUIThemeRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-
-	cfg := &settings.Config{NextUITheme: true}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	loaded, err := settings.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !loaded.NextUITheme {
-		t.Errorf("NextUITheme = %v, want %v", loaded.NextUITheme, true)
 	}
 }
 
@@ -465,49 +468,6 @@ func TestMusicBackwardCompat(t *testing.T) {
 	}
 	if cfg.MusicLocation != "auto" {
 		t.Errorf("backward-compat default MusicLocation = %q, want \"auto\"", cfg.MusicLocation)
-	}
-}
-
-func TestPico8CoreDefault(t *testing.T) {
-	cfg, err := settings.Load("/nonexistent/path.json")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Pico8Core != "fakeo8" {
-		t.Errorf("default Pico8Core = %q, want %q", cfg.Pico8Core, "fakeo8")
-	}
-}
-
-func TestPico8CoreRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-
-	cfg := &settings.Config{Pico8Core: "pico8"}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	loaded, err := settings.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.Pico8Core != "pico8" {
-		t.Errorf("Pico8Core = %q, want %q", loaded.Pico8Core, "pico8")
-	}
-}
-
-func TestPico8CoreOldConfigDefaultsFakeo8(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	// Old config JSON without pico8_core field.
-	if err := os.WriteFile(path, []byte(`{"unified_naming":true}`), 0644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	loaded, err := settings.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.Pico8Core != "fakeo8" {
-		t.Errorf("old config Pico8Core = %q, want %q", loaded.Pico8Core, "fakeo8")
 	}
 }
 

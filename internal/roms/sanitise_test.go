@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func TestSanitiseFilename(t *testing.T) {
@@ -151,5 +151,55 @@ func TestResolveUnifiedDest_EmptyTitle_NoRename(t *testing.T) {
 	}
 	if renamed {
 		t.Error("empty title: renamed should be false")
+	}
+}
+
+func TestResolveUnifiedDest_CaseFoldCollision(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "upload.gb")
+	if err := os.WriteFile(current, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "doomslinger dungeon.GB"), []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	want := filepath.Join(dir, "Doomslinger Dungeon (2).gb")
+	if got != want || !renamed {
+		t.Fatalf("case-fold collision: got (%q, %v), want (%q, true)", got, renamed, want)
+	}
+}
+
+func TestResolveUnifiedDest_CaseFoldNumberedCollision(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "upload.gb")
+	for name, content := range map[string]string{
+		"Doomslinger Dungeon.gb":     "first",
+		"doomslinger dungeon (2).GB": "second",
+		"upload.gb":                  "new",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	want := filepath.Join(dir, "Doomslinger Dungeon (3).gb")
+	if got != want || !renamed {
+		t.Fatalf("numbered case-fold collision: got (%q, %v), want (%q, true)", got, renamed, want)
+	}
+}
+
+func TestResolveUnifiedDest_CaseOnlyCurrentNameIsStable(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "doomslinger dungeon.GB")
+	if err := os.WriteFile(current, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	if got != current || renamed {
+		t.Fatalf("case-only current name: got (%q, %v), want (%q, false)", got, renamed, current)
 	}
 }

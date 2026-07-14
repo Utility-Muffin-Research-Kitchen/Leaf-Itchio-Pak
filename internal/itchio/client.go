@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,13 +15,19 @@ import (
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 const (
-	// userAgent is sent on every outbound request to avoid Cloudflare bot-protection
+	// browserUserAgent preserves the upstream browser identity used to avoid Cloudflare bot-protection
 	// responses (which would return HTML instead of the expected XML/JSON payloads).
-	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+	browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+	productName      = "Leaf-Itchio-Pak"
+
+	dialTimeout           = 10 * time.Second
+	keepAlive             = 30 * time.Second
+	responseHeaderTimeout = 15 * time.Second
+	metadataTimeout       = 30 * time.Second
 
 	apiItchIO = "https://api.itch.io"
 )
@@ -33,7 +40,8 @@ var errH1Negotiated = errors.New("server negotiated http/1.1")
 // uaTransport injects browser-compatible headers on every outbound request
 // that does not already have them, then delegates to the wrapped RoundTripper.
 type uaTransport struct {
-	wrapped http.RoundTripper
+	wrapped   http.RoundTripper
+	userAgent string
 }
 
 func setDefaultHeader(req *http.Request, key, value string) {
@@ -44,7 +52,7 @@ func setDefaultHeader(req *http.Request, key, value string) {
 
 func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
-	setDefaultHeader(req, "User-Agent", userAgent)
+	setDefaultHeader(req, "User-Agent", t.userAgent)
 	setDefaultHeader(req, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	setDefaultHeader(req, "Accept-Language", "en-US,en;q=0.9")
 	setDefaultHeader(req, "sec-ch-ua", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
@@ -69,7 +77,7 @@ func dialTLS(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn
 	if err != nil {
 		return nil, err
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	conn, err := (&net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive}).DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +113,7 @@ func dialTLSH1(ctx context.Context, network, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	conn, err := (&net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive}).DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -134,8 +142,8 @@ func dialTLSH1(ctx context.Context, network, addr string) (net.Conn, error) {
 // extra handshake only occurs on the first request to each h1-only host.
 // Plain HTTP requests (httptest servers in tests) always use the h1 transport.
 type h2FallbackTransport struct {
-	h2 *http2.Transport
-	h1 *http.Transport
+	h2 http.RoundTripper
+	h1 http.RoundTripper
 
 	mu      sync.RWMutex
 	h1hosts map[string]struct{} // hosts that negotiated http/1.1
@@ -170,18 +178,59 @@ func (t *h2FallbackTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, err
 }
 
-func newHTTPClient() *http.Client {
+func productUserAgent(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "dev"
+	}
+	// Product tokens cannot contain whitespace. Build versions are normally
+	// semver, but keep developer overrides safe and deterministic too.
+	version = strings.Map(func(value rune) rune {
+		if value <= ' ' || value == '/' || value == ';' || value == '(' || value == ')' {
+			return '-'
+		}
+		return value
+	}, version)
+	return fmt.Sprintf("%s %s/%s", browserUserAgent, productName, version)
+}
+
+// safeRequestError keeps credential-bearing request URLs out of UI/crash
+// messages while retaining the full failure in the local, redacted debug log.
+// Cancellation identity is preserved for transaction rollback logic.
+func safeRequestError(operation string, err error) error {
+	logger.Debug("%s request failed: %v", operation, err)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("%s: %w", operation, context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return fmt.Errorf("%s: network timeout", operation)
+	}
+	return fmt.Errorf("%s: network request failed", operation)
+}
+
+func newHTTPClient(version string) *http.Client {
 	jar, _ := cookiejar.New(nil)
 	h2t := &http2.Transport{
-		DialTLSContext: dialTLS,
+		DialTLSContext:  dialTLS,
+		ReadIdleTimeout: responseHeaderTimeout,
+		PingTimeout:     dialTimeout,
 	}
 	h1t := &http.Transport{
-		DialTLSContext: dialTLSH1,
+		DialTLSContext:        dialTLSH1,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		IdleConnTimeout:       keepAlive,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
 	}
 	return &http.Client{
 		Jar:     jar,
-		Timeout: 30 * time.Second,
+		Timeout: metadataTimeout,
 		Transport: &uaTransport{
+			userAgent: productUserAgent(version),
 			wrapped: &h2FallbackTransport{
 				h2:      h2t,
 				h1:      h1t,
@@ -202,8 +251,14 @@ type Client struct {
 }
 
 func NewClient() *Client {
+	return NewClientWithVersion("dev")
+}
+
+// NewClientWithVersion builds the production client while preserving the
+// upstream browser fingerprint and appending the Leaf product/version token.
+func NewClientWithVersion(version string) *Client {
 	return &Client{
-		http:   newHTTPClient(),
+		http:   newHTTPClient(version),
 		base:   "https://itch.io",
 		butler: apiItchIO,
 	}
@@ -211,7 +266,7 @@ func NewClient() *Client {
 
 func NewClientWithBase(base string) *Client {
 	return &Client{
-		http:   newHTTPClient(),
+		http:   newHTTPClient("dev"),
 		base:   base,
 		butler: apiItchIO,
 	}
@@ -220,7 +275,7 @@ func NewClientWithBase(base string) *Client {
 // NewClientWithBaseAndButler is used in tests to override both base URLs.
 func NewClientWithBaseAndButler(base, butler string) *Client {
 	return &Client{
-		http:   newHTTPClient(),
+		http:   newHTTPClient("dev"),
 		base:   base,
 		butler: butler,
 	}

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/text"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 // SanitiseFilename builds a safe filename from a game title and extension.
@@ -50,24 +50,26 @@ func SanitiseFilename(title, ext string) string {
 func ResolveUnifiedDest(currentPath, gameTitle string, allowOverwrite bool) (string, bool) {
 	ext := ROMExt(filepath.Base(currentPath))
 	candidate := SanitiseFilename(gameTitle, ext)
-	if candidate == "" || candidate == filepath.Base(currentPath) {
+	if candidate == "" || strings.EqualFold(candidate, filepath.Base(currentPath)) {
 		return currentPath, false
 	}
 	dir := filepath.Dir(currentPath)
 	target := filepath.Join(dir, candidate)
-	if _, err := os.Stat(target); err == nil && target != currentPath {
+	if existing, exists := existingCaseFoldPath(dir, candidate); exists && existing != currentPath {
 		if allowOverwrite {
 			stem := strings.TrimSuffix(candidate, ext)
 			if isNumberedSlot(filepath.Base(currentPath), stem, ext) {
 				return currentPath, false
 			}
-			// Allow overwriting: os.Rename will atomically replace the target.
+			// Use the existing path's real casing. This gives case-sensitive test
+			// hosts the same collision behavior as the FAT32 target filesystem.
+			target = existing
 		} else {
 			stem := strings.TrimSuffix(candidate, ext)
 			for n := 2; ; n++ {
 				candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
 				target = filepath.Join(dir, candidate)
-				if _, err := os.Stat(target); os.IsNotExist(err) {
+				if _, exists := existingCaseFoldPath(dir, candidate); !exists {
 					break
 				}
 				if target == currentPath {
@@ -77,6 +79,23 @@ func ResolveUnifiedDest(currentPath, gameTitle string, allowOverwrite bool) (str
 		}
 	}
 	return target, target != currentPath
+}
+
+// existingCaseFoldPath returns the real path of an entry whose basename is a
+// Unicode case-fold match. Leaf content lives on FAT32, where case-only names
+// collide; using the same rule on case-sensitive development hosts keeps
+// collision planning deterministic.
+func existingCaseFoldPath(dir, base string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), base) {
+			return filepath.Join(dir, entry.Name()), true
+		}
+	}
+	return "", false
 }
 
 // isNumberedSlot reports whether base matches the pattern "stem (N)ext" for

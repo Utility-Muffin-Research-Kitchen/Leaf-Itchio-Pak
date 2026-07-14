@@ -1,9 +1,11 @@
 package roms
 
-// DetectBufSize is the number of bytes read from a file header to identify
-// its ROM type. 336 bytes covers the longest signature (GB/GBC Nintendo logo
-// at 0x104 + CGB flag at 0x143 = 324 bytes, rounded up).
-const DetectBufSize = 336
+import "strings"
+
+// DetectBufSize is the number of bytes read from a file header to identify its
+// ROM type. It covers the ISO-9660 descriptor in sector 16 as well as the
+// shorter cartridge, CHD, PBP, CUE, ZIP, and Pico-8 signatures.
+const DetectBufSize = 36 * 1024
 
 // DetectROMExt returns the file extension inferred from the leading bytes of a
 // file. In addition to ROM formats it also recognises ".zip" so callers can
@@ -13,6 +15,32 @@ const DetectBufSize = 336
 // pass at least DetectBufSize bytes; shorter slices are handled gracefully
 // (signatures requiring more bytes than available are simply skipped).
 func DetectROMExt(data []byte) string {
+	// MAME CHD: "MComprHD" at offset 0.
+	if len(data) >= 8 && string(data[:8]) == "MComprHD" {
+		return ".chd"
+	}
+
+	// PlayStation Portable executable container, also used for PS1 EBOOTs.
+	if len(data) >= 4 && data[0] == 0 && data[1] == 'P' && data[2] == 'B' && data[3] == 'P' {
+		return ".pbp"
+	}
+
+	// ISO-9660 primary volume descriptor at sector 16 + one-byte type.
+	if len(data) >= 0x8006 && string(data[0x8001:0x8006]) == "CD001" {
+		return ".iso"
+	}
+
+	// CUE sheets are text descriptors. Only accept a leading FILE directive
+	// with a TRACK directive nearby to avoid classifying arbitrary text files.
+	prefixLen := len(data)
+	if prefixLen > 4096 {
+		prefixLen = 4096
+	}
+	prefix := strings.ToUpper(strings.TrimSpace(string(data[:prefixLen])))
+	if strings.HasPrefix(prefix, "FILE ") &&
+		(strings.Contains(prefix, "\n  TRACK ") || strings.Contains(prefix, "\nTRACK ")) {
+		return ".cue"
+	}
 	// ZIP: "PK\x03\x04" local-file-header magic
 	if len(data) >= 4 &&
 		data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04 {

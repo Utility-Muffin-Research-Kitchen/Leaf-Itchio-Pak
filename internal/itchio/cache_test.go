@@ -1,13 +1,44 @@
 package itchio_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
+
+func BenchmarkLoadGamesCache1000(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "games_cache.json")
+	games := make([]itchio.Game, 1000)
+	for i := range games {
+		games[i] = itchio.Game{
+			Title:    fmt.Sprintf("Game %04d", i),
+			Author:   fmt.Sprintf("Author %03d", i%100),
+			URL:      fmt.Sprintf("https://author-%d.itch.io/game-%d", i%100, i),
+			CoverURL: fmt.Sprintf("https://img.example/%d.png", i),
+			Platform: []string{"GB", "GBC", "GBA", "NES", "MD", "P8"}[i%6],
+			IsFree:   i%4 != 0,
+		}
+	}
+	if err := itchio.SaveGamesCache(path, games); err != nil {
+		b.Fatalf("SaveGamesCache: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cache, err := itchio.LoadGamesCache(path)
+		if err != nil {
+			b.Fatalf("LoadGamesCache: %v", err)
+		}
+		if len(cache.Games) != len(games) {
+			b.Fatalf("loaded %d games, want %d", len(cache.Games), len(games))
+		}
+	}
+}
 
 func TestSaveAndLoadGamesCache(t *testing.T) {
 	dir := t.TempDir()
@@ -38,11 +69,32 @@ func TestSaveAndLoadGamesCache(t *testing.T) {
 	if cache.Meta.TotalGames != 2 {
 		t.Errorf("Meta.TotalGames = %d, want 2", cache.Meta.TotalGames)
 	}
+	if cache.Meta.Revision != itchio.GamesCacheRevision || !cache.CurrentRevision() {
+		t.Errorf("cache revision = %d, want current %d", cache.Meta.Revision, itchio.GamesCacheRevision)
+	}
 	if cache.Meta.FetchedAt.IsZero() {
 		t.Error("Meta.FetchedAt should not be zero")
 	}
 	if time.Since(cache.Meta.FetchedAt) > 5*time.Second {
 		t.Error("Meta.FetchedAt should be recent")
+	}
+}
+
+func TestLoadGamesCache_LegacyRevisionRemainsUsableButRequestsRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "games_cache.json")
+	legacy := `{"meta":{"fetched_at":"2026-07-12T00:00:00Z","total_games":1},"games":[{"title":"Existing Game","url":"https://dev.itch.io/existing","platform":"GB"}]}`
+	if err := os.WriteFile(path, []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := itchio.LoadGamesCache(path)
+	if err != nil {
+		t.Fatalf("LoadGamesCache legacy: %v", err)
+	}
+	if len(cache.Games) != 1 || cache.Games[0].Title != "Existing Game" {
+		t.Fatalf("legacy cache content lost: %#v", cache.Games)
+	}
+	if cache.CurrentRevision() {
+		t.Fatalf("legacy revision %d treated as current", cache.Meta.Revision)
 	}
 }
 

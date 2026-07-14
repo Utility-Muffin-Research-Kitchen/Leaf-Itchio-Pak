@@ -1,10 +1,35 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 )
+
+func BenchmarkCachedCataloguePipeline5000(b *testing.B) {
+	platforms := []string{"GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
+	games := make([]itchio.Game, 5000)
+	for i := range games {
+		games[i] = itchio.Game{
+			Title:    fmt.Sprintf("Game %04d Adventure", i),
+			Author:   fmt.Sprintf("Studio %03d", i%250),
+			URL:      fmt.Sprintf("https://studio-%d.itch.io/game-%d", i%250, i),
+			Platform: platforms[i%len(platforms)],
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		filtered := applyPlatformFilter(games, "GBC")
+		filtered = applySearchFilter(filtered, "adventure")
+		sorted := itchio.ApplySort(filtered, itchio.SortModeAZ, nil, nil, nil, nil)
+		if len(sorted) == 0 {
+			b.Fatal("pipeline returned no games")
+		}
+	}
+}
 
 var filterTestGames = []itchio.Game{
 	{Title: "Alwa's Awakening", Author: "Elden Pixels", Platform: "GB"},

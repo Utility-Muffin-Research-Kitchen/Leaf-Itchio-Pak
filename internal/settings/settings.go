@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // CategoryFilter holds the enabled state and individually-disabled tags for
@@ -45,30 +45,38 @@ type ContentFilter struct {
 	SubstanceUse CategoryFilter `json:"substance_use"`
 }
 
+// RememberedDestination is stable across mount-point changes: RelativePath is
+// rooted at the selected canonical system directory (or Music root).
+type RememberedDestination struct {
+	SourceID     string `json:"source_id"`
+	RelativePath string `json:"relative_path"`
+}
+
 // Config is the top-level application configuration.
 type Config struct {
-	APIKey         string            `json:"api_key"`
-	ROMLocation    string            `json:"rom_location"`
-	LastROMDirs    map[string]string `json:"last_rom_dirs,omitempty"`
-	Filter         ContentFilter     `json:"content_filter"`
-	LogLevel       string            `json:"log_level,omitempty"`       // "debug" | "" (resolves to "info")
-	SortMode       string            `json:"sort_mode,omitempty"`       // "az" | "za" | "new" | "dl" | "free" | "paid" | "" (empty = [RSS])
-	PlatformFilter string            `json:"platform_filter,omitempty"` // "" = All; persisted to config.json
-	NextUITheme    bool              `json:"nextui_theme"`
-	UnifiedNaming  bool              `json:"unified_naming"`           // default true — no omitempty so false survives save/load
-	MusicDownload  string            `json:"music_download,omitempty"` // "auto" | "ask" | "off"
-	MusicLocation  string            `json:"music_location,omitempty"` // "auto" | "ask"
-	Pico8Core      string            `json:"pico8_core,omitempty"`     // "fakeo8" | "pico8"
+	APIKey                string                           `json:"api_key"`
+	APIKeyWarningAccepted bool                             `json:"api_key_physical_warning_accepted,omitempty"`
+	ROMSelection          string                           `json:"rom_selection"`
+	ROMLocation           string                           `json:"rom_location"`
+	ROMDestinations       map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`
+	MusicDestination      *RememberedDestination           `json:"remembered_music_destination,omitempty"`
+	Filter                ContentFilter                    `json:"content_filter"`
+	LogLevel              string                           `json:"log_level,omitempty"`       // "debug" | "" (resolves to "info")
+	SortMode              string                           `json:"sort_mode,omitempty"`       // "az" | "za" | "new" | "dl" | "free" | "paid" | "" (empty = [RSS])
+	PlatformFilter        string                           `json:"platform_filter,omitempty"` // "" = All; persisted to config.json
+	UnifiedNaming         bool                             `json:"unified_naming"`            // default true — no omitempty so false survives save/load
+	MusicDownload         string                           `json:"music_download,omitempty"`  // "auto" | "ask" | "off"
+	MusicLocation         string                           `json:"music_location,omitempty"`  // "auto" | "ask"
 }
 
 func defaults() *Config {
 	return &Config{
 		APIKey:        "",
+		ROMSelection:  "auto",
 		ROMLocation:   "auto",
 		UnifiedNaming: true,
 		MusicDownload: "off",
 		MusicLocation: "auto",
-		Pico8Core:     "fakeo8",
 		Filter: ContentFilter{
 			AdultContent: CategoryFilter{Enabled: true},
 			HeavyThemes:  CategoryFilter{Enabled: true},
@@ -86,6 +94,11 @@ func Load(path string) (*Config, error) {
 		logger.Debug("settings: config not found at %s, using defaults", path)
 		return defaults(), nil
 	}
+	// Best effort: POSIX filesystems can keep credentials owner-only. FAT32
+	// ignores Unix mode bits, which is disclosed before the first key save.
+	if err := os.Chmod(path, 0o600); err != nil {
+		logger.Debug("settings: owner-only config mode unavailable: %v", err)
+	}
 	cfg := defaults()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		logger.Warn("settings: config at %s is invalid, using defaults: %v", path, err)
@@ -100,14 +113,20 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		logger.Error("settings: failed to write tmp config %s: %v", tmp, err)
 		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		logger.Debug("settings: owner-only temporary config mode unavailable: %v", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		logger.Error("settings: failed to rename config %s → %s: %v", tmp, path, err)
 		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		logger.Debug("settings: owner-only config mode unavailable: %v", err)
 	}
 	return nil
 }

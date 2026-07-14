@@ -3,7 +3,7 @@ package roms_test
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func TestClassifyEntry(t *testing.T) {
@@ -21,6 +21,11 @@ func TestClassifyEntry(t *testing.T) {
 		{"game.md", roms.KindROM},
 		{"game.gen", roms.KindROM},
 		{"game.smd", roms.KindROM},
+		{"game.chd", roms.KindROM},
+		{"game.pbp", roms.KindROM},
+		{"game.cue", roms.KindROM},
+		{"disc.m3u", roms.KindROM},
+		{"track01.bin", roms.KindROMSupport},
 		{"track01.mp3", roms.KindMusic},
 		{"track01.MP3", roms.KindMusic},
 		{"track01.ogg", roms.KindMusic},
@@ -39,6 +44,9 @@ func TestClassifyEntry(t *testing.T) {
 		{"game.P8", roms.KindROM},
 		{"cart.p8.png", roms.KindROM},
 		{"cart.P8.PNG", roms.KindROM},
+		{"nested/game.gbc", roms.KindROM},
+		{"soundtrack/disc-1/track01.flac", roms.KindMusic},
+		{"archives/game.zip", roms.KindOther},
 		// cover.png must remain KindOther (not confused with .p8.png)
 		{"cover.png", roms.KindOther},
 		// macOS resource forks must never be classified as playable files,
@@ -52,6 +60,21 @@ func TestClassifyEntry(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("ClassifyEntry(%q) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestPSXArchiveManifestIncludesCompanionTracks(t *testing.T) {
+	m := roms.ZIPManifest{Entries: []roms.ZIPEntry{
+		{Name: "game/disc.cue", Kind: roms.KindROM},
+		{Name: "game/disc.bin", Kind: roms.KindROMSupport},
+		{Name: "readme.txt", Kind: roms.KindOther},
+	}}
+	if !m.HasROMs() || !m.HasPSXFiles() || m.ROMCount() != 1 {
+		t.Fatalf("PSX manifest classification = %#v", m)
+	}
+	exts := m.InstallROMExts()
+	if len(exts) != 2 || exts[0] != ".cue" || exts[1] != ".bin" {
+		t.Fatalf("install extensions = %v", exts)
 	}
 }
 

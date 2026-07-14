@@ -3,7 +3,7 @@ package roms_test
 import (
 	"testing"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func TestDetectROMExt(t *testing.T) {
@@ -35,6 +35,12 @@ func TestDetectROMExt(t *testing.T) {
 	mdHeader := func() []byte {
 		b := make([]byte, 0x120)
 		copy(b[0x100:], "SEGA GENESIS    ")
+		return b
+	}
+
+	isoHeader := func() []byte {
+		b := make([]byte, 0x9000)
+		copy(b[0x8001:], "CD001")
 		return b
 	}
 
@@ -70,6 +76,10 @@ func TestDetectROMExt(t *testing.T) {
 		{"PNG width=256 → not p8.png", pngHeader(256), ""},
 		{"Pico-8 .p8 text cart", []byte("pico-8 cartridge // http://www.pico-8.com\n"), ".p8"},
 		{"ZIP magic", []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00}, ".zip"},
+		{"CHD magic", []byte("MComprHD fixture"), ".chd"},
+		{"PBP magic", []byte{0x00, 'P', 'B', 'P', 0x00}, ".pbp"},
+		{"ISO-9660 magic", isoHeader(), ".iso"},
+		{"CUE sheet", []byte("FILE \"game.bin\" BINARY\n  TRACK 01 MODE2/2352\n"), ".cue"},
 		{"empty data", []byte{}, ""},
 		{"too short", []byte{0x2E, 0x00, 0x00}, ""},
 		{"random bytes", []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}, ""},

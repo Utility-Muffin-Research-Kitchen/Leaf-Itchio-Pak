@@ -3,9 +3,9 @@ package itchio
 // FeedPlatform describes one ROM platform and the itch.io RSS feed slugs that
 // carry its games.
 type FeedPlatform struct {
-	Code      string   // NextUI system code, e.g. "GB"
+	Code      string   // App feed code, e.g. "GB" or "PSX"
 	Name      string   // Human-readable label, e.g. "Game Boy"
-	FeedSlugs []string // itch.io browse path segments, e.g. "made-with-gb-studio"
+	FeedSlugs []string // Relative itch.io browse paths, optionally combining tags
 }
 
 // AllPlatforms is the ordered catalogue of platforms fetched by FetchAllGames.
@@ -16,6 +16,13 @@ type FeedPlatform struct {
 // Studio game that is also tagged "gameboy-color" on itch.io is classified as
 // GBC rather than GB.
 var AllPlatforms = []FeedPlatform{
+	// Keep the small, console-focused PSX feed first so a cache-revision refresh
+	// makes the newly added platform visible without waiting for larger feeds.
+	{
+		Code:      "PSX",
+		Name:      "Sony PlayStation",
+		FeedSlugs: []string{"tag-homebrew/tag-psx"},
+	},
 	{
 		Code:      "GBC",
 		Name:      "Game Boy Color",

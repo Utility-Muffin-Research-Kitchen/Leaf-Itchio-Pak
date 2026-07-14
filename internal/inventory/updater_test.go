@@ -2,6 +2,7 @@ package inventory_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/inventory"
-	"github.com/carroarmato0/nextui-itchio-pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
+
+func configureUpdaterPaths(t *testing.T, root string) {
+	t.Helper()
+	systems := make(map[string]string)
+	images := make(map[string]string)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systems[id] = filepath.Join(root, "unused", id)
+		images[id] = filepath.Join(root, "Images", id)
+	}
+	systems["GB"] = root
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: systems, ImageDirs: images, SourceID: "primary", PrimaryRoot: root,
+		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // minimalPNG returns the bytes of a 1x1 white PNG.
 func minimalPNG() []byte {
@@ -42,6 +62,7 @@ func TestUpdateService_RepairsMissingCoverArt(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	if err := os.WriteFile(romPath, []byte("ROM"), 0644); err != nil {
 		t.Fatal(err)
@@ -86,6 +107,7 @@ func TestUpdateService_SkipsCoverArtIfPresent(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 
@@ -112,6 +134,100 @@ func TestUpdateService_SkipsCoverArtIfPresent(t *testing.T) {
 
 	if callCount != 0 {
 		t.Errorf("cover art HTTP GET called %d times, want 0 (art already present)", callCount)
+	}
+	entry, _ := inv.Lookup(gameURL)
+	if len(entry.Files) != 1 || entry.Files[0].ArtworkPath != artPath ||
+		entry.Files[0].ArtworkHash == "" || entry.Files[0].ArtworkCreated {
+		t.Fatalf("existing user artwork metadata = %+v", entry.Files)
+	}
+}
+
+func TestUpdateServiceRetainsMatchingAppArtworkOwnership(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "game.gb")
+	artPath := inventory.CanonicalArtworkPath(romPath)
+	art := minimalPNG()
+	for path, data := range map[string][]byte{romPath: []byte("ROM"), artPath: art} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(art))
+	gameURL := srv.URL + "/game"
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add(gameURL, inventory.Entry{Title: "G", IsFree: false, CoverURL: srv.URL + "/cover.png"},
+		inventory.DownloadedFile{Filename: "game.gb", DestPath: romPath, ArtworkPath: artPath,
+			ArtworkHash: hash, ArtworkCreated: true})
+	client := itchio.NewClientWithBase(srv.URL)
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+
+	entry, _ := inv.Lookup(gameURL)
+	file := entry.Files[0]
+	if !file.ArtworkCreated || file.ArtworkHash != hash || file.ArtworkPath != artPath {
+		t.Fatalf("app-owned artwork metadata changed: %+v", file)
+	}
+}
+
+func TestUpdateServiceMigratesOwnedMediaArtworkAndRequestsScan(t *testing.T) {
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "game.gb")
+	oldArt := filepath.Join(dir, ".media", "game.png")
+	art := minimalPNG()
+	for path, data := range map[string][]byte{romPath: []byte("ROM"), oldArt: art} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(art))
+	gameURL := "https://example.invalid/game"
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add(gameURL, inventory.Entry{Title: "G", CoverURL: "https://example.invalid/cover.png"},
+		inventory.DownloadedFile{Filename: "game.gb", DestPath: romPath, ArtworkPath: oldArt,
+			ArtworkHash: hash, ArtworkCreated: true})
+	scans := 0
+	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase("http://127.0.0.1:1"), nil)
+	svc.SetSources(leaf.SourceList{{ID: "primary", Root: dir, Primary: true}})
+	svc.SetLibraryScanRequester(func() (string, error) {
+		scans++
+		return "scan-library queued", nil
+	})
+	done := make(chan struct{})
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+
+	expected := inventory.CanonicalArtworkPath(romPath)
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("canonical artwork was not created: %v", err)
+	}
+	if _, err := os.Stat(oldArt); !os.IsNotExist(err) {
+		t.Fatalf("old app-owned artwork remains: %v", err)
+	}
+	entry, _ := inv.Lookup(gameURL)
+	if len(entry.Files) != 1 || entry.Files[0].ArtworkPath != expected ||
+		entry.Files[0].ArtworkHash != hash || !entry.Files[0].ArtworkCreated {
+		t.Fatalf("migrated inventory metadata = %+v", entry.Files)
+	}
+	if scans != 1 {
+		t.Fatalf("library scan requests = %d, want 1", scans)
 	}
 }
 
@@ -203,6 +319,7 @@ func TestUpdateService_Marks404AsRemoved(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	// Pre-create cover art so repair is skipped.
@@ -236,6 +353,7 @@ func TestUpdateService_DiffAddsNewFile(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
@@ -283,6 +401,7 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
@@ -322,6 +441,7 @@ func TestUpdateService_MarksRemovedWhenDownloadedFileVanishesFromStore(t *testin
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
@@ -353,6 +473,7 @@ func TestUpdateService_ClearsRemovedWhenDownloadedFileReappearsInStore(t *testin
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
@@ -388,6 +509,7 @@ func TestUpdateService_DismissedUpdateDoesNotReappearOnRestart(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
 	os.WriteFile(romPath, []byte("ROM"), 0644)
 	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)

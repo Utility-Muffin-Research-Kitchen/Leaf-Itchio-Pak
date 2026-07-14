@@ -1,5 +1,11 @@
 # itch.io Interaction Flow
 
+This is a maintained engineering document, not an end-user API promise. The
+free-download endpoints are undocumented and may change without notice. Request
+URLs, tokens, authorization/cookie values, account names, and runtime roots must
+remain inside the redacted local diagnostic path described in the
+[user guide](user-guide.md).
+
 This document describes how the Pak interacts with itch.io's website and
 undocumented web API. There is no official public API for anonymous free
 downloads — everything here was derived by observing browser network traffic
@@ -123,7 +129,10 @@ The page lists all available downloads. It is parsed as HTML. For each
   attribute preferred; text content as fallback)
 - **Upload ID** — from `data-upload_id="NNNNNN"` on the `<a class="download_btn">` element
 
-Only `.gb` and `.gbc` uploads are kept.
+Uploads are classified against the maintained GB, GBC, GBA, NES, Mega Drive,
+Pico-8, PlayStation, ZIP, and 7z format set. Unknown files remain available to
+the explicit format/archive inspection flow rather than being silently treated
+as Game Boy Color content.
 
 The page also has its own CSRF token (distinct from the game page token):
 
@@ -247,9 +256,10 @@ for any game the API key owner did not create. The butler-style
 GET https://itch.io/api/1/{API_KEY}/game/{GAME_ID}/uploads?download_key_id={KEY_ID}
 ```
 
-Returns all uploads for the game, authenticated by the download key. Only
-`.gb` and `.gbc` uploads are kept. The upload ID (`id` field) is stored
-on each `Upload` struct alongside the download key ID.
+Returns all uploads for the game, authenticated by the download key. Uploads
+are classified through the same maintained format/archive rules as anonymous
+downloads. The upload ID (`id` field) is stored on each `Upload` struct alongside
+the download key ID.
 
 ### Step 3 — Resolve CDN URL
 
@@ -313,6 +323,16 @@ signed download page each issue their own token.
   so this is not normally an issue, but a very slow or stalled connection could
   cause it to expire mid-transfer.
 
-- **API key entry is not available in-app.** The Settings screen shows whether
-  an API key is configured but does not provide a keyboard for entering one.
-  The key must be set by editing `config.json` directly (see README).
+- **API keys are physical secrets.** In-app entry uses the Catastrophe keyboard.
+  The saved value is never prefilled or shown in full after saving, but newly
+  typed characters are visible. FAT32 cannot protect `config.json` from someone
+  with physical access to the SD card; see the user guide before enabling owned
+  downloads.
+
+- **Retries are intentionally narrow.** Only idempotent metadata requests retry
+  selected transient failures. User-started downloads are not automatically
+  repeated, and cancellation remains authoritative.
+
+- **Logs are local and redacted.** There is no UMRK telemetry endpoint. Both
+  Info and Debug logging redact credentials, signed URLs, account names, and
+  registered runtime roots.

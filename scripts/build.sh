@@ -1,246 +1,112 @@
 #!/bin/sh
-set -e
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/.."
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_DIR"
+
+APP_VERSION=${APP_VERSION:-0.1.0}
+GIT_COMMIT=${GIT_COMMIT:-$(git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)}
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || printf 0)}
+WORKSPACE_ROOT=${WORKSPACE_ROOT:-$(CDPATH= cd -- "$REPO_DIR/.." && pwd)}
+CATASTROPHE_DIR=${CATASTROPHE_DIR:-$WORKSPACE_ROOT/Catastrophe}
+MLP1_TOOLCHAIN_IMAGE=${MLP1_TOOLCHAIN_IMAGE:-ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local}
+GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.22.12-bookworm}
+MLP1_BUILD_IMAGE=${MLP1_BUILD_IMAGE:-leaf-itchio-pak-mlp1-go1.22.12}
+
+ldflags() {
+    printf '%s' "-s -w -buildid= -X main.version=$APP_VERSION -X main.gitCommit=$GIT_COMMIT -X github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui.appVersion=$APP_VERSION"
+}
+
+build_host() {
+    output=$1
+    mkdir -p "$(dirname -- "$output")"
+    test -f "$CATASTROPHE_DIR/include/catastrophe.h" || { echo "missing Catastrophe: $CATASTROPHE_DIR" >&2; exit 1; }
+    CGO_ENABLED=1 CGO_CFLAGS="${CGO_CFLAGS:-} -I$CATASTROPHE_DIR/include" go build \
+        -trimpath \
+        -buildvcs=false \
+        -ldflags "$(ldflags)" \
+        -o "$output" \
+        ./cmd/itchio-pak
+    printf 'Built %s (%s, %s)\n' "$output" "$APP_VERSION" "$GIT_COMMIT"
+}
 
 detect_runtime() {
-    case "${CONTAINER_RUNTIME:-}" in
-        docker|podman) echo "$CONTAINER_RUNTIME"; return ;;
-    esac
-    if command -v podman >/dev/null 2>&1; then echo "podman"
-    elif command -v docker >/dev/null 2>&1; then echo "docker"
-    else echo ""; fi
-}
-
-RUNTIME_OVERRIDE=""
-TARGET=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --help|-h)
-            cat <<'EOF'
-Usage: build.sh [--runtime docker|podman] <target>
-
-Targets:
-  native        Build for the host machine (x86_64, runs inside dev container)
-  tg5040        Cross-compile for TrimUI Brick / Smart Pro (ARM64)
-  tg5050        Cross-compile for TrimUI Smart Pro S (ARM64)
-  my355         Cross-compile for Miyoo Flip (ARM64)
-  all           Cross-compile for all three device platforms sequentially
-
-Options:
-  --runtime docker|podman   Override container runtime (default: auto-detect, prefers podman)
-
-Environment:
-  CONTAINER_RUNTIME=docker|podman   Alternative to --runtime
-
-Output: bin/<target>/itchio-pak
-
-Examples:
-  ./scripts/build.sh tg5040
-  ./scripts/build.sh all
-  ./scripts/build.sh --runtime docker tg5050
-  CONTAINER_RUNTIME=docker ./scripts/build.sh native
-EOF
-            exit 0
+    case ${CONTAINER_RUNTIME:-} in
+        docker|podman) printf '%s\n' "$CONTAINER_RUNTIME" ;;
+        '')
+            if command -v docker >/dev/null 2>&1; then printf 'docker\n'
+            elif command -v podman >/dev/null 2>&1; then printf 'podman\n'
+            else printf '\n'
+            fi
             ;;
-        --runtime) RUNTIME_OVERRIDE="$2"; shift 2 ;;
-        *) TARGET="$1"; shift ;;
+        *) echo "unsupported CONTAINER_RUNTIME: $CONTAINER_RUNTIME" >&2; exit 2 ;;
     esac
-done
-
-if [ -z "$TARGET" ]; then
-    echo "Usage: build.sh [--runtime docker|podman] native|tg5040|tg5050|my355|all" >&2
-    echo "       build.sh --help for full usage" >&2
-    exit 1
-fi
-
-# Only need a container runtime when launching from the host.
-RUNTIME=""
-GIT_COMMIT="${GIT_COMMIT:-}"
-CACHE_DIR="$(pwd)/.go_cache"
-if [ -z "${IN_CONTAINER:-}" ]; then
-    mkdir -p "$CACHE_DIR"
-    RUNTIME="${RUNTIME_OVERRIDE:-$(detect_runtime)}"
-    if [ -z "$RUNTIME" ]; then
-        echo "ERROR: docker or podman required" >&2; exit 1
-    fi
-
-    # Extract git commit info on the host.
-    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    if [ "$GIT_COMMIT" != "unknown" ]; then
-        if ! git diff --quiet 2>/dev/null; then
-            GIT_COMMIT="${GIT_COMMIT}-dirty"
-        fi
-    fi
-fi
-
-DEV_IMAGE="itchio-pak-dev"
-
-# Ensure the dev image exists (used for native builds and tests).
-ensure_dev_image() {
-    $RUNTIME image inspect "$DEV_IMAGE" >/dev/null 2>&1 || \
-        $RUNTIME build -t "$DEV_IMAGE" -f docker/Dockerfile.dev .
 }
 
-# Ensure the per-platform image exists (LoveRetro toolchain + Go).
-ensure_platform_image() {
-    PLATFORM="$1"
-    TAG="itchio-pak-$PLATFORM-dev"
-    $RUNTIME image inspect "$TAG" >/dev/null 2>&1 || \
-        $RUNTIME build -t "$TAG" --build-arg "PLATFORM=$PLATFORM" \
-            -f docker/Dockerfile.platform .
+build_mlp1_container() {
+    flags_env=/opt/mlp1-toolchain/umrk/mlp1-build-flags.env
+    test -f "$flags_env" || { echo "missing MLP1 flag contract: $flags_env" >&2; exit 1; }
+    # shellcheck disable=SC1090
+    . "$flags_env"
+
+    export CGO_ENABLED=1 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=local
+    export CC=${CC:-aarch64-buildroot-linux-gnu-gcc}
+    export CXX=${CXX:-aarch64-buildroot-linux-gnu-g++}
+    export PKG_CONFIG_SYSROOT_DIR=${PKG_CONFIG_SYSROOT_DIR:-$SYSROOT}
+    export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig"
+    export CGO_CFLAGS="$UMRK_MLP1_PROFILE_CFLAGS -DPLATFORM_MLP1 -I$CATASTROPHE_DIR/include"
+    export CGO_CXXFLAGS="$UMRK_MLP1_PROFILE_CXXFLAGS"
+    export CGO_LDFLAGS="$UMRK_MLP1_PROFILE_LDFLAGS"
+    export GOCACHE=${GOCACHE:-/go-cache/build}
+    export GOMODCACHE=${GOMODCACHE:-/go-cache/mod}
+
+    mkdir -p build/mlp1/bin "$GOCACHE" "$GOMODCACHE"
+    go build \
+        -a \
+        -tags netgo \
+        -trimpath \
+        -buildvcs=false \
+        -ldflags "$(ldflags)" \
+        -o build/mlp1/bin/itchio-pak \
+        ./cmd/itchio-pak
+    "$READELF" -l build/mlp1/bin/itchio-pak | grep -q '/lib/ld-linux-aarch64.so.1'
+    printf 'Built build/mlp1/bin/itchio-pak (%s, %s)\n' "$APP_VERSION" "$GIT_COMMIT"
 }
 
-pak_version() {
-    grep '"version"' pak.json | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
-}
-
-build_native() {
-    if [ -z "${IN_CONTAINER:-}" ]; then
-        ensure_dev_image
-        exec $RUNTIME run --rm \
-            -v "$(pwd):/workspace" \
-            -v "$CACHE_DIR:/go" \
-            -w /workspace \
-            -e IN_CONTAINER=1 \
-            -e GOCACHE=/go/build-cache \
-            -e GIT_COMMIT="$GIT_COMMIT" \
-            "$DEV_IMAGE" "$0" native
-    fi
-    VERSION="$(pak_version)"
-    COMMIT="${GIT_COMMIT:-unknown}"
-    mkdir -p bin/native
-    go build -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/carroarmato0/nextui-itchio-pak/internal/ui.appVersion=$VERSION'" \
-        -o bin/native/itchio-pak ./cmd/itchio-pak/
-    echo "Built: bin/native/itchio-pak ($VERSION / $COMMIT)"
-}
-
-build_platform() {
-    PLATFORM="$1"
-
-    mkdir -p bin/"$PLATFORM" lib/"$PLATFORM" assets
-
-    # Copy CA bundle into assets/ so SSL_CERT_FILE works on devices without a
-    # system certificate store.
-    cp /etc/ssl/certs/ca-certificates.crt assets/ca-certificates.crt 2>/dev/null || true
-
-    # CC, PKG_CONFIG_PATH, and SYSROOT are set by the LoveRetro toolchain image.
-    # -a:        force recompile; cached .a files from a different toolchain/image
-    #            can embed GLIBC symbol versions that the device's libc lacks.
-    # -tags netgo: use Go's built-in DNS resolver to avoid linking res_search
-    #            which requires GLIBC_2.34 (devices ship glibc 2.33).
-    VERSION="$(pak_version)"
-    COMMIT="${GIT_COMMIT:-unknown}"
-    CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
-        go build -a -tags netgo -buildvcs=false \
-        -ldflags "-X 'main.version=$VERSION' -X 'main.gitCommit=$COMMIT' -X 'github.com/carroarmato0/nextui-itchio-pak/internal/ui.appVersion=$VERSION'" \
-        -o bin/"$PLATFORM"/itchio-pak ./cmd/itchio-pak/
-    echo "Built: bin/$PLATFORM/itchio-pak ($VERSION / $COMMIT)"
-
-    # Bundle SDL2 .so files from the LoveRetro sysroot.  These are compiled
-    # without X11 / PulseAudio / Wayland so they work on embedded devices.
-    # Copy only the real versioned file under the SONAME name so the zip ships
-    # a single file per library rather than a symlink + versioned duplicate.
-    rm -f lib/"$PLATFORM"/libSDL2*.so*
-    SDL2_SO=$(ls "$SYSROOT/usr/lib"/libSDL2-2.0.so.0.* 2>/dev/null | grep -v '\.so$' | head -1)
-    SDL2_TTF_SO=$(ls "$SYSROOT/usr/lib"/libSDL2_ttf-2.0.so.0.* 2>/dev/null | grep -v '\.so$' | head -1)
-    [ -n "$SDL2_SO" ]     && cp "$SDL2_SO"     lib/"$PLATFORM"/libSDL2-2.0.so.0
-    [ -n "$SDL2_TTF_SO" ] && cp "$SDL2_TTF_SO" lib/"$PLATFORM"/libSDL2_ttf-2.0.so.0
-}
-
-case "$TARGET" in
+case ${1:-} in
     native)
-        build_native
+        build_host build/native/bin/itchio-pak
         ;;
-    tg5040|tg5050|my355)
-        if [ -z "${IN_CONTAINER:-}" ]; then
-            ensure_platform_image "$TARGET"
-            exec $RUNTIME run --rm \
-                -v "$(pwd):/workspace" \
-                -v "$CACHE_DIR:/go" \
-                -w /workspace \
-                -e IN_CONTAINER=1 \
-                -e GOCACHE=/go/build-cache \
-                -e GIT_COMMIT="$GIT_COMMIT" \
-                "itchio-pak-$TARGET-dev" "$0" "$TARGET"
-        fi
-        build_platform "$TARGET"
+    mac)
+        test "$(uname -s)" = Darwin || { echo "mac target requires macOS" >&2; exit 1; }
+        build_host build/mac/bin/itchio-pak
         ;;
-    all)
-        # Each platform needs its own toolchain container; run them in parallel.
-        if [ -n "${IN_CONTAINER:-}" ]; then
-            echo "ERROR: 'build.sh all' must be run from the host, not inside a container." >&2
-            exit 1
-        fi
-
-        # Ensure images exist first (sequentially to avoid race conditions and noise)
-        for p in tg5040 tg5050 my355; do
-            ensure_platform_image "$p"
-        done
-
-        run_build() {
-            local p="$1"
-            local log="bin/$p/build.log"
-            mkdir -p "bin/$p"
-            if $0 "$p" > "$log" 2>&1; then
-                grep "Built:" "$log"
-                return 0
-            else
-                return 1
-            fi
-        }
-
-        echo "==> Building all platforms in parallel..."
-        platforms="tg5040 tg5050 my355"
-        for p in $platforms; do
-            run_build "$p" &
-            eval "pid_$p=\$!"
-        done
-
-        # Spinner loop (only if TTY)
-        if [ -t 1 ]; then
-            spinner="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-            i=0
-            while :; do
-                current_building=""
-                running=0
-                for p in $platforms; do
-                    pid_var="pid_$p"
-                    pid=$(eval "echo \$$pid_var")
-                    if kill -0 $pid 2>/dev/null; then
-                        running=1
-                        current_building="$current_building $p"
-                    fi
-                done
-                [ $running -eq 0 ] && break
-                printf "\r  %s Building [%s]..." "${spinner:i++%${#spinner}:1}" "${current_building# }"
-                sleep 0.1
-            done
-            printf "\r\033[K" # Clear spinner line
-        fi
-
-        # Final check and wait
-        failed=""
-        for p in $platforms; do
-            pid_var="pid_$p"
-            pid=$(eval "echo \$$pid_var")
-            if ! wait $pid; then
-                failed="$failed $p"
-            fi
-        done
-
-        if [ -n "$failed" ]; then
-            echo "ERROR: Build failed for platforms:$failed" >&2
-            for p in $failed; do
-                echo "--- Log for $p ---" >&2
-                cat "bin/$p/build.log" >&2
-            done
-            exit 1
-        fi
+    mlp1)
+        runtime=$(detect_runtime)
+        test -n "$runtime" || { echo "docker or podman is required for make mlp1" >&2; exit 1; }
+        mkdir -p .go_cache/build-cache .go_cache/mod-cache
+        "$runtime" build \
+            --build-arg "TOOLCHAIN_IMAGE=$MLP1_TOOLCHAIN_IMAGE" \
+            --build-arg "GO_IMAGE=$GO_IMAGE" \
+            -t "$MLP1_BUILD_IMAGE" \
+            -f docker/Dockerfile.mlp1 .
+        "$runtime" run --rm \
+            -v "$WORKSPACE_ROOT:/workspace" \
+            -v "$REPO_DIR/.go_cache:/go-cache" \
+            -w /workspace/Leaf-Itchio-Pak \
+            -e "APP_VERSION=$APP_VERSION" \
+            -e "GIT_COMMIT=$GIT_COMMIT" \
+            -e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
+            -e CATASTROPHE_DIR=/workspace/Catastrophe \
+            "$MLP1_BUILD_IMAGE" \
+            ./scripts/build.sh mlp1-container
         ;;
-
+    mlp1-container)
+        build_mlp1_container
+        ;;
     *)
-        echo "Unknown target: $TARGET" >&2; exit 1
+        echo "usage: $0 native|mac|mlp1" >&2
+        exit 2
         ;;
 esac

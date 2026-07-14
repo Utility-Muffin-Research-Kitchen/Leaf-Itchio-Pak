@@ -1,16 +1,17 @@
 package itchio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // OwnedKey represents one purchase granting download access to a game.
@@ -66,7 +67,7 @@ func (c *Client) FetchOwnedKeys(apiKey, gameID string) ([]OwnedKey, error) {
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("fetch owned keys (page %d): %w", page, err)
+			return nil, safeRequestError(fmt.Sprintf("fetch owned keys page %d", page), err)
 		}
 
 		// itch.io returns {"owned_keys":{}} (object, not array) on the last page.
@@ -189,7 +190,7 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 
 	resp, err := c.http.Get(uploadsURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch uploads: %w", err)
+		return nil, safeRequestError("fetch owned uploads", err)
 	}
 	defer resp.Body.Close()
 
@@ -226,8 +227,8 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 
 	var uploads []Upload
 	for _, u := range items {
-		ext := strings.ToLower(filepath.Ext(u.Filename))
-		if ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".nes" || ext == ".md" || ext == ".gen" || ext == ".smd" || ext == ".zip" {
+		ext := strings.ToLower(roms.ROMExt(u.Filename))
+		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, Upload{
 				Filename: u.Filename,
 				UploadID: fmt.Sprintf("%d", u.ID),
@@ -257,14 +258,22 @@ func (c *Client) FetchUploadsForKey(apiKey, gameID, downloadKeyID string) ([]Upl
 }
 
 func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string, error) {
+	return c.ResolveAuthURLContext(context.Background(), apiKey, uploadID, downloadKeyID)
+}
+
+func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, downloadKeyID string) (string, error) {
 	// URL contains the API key; do not log it.
 	dlURL := fmt.Sprintf("%s/api/1/%s/upload/%s/download?download_key_id=%s",
 		c.base, apiKey, uploadID, downloadKeyID)
 	logger.Debug("auth: resolving CDN for upload id=%s", uploadID)
 
-	resp, err := c.http.Get(dlURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("resolve auth CDN URL: %w", err)
+		return "", fmt.Errorf("build auth CDN request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", safeRequestError("resolve authenticated CDN URL", err)
 	}
 	defer resp.Body.Close()
 
@@ -282,7 +291,7 @@ func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string,
 	}
 	if len(result.Errors) > 0 {
 		logger.Error("auth: CDN error: %s", strings.Join(result.Errors, "; "))
-		return "", fmt.Errorf("auth CDN error: %s", strings.Join(result.Errors, "; "))
+		return "", fmt.Errorf("authenticated CDN resolver rejected the request")
 	}
 	if result.URL == "" {
 		logger.Error("auth: empty CDN URL from resolver")
@@ -296,10 +305,14 @@ func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string,
 // DownloadAuthUpload resolves the CDN URL for an owned upload and streams it to dest.
 // Uses the simple API (itch.io/api/1) with a per-game download key.
 func (c *Client) DownloadAuthUpload(apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveAuthURL(apiKey, uploadID, downloadKeyID)
+	return c.DownloadAuthUploadContext(context.Background(), apiKey, uploadID, downloadKeyID, dest, progress)
+}
+
+func (c *Client) DownloadAuthUploadContext(ctx context.Context, apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
+	cdnURL, err := c.ResolveAuthURLContext(ctx, apiKey, uploadID, downloadKeyID)
 	if err != nil {
 		return err
 	}
 	logger.Info("auth: streaming to %s", dest)
-	return c.streamToFile(cdnURL, dest, progress)
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
 }

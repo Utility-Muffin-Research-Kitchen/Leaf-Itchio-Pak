@@ -1,6 +1,7 @@
 package itchio
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,10 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
-// knownNonROMExts lists extensions that are definitely not GB/GBC ROM files.
+// knownNonROMExts lists extensions that are definitely not supported ROM/disc files.
 // Uploads with these extensions are silently dropped when scanning a game's
 // upload list. Anything not in this map (including no extension, version-number
 // suffixes like ".0", and ".zip") is returned with NeedsFormat=true so the
@@ -42,7 +44,8 @@ func presentAbsent(s string) string {
 	return "absent"
 }
 
-// FetchUploads returns the list of .gb/.gbc files available for free download.
+// FetchUploads returns the supported ROM, disc-image, and archive files
+// available for free download.
 //
 // Flow:
 //  1. GET game page → CSRF token
@@ -183,6 +186,10 @@ func extractKeyID(jwtKey string) string {
 }
 
 func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
+	return c.ResolveFreeURLContext(context.Background(), upload)
+}
+
+func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (string, error) {
 	// Parse the resolver URL to extract base path, key, and csrf.
 	parsed, err := url.Parse(upload.URL)
 	if err != nil {
@@ -197,9 +204,14 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 	logger.Debug("uploads: POST resolver csrf=%s key=%s", presentAbsent(csrf), presentAbsent(key))
 
 	form := url.Values{"csrf_token": {csrf}, "download_key_id": {keyID}}
-	resp, err := c.http.Post(baseURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("resolve CDN URL: %w", err)
+		return "", fmt.Errorf("build resolver request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", safeRequestError("resolve CDN URL", err)
 	}
 	defer resp.Body.Close()
 
@@ -210,7 +222,7 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("uploads: resolver HTTP %d: %.200s", resp.StatusCode, rawBody)
-		return "", fmt.Errorf("resolve CDN URL: HTTP %d: %.200s", resp.StatusCode, rawBody)
+		return "", fmt.Errorf("resolve CDN URL: HTTP %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -219,11 +231,11 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 	}
 	if err := json.Unmarshal(rawBody, &result); err != nil {
 		logger.Error("uploads: parse resolver response: %v (body: %.200s)", err, rawBody)
-		return "", fmt.Errorf("parse CDN URL response: %w (body: %.200s)", err, rawBody)
+		return "", fmt.Errorf("parse CDN URL response: %w", err)
 	}
 	if len(result.Errors) > 0 {
 		logger.Error("uploads: resolver error: %s", strings.Join(result.Errors, "; "))
-		return "", fmt.Errorf("resolver error: %s", strings.Join(result.Errors, "; "))
+		return "", fmt.Errorf("resolver rejected the download request")
 	}
 	if result.URL == "" {
 		logger.Error("uploads: empty CDN URL from resolver (file may require purchase)")
@@ -240,14 +252,27 @@ func (c *Client) ResolveFreeURL(upload Upload) (string, error) {
 //
 //	gameURL/file/UPLOAD_ID?key=KEY&csrf=CSRF
 func (c *Client) DownloadFree(upload Upload, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveFreeURL(upload)
+	return c.DownloadFreeContext(context.Background(), upload, dest, progress)
+}
+
+func (c *Client) DownloadFreeContext(ctx context.Context, upload Upload, dest string, progress func(int64, int64)) error {
+	cdnURL, err := c.ResolveFreeURLContext(ctx, upload)
 	if err != nil {
 		return err
 	}
-	return c.streamToFile(cdnURL, dest, progress)
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
 }
 
 func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) error {
+	return c.streamToFileContext(context.Background(), srcURL, dest, progress)
+}
+
+func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, progress func(int64, int64)) error {
+	lease, guardErr := leaf.BeginOperation(ctx, "HTTP body write", false)
+	if guardErr != nil {
+		return fmt.Errorf("protect HTTP body write: %w", guardErr)
+	}
+	defer lease.Release()
 	// c.http has a 30-second Timeout that covers the entire response body read —
 	// fine for API calls but fatal for large file downloads. Create a per-call
 	// client with no overall timeout (Timeout: 0) that shares the same
@@ -257,9 +282,13 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 		Jar:           c.http.Jar,
 		CheckRedirect: c.http.CheckRedirect,
 	}
-	resp, err := dlClient.Get(srcURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
 	if err != nil {
-		return fmt.Errorf("fetch file: %w", err)
+		return fmt.Errorf("build file request: %w", err)
+	}
+	resp, err := dlClient.Do(req)
+	if err != nil {
+		return safeRequestError("fetch file", err)
 	}
 	defer resp.Body.Close()
 
@@ -280,19 +309,29 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	f, err := os.Create(dest)
+	tmp, err := os.CreateTemp(dir, ".itchio-download-*.part")
 	if err != nil {
-		return fmt.Errorf("create dest: %w", err)
+		return fmt.Errorf("create download temp: %w", err)
 	}
-	defer f.Close()
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	total := resp.ContentLength
+	if err := leaf.RequireFreeSpace(dir, total); err != nil {
+		return fmt.Errorf("download storage preflight: %w", err)
+	}
 	var downloaded int64
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
+			if _, werr := tmp.Write(buf[:n]); werr != nil {
 				logger.Error("stream: write error after %d bytes: %v", downloaded, werr)
 				return fmt.Errorf("write: %w", werr)
 			}
@@ -309,6 +348,16 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 			return fmt.Errorf("read stream: %w", err)
 		}
 	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync download temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close download temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return fmt.Errorf("commit download: %w", err)
+	}
+	committed = true
 	logger.Info("stream: done, wrote %d bytes", downloaded)
 	return nil
 }
@@ -324,7 +373,7 @@ func (c *Client) FetchFileHeader(cdnURL string, n int) ([]byte, error) {
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", n-1))
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("header fetch: %w", err)
+		return nil, safeRequestError("header fetch", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
@@ -335,6 +384,7 @@ func (c *Client) FetchFileHeader(cdnURL string, n int) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("header fetch: read: %w", err)
 	}
-	logger.Debug("header fetch: read %d bytes from %s", len(data), cdnURL)
+	// cdnURL may contain signed credentials; never include it in logs.
+	logger.Debug("header fetch: read %d bytes", len(data))
 	return data, nil
 }

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 // rangePrefetchSize is how many bytes are fetched per HTTP Range request.
@@ -77,7 +77,7 @@ func (r *rangeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", off, fetchEnd))
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, remoteRequestError("remote ZIP range", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent {
@@ -209,7 +209,7 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 
 	resp, err := client.Get(cdnURL)
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("full download: %w", err)
+		return ZIPManifest{}, remoteRequestError("remote ZIP download", err)
 	}
 	defer resp.Body.Close()
 
@@ -261,9 +261,10 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
-			Name: name,
-			Kind: kind,
-			Size: f.UncompressedSize64,
+			Name:           name,
+			Kind:           kind,
+			Size:           f.UncompressedSize64,
+			CompressedSize: f.CompressedSize64,
 		})
 	}
 	return m

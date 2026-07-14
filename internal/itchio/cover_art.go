@@ -2,181 +2,116 @@ package itchio
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/gif"
 	_ "image/jpeg"
-	_ "image/png"
 	"image/png"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/carroarmato0/nextui-itchio-pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/media"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
-// compositeGIFFrames renders an animated GIF using the standard GIF compositing
-// algorithm (disposal methods, frame offsets, background colour) and returns the
-// single rendered frame that has the highest per-channel colour variance. That
-// frame tends to be the most visually rich, avoiding uniform/beige frames that
-// score high on brightness but show little meaningful content.
-func compositeGIFFrames(g *gif.GIF) image.Image {
-	w, h := g.Config.Width, g.Config.Height
-	if w == 0 || h == 0 {
-		b := g.Image[0].Bounds()
-		w, h = b.Dx(), b.Dy()
-	}
-	bounds := image.Rect(0, 0, w, h)
-
-	bgColor := color.Color(color.RGBA{A: 255}) // opaque black default
-	if pal, ok := g.Config.ColorModel.(color.Palette); ok && int(g.BackgroundIndex) < len(pal) {
-		bgColor = pal[g.BackgroundIndex]
-	}
-	bgFill := image.NewUniform(bgColor)
-
-	canvas := image.NewRGBA(bounds)
-	draw.Draw(canvas, bounds, bgFill, image.Point{}, draw.Src)
-
-	var (
-		bestCanvas    *image.RGBA
-		bestVariance  float64
-	)
-
-	for i, frame := range g.Image {
-		disposal := byte(gif.DisposalNone)
-		if i < len(g.Disposal) {
-			disposal = g.Disposal[i]
-		}
-
-		// Save canvas before drawing this frame so DisposalPrevious can restore it.
-		var preCanvas *image.RGBA
-		if disposal == gif.DisposalPrevious {
-			preCanvas = image.NewRGBA(bounds)
-			draw.Draw(preCanvas, bounds, canvas, image.Point{}, draw.Src)
-		}
-
-		draw.Draw(canvas, frame.Bounds(), frame, frame.Bounds().Min, draw.Over)
-
-		// Track the most colour-varied rendered frame for use as the static thumbnail.
-		if v := gifFrameColorVariance(canvas); bestCanvas == nil || v > bestVariance {
-			bestVariance = v
-			bestCanvas = image.NewRGBA(bounds)
-			draw.Draw(bestCanvas, bounds, canvas, image.Point{}, draw.Src)
-		}
-
-		// Apply disposal to prepare the canvas for the next frame.
-		switch disposal {
-		case gif.DisposalBackground:
-			draw.Draw(canvas, frame.Bounds(), bgFill, image.Point{}, draw.Src)
-		case gif.DisposalPrevious:
-			if preCanvas != nil {
-				draw.Draw(canvas, frame.Bounds(), preCanvas, frame.Bounds().Min, draw.Src)
-			}
-		}
-	}
-
-	if bestCanvas != nil {
-		return bestCanvas
-	}
-	return canvas
+type ArtworkResult struct {
+	Path    string
+	SHA256  string
+	Created bool
 }
 
-// gifFrameColorVariance returns the total per-channel variance of the rendered
-// frame. Frames with more colour variation score higher, so animated GIFs with
-// uniform/beige frames are not mistakenly chosen over richer ones.
-func gifFrameColorVariance(img *image.RGBA) float64 {
-	pixels := len(img.Pix) / 4
-	if pixels == 0 {
-		return 0
+func artworkFileResult(path string, created bool) (ArtworkResult, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return ArtworkResult{}, err
 	}
-	var sumR, sumG, sumB float64
-	for i := 0; i < len(img.Pix); i += 4 {
-		sumR += float64(img.Pix[i])
-		sumG += float64(img.Pix[i+1])
-		sumB += float64(img.Pix[i+2])
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return ArtworkResult{}, err
 	}
-	n := float64(pixels)
-	meanR, meanG, meanB := sumR/n, sumG/n, sumB/n
-	var v float64
-	for i := 0; i < len(img.Pix); i += 4 {
-		dr := float64(img.Pix[i]) - meanR
-		dg := float64(img.Pix[i+1]) - meanG
-		db := float64(img.Pix[i+2]) - meanB
-		v += dr*dr + dg*dg + db*db
-	}
-	return v
+	return ArtworkResult{Path: path, SHA256: fmt.Sprintf("%x", hash.Sum(nil)), Created: created}, nil
 }
 
-// coverArtBasename returns the exact ROM filename stem (no extension).
-// NextUI's cover art lookup matches on the full stem including tags like [v1.2],
-// even though it strips those tags for the display name in the ROM browser.
-func coverArtBasename(romDestPath string) string {
-	return strings.TrimSuffix(filepath.Base(romDestPath), filepath.Ext(romDestPath))
+func existingArtwork(path string) (ArtworkResult, bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return ArtworkResult{}, false, nil
+	}
+	if err != nil {
+		return ArtworkResult{}, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return ArtworkResult{}, true, fmt.Errorf("cover-art: existing artwork is not a regular file")
+	}
+	result, err := artworkFileResult(path, false)
+	return result, true, err
 }
 
-// DownloadCoverArt fetches the cover image at coverURL and saves it as a PNG
-// into the .media/ subdirectory of the ROM's directory. The filename is the
-// exact ROM stem (matching NextUI's art lookup convention) with a .png extension.
-// GIF, JPEG, and other formats are all re-encoded as PNG. Any stale art files
-// with the same stem but a different extension are removed. Returns nil for an
-// empty coverURL.
-func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
+// EnsureCoverArt creates source-local launcher art only when the canonical PNG
+// does not already exist. Existing art is treated as user-owned and never
+// overwritten. Animated GIFs retain full animation in the app cache; launcher
+// art deliberately uses the bounded first decoded frame.
+func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, error) {
+	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
+	if guardErr != nil {
+		return ArtworkResult{}, fmt.Errorf("protect artwork conversion: %w", guardErr)
+	}
+	defer lease.Release()
+
+	artPath := roms.ArtworkPath(romDestPath)
+	if artPath == "" {
+		return ArtworkResult{}, fmt.Errorf("cover-art: ROM is outside a configured Leaf system")
+	}
+	mediaDir := filepath.Dir(artPath)
+	if existing, found, err := existingArtwork(artPath); found || err != nil {
+		if err == nil {
+			logger.Info("cover-art: preserving existing user artwork %s", artPath)
+		}
+		return existing, err
+	}
 	if coverURL == "" {
 		logger.Debug("cover-art: no cover URL, skipping")
-		return nil
+		return ArtworkResult{}, nil
 	}
-
-	dir := filepath.Dir(romDestPath)
-	mediaDir := filepath.Join(dir, ".media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		return fmt.Errorf("cover-art: mkdir: %w", err)
-	}
-
-	base := coverArtBasename(romDestPath)
-	artPath := filepath.Join(mediaDir, base+".png")
 
 	logger.Info("cover-art: downloading for %s", filepath.Base(romDestPath))
 
 	resp, err := c.http.Get(coverURL)
 	if err != nil {
 		logger.Error("cover-art: fetch: %v", err)
-		return fmt.Errorf("cover-art: fetch: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: fetch: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("cover-art: HTTP %d", resp.StatusCode)
-		return fmt.Errorf("cover-art: HTTP %d", resp.StatusCode)
+		return ArtworkResult{}, fmt.Errorf("cover-art: HTTP %d", resp.StatusCode)
 	}
 
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
-		return fmt.Errorf("cover-art: read body: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: read body: %w", err)
 	}
-
-	img, format, err := image.Decode(bytes.NewReader(buf.Bytes()))
+	decoded, err := media.Decode(buf.Bytes())
 	if err != nil {
-		return fmt.Errorf("cover-art: decode image (%s): %w", coverURL, err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: %w", err)
 	}
-	logger.Debug("cover-art: decoded %s as %s", filepath.Base(artPath), format)
-
-	// image.Decode returns only the first frame of an animated GIF, which is
-	// often blank/black. Re-decode with gif.DecodeAll and composite all frames
-	// so the saved PNG reflects the complete image.
-	if format == "gif" {
-		if g, err2 := gif.DecodeAll(bytes.NewReader(buf.Bytes())); err2 == nil && len(g.Image) > 1 {
-			img = compositeGIFFrames(g)
-		}
+	if len(decoded.Frames) == 0 || decoded.Frames[0] == nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: decoded image has no frames")
+	}
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: mkdir: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(mediaDir, ".art-*.tmp")
 	if err != nil {
 		logger.Error("cover-art: create temp: %v", err)
-		return fmt.Errorf("cover-art: create temp: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() {
@@ -184,62 +119,73 @@ func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
 		os.Remove(tmpPath) // no-op after successful rename
 	}()
 
-	if err := png.Encode(tmp, img); err != nil {
+	hash := sha256.New()
+	if err := png.Encode(io.MultiWriter(tmp, hash), decoded.Frames[0]); err != nil {
 		logger.Error("cover-art: encode png: %v", err)
-		return fmt.Errorf("cover-art: encode png: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: encode png: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: sync temp: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: chmod temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		logger.Error("cover-art: close temp %s: %v", tmpPath, err)
-		return fmt.Errorf("cover-art: close temp: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: close temp: %w", err)
+	}
+	if existing, found, err := existingArtwork(artPath); found || err != nil {
+		return existing, err
 	}
 	if err := os.Rename(tmpPath, artPath); err != nil {
 		logger.Error("cover-art: rename to %s: %v", artPath, err)
-		return fmt.Errorf("cover-art: rename: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: rename: %w", err)
 	}
 	logger.Info("cover-art: saved → %s", artPath)
-
-	// Remove stale art files with the same stem but a different extension
-	// (e.g. an old .gif or .png left over from a previous download).
-	artBase := filepath.Base(artPath)
-	if entries, err := os.ReadDir(mediaDir); err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if strings.TrimSuffix(name, filepath.Ext(name)) == base && name != artBase {
-				stale := filepath.Join(mediaDir, name)
-				if removeErr := os.Remove(stale); removeErr == nil {
-					logger.Debug("cover-art: removed stale %s", name)
-				}
-			}
-		}
-	}
-	return nil
+	return ArtworkResult{Path: artPath, SHA256: fmt.Sprintf("%x", hash.Sum(nil)), Created: true}, nil
 }
 
-// CopyCoverArt copies the ROM file at romDestPath into the .media/ directory
-// alongside it, using the same art filename that DownloadCoverArt would produce.
-// Used for .p8.png cartridges, which are themselves valid PNG images — no
-// separate network request is needed.
-func CopyCoverArt(romDestPath string) error {
-	dir := filepath.Dir(romDestPath)
-	mediaDir := filepath.Join(dir, ".media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		return fmt.Errorf("cover-art: mkdir: %w", err)
-	}
+func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {
+	_, err := c.EnsureCoverArt(coverURL, romDestPath)
+	return err
+}
 
-	base := coverArtBasename(romDestPath)
-	artPath := filepath.Join(mediaDir, base+".png")
+// EnsureCopiedCoverArt copies the ROM file into Jawaka's source-local canonical
+// image directory, using the same art filename that EnsureCoverArt would
+// produce. Used for .p8.png cartridges, which are themselves valid PNG images
+// and need no separate network request.
+func EnsureCopiedCoverArt(romDestPath string) (ArtworkResult, error) {
+	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
+	if guardErr != nil {
+		return ArtworkResult{}, fmt.Errorf("protect artwork conversion: %w", guardErr)
+	}
+	defer lease.Release()
+	artPath := roms.ArtworkPath(romDestPath)
+	if artPath == "" {
+		return ArtworkResult{}, fmt.Errorf("cover-art: ROM is outside a configured Leaf system")
+	}
+	mediaDir := filepath.Dir(artPath)
+	if existing, found, err := existingArtwork(artPath); found || err != nil {
+		if err == nil {
+			logger.Info("cover-art: preserving existing user artwork %s", artPath)
+		}
+		return existing, err
+	}
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: mkdir: %w", err)
+	}
 
 	logger.Info("cover-art: copying .p8.png as art → %s", artPath)
 
 	src, err := os.Open(romDestPath)
 	if err != nil {
-		return fmt.Errorf("cover-art: open source: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: open source: %w", err)
 	}
 	defer src.Close()
 
 	tmp, err := os.CreateTemp(mediaDir, ".art-*.tmp")
 	if err != nil {
-		return fmt.Errorf("cover-art: create temp: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() {
@@ -247,29 +193,30 @@ func CopyCoverArt(romDestPath string) error {
 		os.Remove(tmpPath)
 	}()
 
-	if _, err := io.Copy(tmp, src); err != nil {
-		return fmt.Errorf("cover-art: copy: %w", err)
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, hash), src); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: copy: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: sync temp: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: chmod temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("cover-art: close temp: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: close temp: %w", err)
+	}
+	if existing, found, err := existingArtwork(artPath); found || err != nil {
+		return existing, err
 	}
 	if err := os.Rename(tmpPath, artPath); err != nil {
-		return fmt.Errorf("cover-art: rename: %w", err)
+		return ArtworkResult{}, fmt.Errorf("cover-art: rename: %w", err)
 	}
 	logger.Info("cover-art: saved → %s", artPath)
+	return ArtworkResult{Path: artPath, SHA256: fmt.Sprintf("%x", hash.Sum(nil)), Created: true}, nil
+}
 
-	// Remove stale art files with the same stem but a different extension.
-	artBase := filepath.Base(artPath)
-	if entries, err := os.ReadDir(mediaDir); err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if strings.TrimSuffix(name, filepath.Ext(name)) == base && name != artBase {
-				stale := filepath.Join(mediaDir, name)
-				if removeErr := os.Remove(stale); removeErr == nil {
-					logger.Debug("cover-art: removed stale %s", name)
-				}
-			}
-		}
-	}
-	return nil
+func CopyCoverArt(romDestPath string) error {
+	_, err := EnsureCopiedCoverArt(romDestPath)
+	return err
 }
