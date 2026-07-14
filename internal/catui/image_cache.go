@@ -326,7 +326,10 @@ func (c *ImageCache) fetch(key string) {
 	}
 	var data []byte
 	if err == nil {
-		data, err = io.ReadAll(response.Body)
+		data, err = io.ReadAll(io.LimitReader(response.Body, media.MaxSourceBytes+1))
+		if err == nil && len(data) > media.MaxSourceBytes {
+			err = fmt.Errorf("image exceeds %d-byte cap", media.MaxSourceBytes)
+		}
 	}
 	var decoded *media.DecodedImage
 	if err == nil {

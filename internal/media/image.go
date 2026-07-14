@@ -19,6 +19,10 @@ const (
 	MaxGIFSourcePixels = 1280 * 1280
 	MaxImageWidth      = 640
 	DefaultFrameDelay  = 100 * time.Millisecond
+	// MaxSourceBytes caps how many bytes of an encoded image we accept from an
+	// untrusted (game-author-controlled) URL, so a very large download cannot
+	// exhaust memory on a 1GB device before it is even decoded.
+	MaxSourceBytes = 16 << 20 // 16 MiB
 )
 
 // DecodedImage is renderer-independent decoded artwork. Animated GIFs retain
@@ -30,6 +34,19 @@ type DecodedImage struct {
 }
 
 func Decode(data []byte) (*DecodedImage, error) {
+	// Reject wildly oversized images before decoding: a small but bomb-crafted
+	// PNG/JPEG/GIF can declare enormous dimensions and blow past memory on a 1GB
+	// device once image.Decode allocates the pixel buffer. DecodeConfig only
+	// reads the header, so this is cheap.
+	cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(data))
+	if cfgErr != nil {
+		return nil, fmt.Errorf("decode image config: %w", cfgErr)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 ||
+		int64(cfg.Width)*int64(cfg.Height) > int64(MaxGIFSourcePixels) {
+		return nil, fmt.Errorf("decode image: unsafe dimensions %dx%d", cfg.Width, cfg.Height)
+	}
+
 	decoded, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)

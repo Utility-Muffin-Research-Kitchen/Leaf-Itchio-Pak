@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
+	"image/png"
 	"testing"
 )
 
@@ -33,5 +34,32 @@ func TestDecodeAnimatedGIFPreservesFramesAndTiming(t *testing.T) {
 	}
 	if decoded.Delays[0].Milliseconds() != 50 || decoded.Delays[1].Milliseconds() != 150 {
 		t.Fatalf("decoded delays = %v, want 50ms/150ms", decoded.Delays)
+	}
+}
+
+func TestDecodeRejectsOversizedImage(t *testing.T) {
+	// A valid PNG whose declared dimensions exceed MaxGIFSourcePixels must be
+	// rejected by the DecodeConfig guard before a full (bomb) decode.
+	const side = 1300 // 1300*1300 = 1,690,000 > MaxGIFSourcePixels (1,638,400)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, side, side))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(encoded.Bytes()); err == nil {
+		t.Fatalf("Decode accepted a %dx%d image, want rejection", side, side)
+	}
+}
+
+func TestDecodeAcceptsNormalImage(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(encoded.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Frames) != 1 || decoded.Frames[0] == nil {
+		t.Fatalf("decoded PNG = %d frames, want 1 non-nil", len(decoded.Frames))
 	}
 }

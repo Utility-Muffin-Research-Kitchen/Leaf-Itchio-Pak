@@ -94,8 +94,11 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	}
 
 	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(resp.Body); err != nil {
+	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, media.MaxSourceBytes+1)); err != nil {
 		return ArtworkResult{}, fmt.Errorf("cover-art: read body: %w", err)
+	}
+	if buf.Len() > media.MaxSourceBytes {
+		return ArtworkResult{}, fmt.Errorf("cover-art: image exceeds %d-byte cap", media.MaxSourceBytes)
 	}
 	decoded, err := media.Decode(buf.Bytes())
 	if err != nil {
