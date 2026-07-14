@@ -256,7 +256,7 @@ int catui_draw_footer(const catui_footer_item *items, int count) {
         converted[i].button = (cat_button)items[i].button;
         converted[i].label = items[i].label;
         converted[i].is_confirm = items[i].is_confirm != 0;
-        converted[i].button_text = NULL;
+        converted[i].button_text = items[i].button_text;
     }
 #if SDL_VERSION_ATLEAST(2, 0, 10)
     /* A footer draws its outer group and inner button pills in one call. The

@@ -26,6 +26,8 @@ usable if refresh fails.
   sorts it moves by one visible page.
 - L1/R1 changes sort.
 - L2/R2 changes platform category.
+- The footer groups L1/R1 as Sort and L2/R2 as System so both shoulder-button
+  actions remain explicit without overflowing the main-list footer.
 - Select opens Filter; Select applies staged filter changes.
 - Y clears staged search, platform, and sort values inside Filter.
 - A opens the selected game.

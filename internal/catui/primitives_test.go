@@ -86,21 +86,24 @@ func TestImageGalleryAndKeyboardGeometry(t *testing.T) {
 
 func TestFooterGroupingAndNarrowFallback(t *testing.T) {
 	hints := []FooterHint{
-		{Button: ButtonB, Label: "Previous page", NarrowLabel: "Prev"},
+		{Button: ButtonB, ButtonText: "L1/L2", NarrowButtonText: "L1/2", Label: "Previous page", NarrowLabel: "Prev"},
 		{Button: ButtonX, Label: "Delete previous character", NarrowLabel: "Delete"},
 		{Button: ButtonA, Label: "Confirm entered value", NarrowLabel: "Done", IsConfirm: true},
 	}
 	measure := func(value string) int { return len(value) * 10 }
-	wide := ResolveFooterGroups(hints, 1000, 30, 10, measure)
+	wide := ResolveFooterGroups(hints, 1000, 30, 10, measure, measure)
 	if wide.Left[0].Label != "Previous page" || wide.Right[0].Label != "Confirm entered value" {
 		t.Fatalf("wide labels = %+v", wide)
 	}
-	narrow := ResolveFooterGroups(hints, 360, 30, 10, measure)
+	narrow := ResolveFooterGroups(hints, 360, 30, 10, measure, measure)
 	if got := []string{narrow.Left[0].Label, narrow.Left[1].Label, narrow.Right[0].Label}; !reflect.DeepEqual(got, []string{"Prev", "Delete", "Done"}) {
 		t.Fatalf("narrow labels = %v", got)
 	}
 	if narrow.Right[0].IsConfirm != true {
 		t.Fatal("confirm hint lost right-group identity")
+	}
+	if narrow.Left[0].ButtonText != "L1/2" {
+		t.Fatalf("narrow button-text override = %q, want L1/2", narrow.Left[0].ButtonText)
 	}
 }
 

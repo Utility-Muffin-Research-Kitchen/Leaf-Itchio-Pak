@@ -82,10 +82,11 @@ func (screen *MainListScreen) Draw() error {
 		footer = append(footer, FooterHint{Button: ButtonA, Label: "Retry", IsConfirm: true})
 	case appui.ListReady, appui.ListEmpty:
 		footer = []FooterHint{
-			{Button: ButtonSelect, Label: "Filter"},
-			{Button: ButtonL2, Label: "System -/+", NarrowLabel: "System"},
-			{Button: ButtonStart, Label: "Set"},
-			{Button: ButtonA, Label: "Open", IsConfirm: true},
+			{Button: ButtonSelect, ButtonText: "SEL", Label: "Filt."},
+			{Button: ButtonL1, ButtonText: "L1/R1", Label: "Sort"},
+			{Button: ButtonL2, ButtonText: "L2/R2", Label: "Sys."},
+			{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set"},
+			{Button: ButtonA, ButtonText: "A", Label: "Go", IsConfirm: true},
 		}
 	}
 	frame, err := screen.ui.BeginScreen(ScreenSpec{

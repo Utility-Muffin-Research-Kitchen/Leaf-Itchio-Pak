@@ -17,7 +17,7 @@ and copies only the eight locked public states below.
 
 | Screenshot | Fixture source | SHA-256 |
 | --- | --- | --- |
-| `main-list.png` | Ready main list, dark theme, hints shown | `22003df4922758f628bc5365a58af8a08a0aa708ad241c72f29c059465127791` |
+| `main-list.png` | Ready main list, dark theme, hints shown | `f397b9ac98b8570051fc431852a180458602b1eb3f044dd9578d9e97f3729454` |
 | `filter-search.png` | Filter with staged search/platform/sort | `09828b490d6c9709ac0768b8883648f96efb966724dea215f7081376e4aab829` |
 | `detail-gallery.png` | Detail with generated cover/gallery state | `40a88a823995a2e37ffe66a99bfd5516fdcf1cb17a4ada4068556e51dc5b69aa` |
 | `content-warning.png` | Tag-based content-warning gate | `b96e7549aa831035a821ad792843292643a38c5acc96dad2d4d02cd44e11b36a` |

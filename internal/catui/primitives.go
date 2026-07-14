@@ -58,10 +58,12 @@ func ComputeScreenLayout(metrics LayoutMetrics, subHeaderHeight int) ScreenLayou
 }
 
 type FooterHint struct {
-	Button      Button
-	Label       string
-	NarrowLabel string
-	IsConfirm   bool
+	Button           Button
+	ButtonText       string
+	NarrowButtonText string
+	Label            string
+	NarrowLabel      string
+	IsConfirm        bool
 }
 
 type FooterGroups struct {
@@ -78,15 +80,24 @@ func (g FooterGroups) Items() []FooterItem {
 // ResolveFooterGroups preserves Catastrophe's left/action and right/confirm
 // grouping, switching all labels to their narrow variants when the estimated
 // pixel width would overlap. Catastrophe remains the final footer renderer.
-func ResolveFooterGroups(hints []FooterHint, availableWidth, badgeWidth, itemGap int, measure func(string) int) FooterGroups {
+func ResolveFooterGroups(hints []FooterHint, availableWidth, badgeWidth, itemGap int,
+	measureLabel, measureButton func(string) int) FooterGroups {
 	labels := make([]string, len(hints))
+	buttonTexts := make([]string, len(hints))
 	for i := range hints {
 		labels[i] = hints[i].Label
+		buttonTexts[i] = hints[i].ButtonText
 	}
 	estimate := func() int {
 		total := itemGap
 		for i := range hints {
-			total += badgeWidth + measure(labels[i]) + itemGap
+			resolvedBadgeWidth := badgeWidth
+			if buttonTexts[i] != "" {
+				// Cat renders multi-character overrides in its tiny font with a
+				// half-badge inset.
+				resolvedBadgeWidth = badgeWidth/2 + measureButton(buttonTexts[i])
+			}
+			total += resolvedBadgeWidth + measureLabel(labels[i]) + itemGap
 		}
 		return total
 	}
@@ -95,12 +106,15 @@ func ResolveFooterGroups(hints []FooterHint, availableWidth, badgeWidth, itemGap
 			if hints[i].NarrowLabel != "" {
 				labels[i] = hints[i].NarrowLabel
 			}
+			if hints[i].NarrowButtonText != "" {
+				buttonTexts[i] = hints[i].NarrowButtonText
+			}
 		}
 	}
 
 	groups := FooterGroups{}
 	for i, hint := range hints {
-		item := FooterItem{Button: hint.Button, Label: labels[i], IsConfirm: hint.IsConfirm}
+		item := FooterItem{Button: hint.Button, ButtonText: buttonTexts[i], Label: labels[i], IsConfirm: hint.IsConfirm}
 		if hint.IsConfirm {
 			groups.Right = append(groups.Right, item)
 		} else {
@@ -158,6 +172,8 @@ func (ui *Composer) BeginScreen(spec ScreenSpec) (*ScreenFrame, error) {
 	groups := ResolveFooterGroups(spec.Footer, width-ui.BasePadding*2,
 		ui.ctx.Scale(34), ui.ctx.Scale(14), func(text string) int {
 			return ui.ctx.MeasureText(FontSmall, text)
+		}, func(text string) int {
+			return ui.ctx.MeasureText(FontTiny, text)
 		})
 	footer := groups.Items()
 	layout := ComputeScreenLayout(LayoutMetrics{

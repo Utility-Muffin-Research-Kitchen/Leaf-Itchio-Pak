@@ -11,7 +11,7 @@ import struct
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXPECTED = {
     "pak/res/icon.png": (256, 256, "b5ea2fbf5d7c6fbc77af40f7dc069c4f7a900f0a6aab4f848eed54604aa14a11"),
-    "docs/screenshots/main-list.png": (960, 720, "22003df4922758f628bc5365a58af8a08a0aa708ad241c72f29c059465127791"),
+    "docs/screenshots/main-list.png": (960, 720, "f397b9ac98b8570051fc431852a180458602b1eb3f044dd9578d9e97f3729454"),
     "docs/screenshots/filter-search.png": (960, 720, "09828b490d6c9709ac0768b8883648f96efb966724dea215f7081376e4aab829"),
     "docs/screenshots/detail-gallery.png": (960, 720, "40a88a823995a2e37ffe66a99bfd5516fdcf1cb17a4ada4068556e51dc5b69aa"),
     "docs/screenshots/content-warning.png": (960, 720, "b96e7549aa831035a821ad792843292643a38c5acc96dad2d4d02cd44e11b36a"),

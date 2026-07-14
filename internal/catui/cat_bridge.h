@@ -30,6 +30,7 @@ typedef struct {
     int button;
     const char *label;
     int is_confirm;
+    const char *button_text;
 } catui_footer_item;
 
 enum {

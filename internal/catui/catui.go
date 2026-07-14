@@ -275,9 +275,10 @@ func (c *Context) HintsEnabled() bool { return C.catui_hints_enabled() != 0 }
 func (c *Context) FooterHeight() int  { return int(C.catui_footer_height()) }
 
 type FooterItem struct {
-	Button    Button
-	Label     string
-	IsConfirm bool
+	Button     Button
+	Label      string
+	ButtonText string
+	IsConfirm  bool
 }
 
 func (c *Context) DrawFooter(items []FooterItem) error {
@@ -294,11 +295,17 @@ func (c *Context) DrawFooter(items []FooterItem) error {
 	defer C.free(memory)
 	cItems := unsafe.Slice((*C.catui_footer_item)(memory), len(items))
 	labels := make([]*C.char, len(items))
+	buttonTexts := make([]*C.char, len(items))
 	for i, item := range items {
 		labels[i] = C.CString(item.Label)
 		defer C.free(unsafe.Pointer(labels[i]))
 		cItems[i].button = C.int(item.Button)
 		cItems[i].label = labels[i]
+		if item.ButtonText != "" {
+			buttonTexts[i] = C.CString(item.ButtonText)
+			defer C.free(unsafe.Pointer(buttonTexts[i]))
+			cItems[i].button_text = buttonTexts[i]
+		}
 		cItems[i].is_confirm = 0
 		if item.IsConfirm {
 			cItems[i].is_confirm = 1
