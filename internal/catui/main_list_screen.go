@@ -152,11 +152,19 @@ func (screen *MainListScreen) drawReady(content Box) error {
 			return err
 		}
 	}
+	region := geometry.Region
+	if err := screen.ctx.DrawScrollbar(region.X+region.W-screen.ctx.Scale(4), region.Y, region.H-screen.ctx.Scale(4),
+		geometry.VisibleRows, len(screen.model.Items), start); err != nil {
+		return err
+	}
+	panel, err := screen.ui.DrawPreviewCard(split.Detail.Content())
+	if err != nil {
+		return err
+	}
 	selected, ok := screen.model.Selected()
 	if !ok {
 		return nil
 	}
-	panel := split.Detail.Content()
 	artHeight := panel.H * 58 / 100
 	art := Rect{X: panel.X, Y: panel.Y, W: panel.W, H: artHeight}
 	if selected.CoverKey == "" {

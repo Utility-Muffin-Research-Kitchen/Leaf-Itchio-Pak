@@ -11,10 +11,12 @@ func TestScreenLayout960x720WithSubHeaderAndFooter(t *testing.T) {
 		TitleHeight: 80, FooterHeight: 70,
 		BasePadding: 16, HintsEnabled: true, HasFooterContent: true,
 	}, 40)
-	if layout.Title != (Box{X: 0, Y: 0, W: 960, H: 80}) {
+	// Padding is applied before the title carve, so the title band starts at the
+	// top pad (Y=16) and its bottom abuts the subheader (Y=96) with no orphan gap.
+	if layout.Title != (Box{X: 16, Y: 16, W: 928, H: 80}) {
 		t.Fatalf("title = %+v", layout.Title)
 	}
-	if layout.Footer != (Box{X: 0, Y: 650, W: 960, H: 70}) || !layout.FooterVisible {
+	if layout.Footer != (Box{X: 16, Y: 634, W: 928, H: 70}) || !layout.FooterVisible {
 		t.Fatalf("footer = %+v visible=%v", layout.Footer, layout.FooterVisible)
 	}
 	if layout.SubHeader != (Box{X: 16, Y: 96, W: 928, H: 40}) {

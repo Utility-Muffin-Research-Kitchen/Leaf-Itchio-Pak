@@ -140,11 +140,9 @@ func (m *MainListModel) Handle(event InputEvent) ListIntent {
 	}
 	switch event.Button {
 	case ButtonUp:
-		m.Cursor--
-		m.clampCursor()
+		m.wrapCursor(-1)
 	case ButtonDown:
-		m.Cursor++
-		m.clampCursor()
+		m.wrapCursor(1)
 	case ButtonLeft:
 		if m.Sort == "A-Z" || m.Sort == "Z-A" {
 			m.Cursor = m.alphaJump(-1)
@@ -207,6 +205,17 @@ func firstTitleRune(title string) rune {
 		return value
 	}
 	return 0
+}
+
+// wrapCursor moves the cursor by delta, wrapping top<->bottom like the native
+// launcher's cat_list_state_move. Page and alpha jumps stay clamped.
+func (m *MainListModel) wrapCursor(delta int) {
+	n := len(m.Items)
+	if n == 0 {
+		m.Cursor = 0
+		return
+	}
+	m.Cursor = ((m.Cursor+delta)%n + n) % n
 }
 
 func (m *MainListModel) clampCursor() {

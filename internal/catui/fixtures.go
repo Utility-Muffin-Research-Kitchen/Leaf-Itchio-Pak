@@ -307,7 +307,11 @@ func verifyFixtureWorkerWake(ctx *Context) error {
 	if err := ctx.Clear(); err != nil {
 		return err
 	}
-	if err := ctx.DrawTitle("Itch.io · fixture wake probe"); err != nil {
+	width, _, err := ctx.ScreenSize()
+	if err != nil {
+		return err
+	}
+	if err := ctx.DrawTitleIn(Rect{X: 0, Y: 0, W: width, H: ctx.TitleHeight()}, "Itch.io · fixture wake probe"); err != nil {
 		return err
 	}
 	ctx.RequestFrame()

@@ -261,13 +261,13 @@ func (c *Context) Present() error {
 	return statusError(C.catui_present())
 }
 
-func (c *Context) DrawTitle(title string) error {
+func (c *Context) DrawTitleIn(rect Rect, title string) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
 	}
 	titleC, freeTitle := cString(title)
 	defer freeTitle()
-	return statusError(C.catui_draw_title(titleC))
+	return statusError(C.catui_draw_title_in(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), titleC))
 }
 
 func (c *Context) TitleHeight() int   { return int(C.catui_title_height()) }
@@ -433,6 +433,12 @@ func (c *Context) DrawRect(rect Rect, color Color) error {
 	}
 	return statusError(C.catui_draw_rect(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), C.uint32_t(color)))
 }
+func (c *Context) DrawRoundedRect(rect Rect, radius int, color Color) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	return statusError(C.catui_draw_rounded_rect(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), C.int(radius), C.uint32_t(color)))
+}
 func (c *Context) DrawPill(rect Rect, color Color) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
@@ -450,6 +456,15 @@ func (c *Context) DrawTriangle(rect Rect, direction Direction, color Color) erro
 		return err
 	}
 	return statusError(C.catui_draw_triangle(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), C.int(direction), C.uint32_t(color)))
+}
+
+// DrawScrollbar renders the launcher's list scroll indicator (track + thumb)
+// down the right edge at x. It no-ops when total <= visible.
+func (c *Context) DrawScrollbar(x, y, h, visible, total, offset int) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	return statusError(C.catui_draw_scrollbar(C.int(x), C.int(y), C.int(h), C.int(visible), C.int(total), C.int(offset)))
 }
 func (c *Context) SetClip(rect Rect) error {
 	if err := c.ensureOpen(); err != nil {

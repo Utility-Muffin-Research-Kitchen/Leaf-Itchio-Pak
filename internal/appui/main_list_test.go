@@ -15,8 +15,12 @@ func TestMainListNavigationAndIntents(t *testing.T) {
 		t.Fatalf("page-right cursor = %d, want 3", model.Cursor)
 	}
 	model.Handle(InputEvent{Button: ButtonDown, Pressed: true})
+	if model.Cursor != 0 {
+		t.Fatalf("wrap-down cursor = %d, want 0", model.Cursor)
+	}
+	model.Handle(InputEvent{Button: ButtonUp, Pressed: true})
 	if model.Cursor != 3 {
-		t.Fatalf("clamped cursor = %d, want 3", model.Cursor)
+		t.Fatalf("wrap-up cursor = %d, want 3", model.Cursor)
 	}
 	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != ListIntentOpen {
 		t.Fatalf("A intent = %v, want open", got)

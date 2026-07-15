@@ -28,19 +28,24 @@ type ScreenLayout struct {
 // ComputeScreenLayout is the single root title/content/footer carve used by
 // migrated screens and by deterministic geometry tests.
 func ComputeScreenLayout(metrics LayoutMetrics, subHeaderHeight int) ScreenLayout {
+	// Apply the screen padding to root BEFORE carving the title, so the padding
+	// sits at the top of the layout (giving the title breathing room from the
+	// screen edge) instead of being orphaned as a gap between the title band and
+	// the subheader. The title, subheader, and content then abut cleanly, and
+	// each region owns its space from within the box model.
+	pad := metrics.BasePadding
 	root := NewBox(0, 0, metrics.Width, metrics.Height, 0)
+	root.PadTop += pad
+	root.PadRight += pad
+	root.PadBottom += pad
+	root.PadLeft += pad
+
 	title := root.CarveTop(metrics.TitleHeight)
 	footer := Box{}
 	footerVisible := metrics.HintsEnabled && metrics.HasFooterContent
 	if footerVisible {
 		footer = root.CarveBottom(metrics.FooterHeight)
 	}
-
-	pad := metrics.BasePadding
-	root.PadTop += pad
-	root.PadRight += pad
-	root.PadBottom += pad
-	root.PadLeft += pad
 
 	subHeader := Box{}
 	if subHeaderHeight > 0 {
@@ -162,9 +167,6 @@ func (ui *Composer) BeginScreen(spec ScreenSpec) (*ScreenFrame, error) {
 	if err := ui.ctx.Clear(); err != nil {
 		return nil, err
 	}
-	if err := ui.ctx.DrawTitle(spec.Title); err != nil {
-		return nil, err
-	}
 	width, height, err := ui.ctx.ScreenSize()
 	if err != nil {
 		return nil, err
@@ -185,6 +187,9 @@ func (ui *Composer) BeginScreen(spec ScreenSpec) (*ScreenFrame, error) {
 		HintsEnabled:     ui.ctx.HintsEnabled(),
 		HasFooterContent: len(footer) > 0,
 	}, spec.SubHeaderHeight)
+	if err := ui.ctx.DrawTitleIn(layout.Title.Content(), spec.Title); err != nil {
+		return nil, err
+	}
 	return &ScreenFrame{Layout: layout, footer: footer, ui: ui}, nil
 }
 
@@ -212,6 +217,10 @@ func (ui *Composer) DrawSubHeader(box Box, text string) error {
 
 type ListDetailLayout struct{ List, Detail Box }
 
+// previewCardColor matches the subtle rounded panel the native launcher fills
+// behind its games/apps/recents preview pane (#ffffff10).
+var previewCardColor = RGBA(0xff, 0xff, 0xff, 0x10)
+
 func ListDetailSplit(body Box, leftPercent, gutter int) ListDetailLayout {
 	if leftPercent < 0 {
 		leftPercent = 0
@@ -222,6 +231,16 @@ func ListDetailSplit(body Box, leftPercent, gutter int) ListDetailLayout {
 	content := body.Content()
 	left, right := body.SplitColumns(content.W*leftPercent/100, gutter)
 	return ListDetailLayout{List: left, Detail: right}
+}
+
+// DrawPreviewCard fills the games-style rounded panel behind a preview pane and
+// returns the padded inner rect to draw the preview content into, so list/detail
+// screens match the games/apps/recents gutter.
+func (ui *Composer) DrawPreviewCard(pane Rect) (Rect, error) {
+	if err := ui.ctx.DrawRoundedRect(pane, ui.ctx.Scale(8), previewCardColor); err != nil {
+		return Rect{}, err
+	}
+	return insetRect(pane, ui.ArtPadding, ui.ArtPadding), nil
 }
 
 func FullWidthBody(body Box) Rect { return body.Content() }
@@ -249,6 +268,9 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 	}
 	if selected {
 		pill := insetRect(rect, 0, ui.ctx.Scale(3))
+		// Reserve the same right-edge margin the native launcher does
+		// (iw - CAT_S(4)) so the pill clears the scrollbar/gutter.
+		pill.W -= ui.ctx.Scale(4)
 		if err := ui.ctx.DrawPill(pill, ui.ctx.ThemeColor(RoleHighlight)); err != nil {
 			return err
 		}

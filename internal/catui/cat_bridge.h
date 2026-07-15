@@ -71,7 +71,7 @@ int catui_keyboard(const char *initial_text, char *out_text,
 
 int catui_clear(void);
 int catui_present(void);
-int catui_draw_title(const char *title);
+int catui_draw_title_in(int x, int y, int w, int h, const char *title);
 int catui_title_height(void);
 int catui_hints_enabled(void);
 int catui_footer_height(void);
@@ -98,11 +98,15 @@ int catui_draw_fallback_text(int tier, const char *text, int x, int y,
                              uint32_t color, int max_w);
 
 int catui_draw_rect(int x, int y, int w, int h, uint32_t color);
+int catui_draw_rounded_rect(int x, int y, int w, int h, int radius,
+                            uint32_t color);
 int catui_draw_pill(int x, int y, int w, int h, uint32_t color);
 int catui_draw_progress(int x, int y, int w, int h, float progress,
                         uint32_t foreground, uint32_t background);
 int catui_draw_triangle(int x, int y, int w, int h, int direction,
                         uint32_t color);
+int catui_draw_scrollbar(int x, int y, int h, int visible, int total,
+                         int offset);
 int catui_set_clip(int x, int y, int w, int h);
 int catui_reset_clip(void);
 
