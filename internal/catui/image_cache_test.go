@@ -1,9 +1,15 @@
 package catui
 
 import (
+	"bytes"
 	"container/list"
+	"errors"
 	"image"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,6 +115,167 @@ func TestImageCacheUploadFailureIsRecoverable(t *testing.T) {
 	}
 	if !cache.Failed("broken-cover") {
 		t.Fatal("failed artwork was not suppressed after the recoverable error")
+	}
+}
+
+func TestImageCacheSuppressesPermanentFetchFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{
+			name: "declared byte cap",
+			handler: func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Length", strconv.Itoa(media.MaxSourceBytes+1))
+				response.WriteHeader(http.StatusOK)
+			},
+		},
+		{
+			name: "invalid encoding",
+			handler: func(response http.ResponseWriter, _ *http.Request) {
+				_, _ = response.Write([]byte("not an image"))
+			},
+		},
+		{
+			name: "non-retryable HTTP",
+			handler: func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(http.StatusNotFound)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				test.handler(response, request)
+			}))
+			defer server.Close()
+
+			cache := NewImageCache(1, server.Client())
+			cache.fetch(server.URL)
+			if !cache.Failed(server.URL) {
+				t.Fatal("permanent failure was not suppressed")
+			}
+			cache.Warm(server.URL)
+			cache.mu.Lock()
+			_, fetching := cache.fetching[server.URL]
+			cache.mu.Unlock()
+			if fetching {
+				t.Fatal("permanently failed URL scheduled another fetch")
+			}
+			if got := requests.Load(); got != 1 {
+				t.Fatalf("requests = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestImageCacheRetriesTransientFailureAfterBackoff(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = response.Write(encoded.Bytes())
+	}))
+	defer server.Close()
+
+	now := time.Unix(1000, 0)
+	cache := NewImageCache(1, server.Client())
+	cache.now = func() time.Time { return now }
+	cache.fetch(server.URL)
+	if cache.Failed(server.URL) {
+		t.Fatal("transient HTTP failure was marked permanent")
+	}
+	if got := cache.retries[server.URL].nextAt.Sub(now); got != time.Second {
+		t.Fatalf("first retry delay = %v, want 1s", got)
+	}
+
+	cache.Warm(server.URL)
+	cache.mu.Lock()
+	_, fetching := cache.fetching[server.URL]
+	cache.mu.Unlock()
+	if fetching || requests.Load() != 1 {
+		t.Fatal("fetch was scheduled before its retry deadline")
+	}
+
+	now = now.Add(time.Second)
+	cache.Warm(server.URL)
+	select {
+	case decoded := <-cache.ready:
+		if decoded.image == nil {
+			t.Fatal("successful retry returned a nil image")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for successful retry")
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2", got)
+	}
+	cache.mu.Lock()
+	_, retrying := cache.retries[server.URL]
+	cache.mu.Unlock()
+	if retrying {
+		t.Fatal("successful retry did not clear backoff state")
+	}
+}
+
+func TestImageCacheRetryDelayCapsAtOneMinute(t *testing.T) {
+	now := time.Unix(1000, 0)
+	cache := NewImageCache(1, nil)
+	cache.now = func() time.Time { return now }
+	wants := []time.Duration{
+		time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
+		16 * time.Second, 32 * time.Second, 60 * time.Second, 60 * time.Second,
+	}
+	for index, want := range wants {
+		cache.mu.Lock()
+		cache.recordRetryLocked("cover")
+		got := cache.retries["cover"].nextAt.Sub(now)
+		cache.mu.Unlock()
+		if got != want {
+			t.Fatalf("failure %d retry delay = %v, want %v", index+1, got, want)
+		}
+	}
+}
+
+func TestImageCacheClearResetsFailuresAndBackoff(t *testing.T) {
+	cache := NewImageCache(1, nil)
+	cache.failed["permanent"] = struct{}{}
+	cache.retries["transient"] = imageRetry{failures: 3, nextAt: time.Now().Add(time.Minute)}
+	cache.Clear()
+	if cache.Failed("permanent") {
+		t.Fatal("Clear retained a permanent failure")
+	}
+	if len(cache.retries) != 0 {
+		t.Fatal("Clear retained retry state")
+	}
+}
+
+func TestImageErrorRetryClassification(t *testing.T) {
+	if imageErrorRetryable(media.ErrRejected) {
+		t.Fatal("rejected content was retryable")
+	}
+	if !imageErrorRetryable(errors.New("transport failed")) {
+		t.Fatal("transport failure was not retryable")
+	}
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusTooEarly,
+		http.StatusTooManyRequests, http.StatusInternalServerError, 599} {
+		if !imageErrorRetryable(&imageHTTPError{status: status}) {
+			t.Fatalf("HTTP %d was not retryable", status)
+		}
+	}
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, 600} {
+		if imageErrorRetryable(&imageHTTPError{status: status}) {
+			t.Fatalf("HTTP %d was retryable", status)
+		}
 	}
 }
 

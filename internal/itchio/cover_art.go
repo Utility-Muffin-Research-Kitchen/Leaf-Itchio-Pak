@@ -1,7 +1,6 @@
 package itchio
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -93,14 +92,11 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 		return ArtworkResult{}, fmt.Errorf("cover-art: HTTP %d", resp.StatusCode)
 	}
 
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, media.MaxSourceBytes+1)); err != nil {
-		return ArtworkResult{}, fmt.Errorf("cover-art: read body: %w", err)
+	data, err := media.ReadSource(resp.Body, resp.ContentLength)
+	if err != nil {
+		return ArtworkResult{}, fmt.Errorf("cover-art: %w", err)
 	}
-	if buf.Len() > media.MaxSourceBytes {
-		return ArtworkResult{}, fmt.Errorf("cover-art: image exceeds %d-byte cap", media.MaxSourceBytes)
-	}
-	decoded, err := media.Decode(buf.Bytes())
+	decoded, err := media.Decode(data)
 	if err != nil {
 		return ArtworkResult{}, fmt.Errorf("cover-art: %w", err)
 	}
