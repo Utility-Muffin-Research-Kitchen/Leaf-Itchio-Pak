@@ -9,16 +9,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Leaf-Itchio-Pak
         uses: actions/checkout@v4
+        with:
+          path: Leaf-Itchio-Pak
+
+      - name: Checkout Catastrophe
+        uses: actions/checkout@v4
+        with:
+          repository: Utility-Muffin-Research-Kitchen/Catastrophe
+          ref: 30d5ca8cdf19c62cec1ce0e4b335f2b1b174816b
+          path: Catastrophe
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.22.12"
+
+      - name: Install SDL development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-ttf-dev \
+            pkg-config
 
       - name: Build
+        working-directory: Leaf-Itchio-Pak
         run: go build -tags headless ./...
 
       - name: Test
+        working-directory: Leaf-Itchio-Pak
         run: make test-race
