@@ -92,6 +92,7 @@ case ${1:-} in
             -t "$MLP1_BUILD_IMAGE" \
             -f docker/Dockerfile.mlp1 .
         "$runtime" run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$WORKSPACE_ROOT:/workspace" \
             -v "$REPO_DIR/.go_cache:/go-cache" \
             -w /workspace/Leaf-Itchio-Pak \
