@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v0.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: Leaf-Itchio-Pak
+
+      - name: Read release lock
+        id: release-lock
+        working-directory: Leaf-Itchio-Pak
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          lock = json.load(open("release-lock.json", encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"catastrophe_commit={lock['catastrophe_commit']}\n")
+          PY
+
+      - name: Checkout pinned Catastrophe
+        uses: actions/checkout@v4
+        with:
+          repository: Utility-Muffin-Research-Kitchen/Catastrophe
+          ref: ${{ steps.release-lock.outputs.catastrophe_commit }}
+          path: Catastrophe
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.12"
+          cache-dependency-path: Leaf-Itchio-Pak/go.sum
+
+      - name: Validate tag and metadata
+        working-directory: Leaf-Itchio-Pak
+        run: |
+          ./scripts/pakrat-metadata-check.py
+          version="$(python3 -c 'import json; print(json.load(open("pak.json"))["pak_version"])')"
+          test "$GITHUB_REF_NAME" = "v$version"
+
+      - name: Run tests
+        working-directory: Leaf-Itchio-Pak
+        run: make test-race
+
+      - name: Build exact MLP1 package
+        working-directory: Leaf-Itchio-Pak
+        run: |
+          toolchain="$(python3 -c 'import json; print(json.load(open("release-lock.json"))["mlp1_toolchain_image"])')"
+          go_image="$(python3 -c 'import json; print(json.load(open("release-lock.json"))["go_image"])')"
+          make package-smoke MLP1_TOOLCHAIN_IMAGE="$toolchain" GO_IMAGE="$go_image"
+
+      - name: Create draft release
+        working-directory: Leaf-Itchio-Pak
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact="build/mlp1/Itch-io.mlp1.pak.zip"
+          checksum_file="build/mlp1/SHA256SUMS"
+          notes="build/mlp1/release-notes.md"
+          sha256sum "$artifact" >"$checksum_file"
+          cp docs/release-notes-v0.1.0.md "$notes"
+          printf '\n## SHA-256\n\n```\n' >>"$notes"
+          cat "$checksum_file" >>"$notes"
+          printf '```\n' >>"$notes"
+          gh release create "$GITHUB_REF_NAME" \
+            "$artifact" \
+            "$checksum_file" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "Itch.io for Leaf $GITHUB_REF_NAME" \
+            --notes-file "$notes"
