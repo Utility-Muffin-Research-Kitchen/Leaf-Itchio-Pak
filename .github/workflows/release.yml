@@ -49,6 +49,15 @@ jobs:
           go-version: "1.22.12"
           cache-dependency-path: Leaf-Itchio-Pak/go.sum
 
+      - name: Install SDL development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-ttf-dev \
+            pkg-config
+
       - name: Validate tag and metadata
         working-directory: Leaf-Itchio-Pak
         run: |
