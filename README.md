@@ -232,6 +232,12 @@ The archive contains one `Itch-io.pak/` root and only regular FAT32-safe files.
 It excludes source, build caches, user state, debug profiles, and unsupported
 platform libraries.
 
+The root `pakrat.json` is the app-owned Pak Rat submission contract. Release
+builds are locked by `release-lock.json`; a `v0.x` tag runs the digest-pinned
+MLP1 package smoke and creates a draft GitHub Release containing the exact ZIP
+and `SHA256SUMS`. Publishing that draft and adding the production storefront
+row remain manual verification gates.
+
 ## Architecture and provenance
 
 The Catastrophe CGo bridge is the sole owner of SDL initialization, rendering,
@@ -265,5 +271,5 @@ records its own agent-assisted changes through Git history and review.
   in its default payload.
 - Catastrophe remains a generic C UI/runtime toolkit with no app-specific Go
   binding or workaround.
-- Pak Rat production metadata belongs only to the final gated publication
-  phase.
+- Pak Rat submission metadata is app-owned; the public storefront row is added
+  only after exact-artifact device verification.

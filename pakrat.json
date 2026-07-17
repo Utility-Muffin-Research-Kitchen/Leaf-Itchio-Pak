@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "id": "org.umrk.itchio",
+  "name": "Itch.io",
+  "summary": "Browse itch.io and add compatible games and soundtracks to Leaf.",
+  "description": "An unofficial Leaf client for browsing itch.io, downloading compatible ROMs and soundtracks, and managing the resulting library on the Miniloong Pocket 1. Not affiliated with or endorsed by itch.io.",
+  "author": "Carroarmato0 & Utility Muffin Research Kitchen",
+  "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak",
+  "categories": [
+    "games",
+    "homebrew",
+    "downloads"
+  ],
+  "leaf": {
+    "packages": [
+      {
+        "platform": "mlp1",
+        "version": "0.1.0",
+        "artifact_name": "Itch-io.mlp1.pak.zip",
+        "install_name": "Itch-io.pak",
+        "runtime_manifest_path": "pak.json",
+        "package_dir": "build/mlp1/package/Itch-io.pak",
+        "build_command": [
+          "make",
+          "package-platform",
+          "PLATFORM=mlp1"
+        ]
+      }
+    ]
+  }
+}
