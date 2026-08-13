@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "catastrophe_commit": "a7a84230ba5b1aa1acf295d836d60a4f4347b69a",
+  "catastrophe_commit": "49680a9cf1e87b8e14d970cb56c9aed6f6ff30c5",
   "mlp1_toolchain_image": "ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain@sha256:66aac16fb8b07e663c9b4d66970f272df195a6eba98dfad8286eabbaa617faf9",
   "go_image": "docker.io/library/golang@sha256:3d699e4d15d0f8f13c9195c0632a16702b8cbdece2955af1c23b37ae5d55a253"
 }
