@@ -203,3 +203,30 @@ func TestResolveUnifiedDest_CaseOnlyCurrentNameIsStable(t *testing.T) {
 		t.Fatalf("case-only current name: got (%q, %v), want (%q, false)", got, renamed, current)
 	}
 }
+
+func TestUnifiedCollisionsKeepOriginalNamesOnlyForGenuineClashes(t *testing.T) {
+	dir := filepath.Join("Roms", "PS")
+	paths := []string{
+		filepath.Join(dir, "lb-disc1.chd"), filepath.Join(dir, "lb-disc2.chd"), // same target
+		filepath.Join("Roms", "GB", "lb.gb"),                                                   // unique target
+		filepath.Join("Roms", "FC", "Leafbound.nes"), filepath.Join("Roms", "FC", "other.NES"), // target equals another's own name, case-folded
+	}
+	got := roms.UnifiedCollisions(paths, "Leafbound")
+	want := []bool{true, true, false, false, true}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("UnifiedCollisions = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestNameReservationsFoldCaseLikeFAT32(t *testing.T) {
+	var names roms.NameReservations
+	if !names.Claim("/sd/Roms/GB/Game.gb") || names.Claim("/sd/Roms/GB/game.GB") {
+		t.Fatal("a case-only duplicate was reserved twice")
+	}
+	names.Release("/sd/roms/gb/GAME.gb")
+	if names.Holds("/sd/Roms/GB/Game.gb") || !names.Claim("/sd/Roms/GB/game.gb") {
+		t.Fatal("release did not free the name")
+	}
+}

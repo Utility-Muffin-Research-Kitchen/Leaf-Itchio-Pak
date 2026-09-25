@@ -118,3 +118,83 @@ func isNumberedSlot(base, stem, ext string) bool {
 	}
 	return true
 }
+
+// UnifiedTarget returns the path unified naming would give path for
+// gameTitle, ignoring what exists on disk, or "" when no rename applies.
+func UnifiedTarget(path, gameTitle string) string {
+	candidate := SanitiseFilename(gameTitle, ROMExt(filepath.Base(path)))
+	if candidate == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), candidate)
+}
+
+// UnifiedCollisions reports which of paths must keep their original names
+// because unified naming would give them the same final name as another
+// file of the same operation. Unified naming derives the name from the game
+// title, so two ROMs of one game with one extension in one folder always
+// meet; there is no single right name for them, and their original names are
+// what tells them apart. Names are compared case-insensitively, as FAT32
+// does. A target that equals another file's original name also collides.
+func UnifiedCollisions(paths []string, gameTitle string) []bool {
+	targets := make([]string, len(paths))
+	for index, path := range paths {
+		targets[index] = UnifiedTarget(path, gameTitle)
+	}
+	keep := make([]bool, len(paths))
+	for index, target := range targets {
+		if target == "" || sameFAT32Path(target, paths[index]) {
+			continue
+		}
+		for other := range paths {
+			if other != index && (sameFAT32Path(target, targets[other]) || sameFAT32Path(target, paths[other])) {
+				keep[index] = true
+				break
+			}
+		}
+	}
+	return keep
+}
+
+// NameReservations tracks the final paths one download operation has
+// written or is about to write, so nothing inside the operation replaces
+// another of its own files. Replacing a file from an earlier download (an
+// intentional re-download) is unaffected. Paths are compared
+// case-insensitively, as FAT32 does.
+type NameReservations struct {
+	paths []string
+}
+
+// Claim reserves path. It reports false, reserving nothing, when the
+// operation already holds a path FAT32 would treat as the same file.
+func (r *NameReservations) Claim(path string) bool {
+	if r.Holds(path) {
+		return false
+	}
+	r.paths = append(r.paths, filepath.Clean(path))
+	return true
+}
+
+// Holds reports whether the operation has reserved path.
+func (r *NameReservations) Holds(path string) bool {
+	for _, held := range r.paths {
+		if sameFAT32Path(held, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// Release drops a reservation, for a file the operation renamed away.
+func (r *NameReservations) Release(path string) {
+	for index, held := range r.paths {
+		if sameFAT32Path(held, path) {
+			r.paths = append(r.paths[:index], r.paths[index+1:]...)
+			return
+		}
+	}
+}
+
+func sameFAT32Path(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
