@@ -19,6 +19,7 @@ Leaf-Itchio-Pak is a hard fork of
 |---|---|---|---|
 | Initial fork | All history through `42171a5` | None | Establish the exact `v1.0.19` behavioral baseline before Leaf changes |
 | `v1.0.25` toolchain (2026-09-25) | Adapted `32b86c5`: Go 1.27.1 for Leaf's own Makefile, build script, MLP1 Dockerfile, CI, and release lock; `go.mod` raised to `go 1.27.0` | Upstream toolchain images and build matrix | Go 1.22 no longer receives security fixes. Unlike upstream, the `go` line moves too, so Go 1.22 GODEBUG defaults (TLS/x509) do not survive the compiler bump |
+| `v1.0.25` identity and server limits (2026-09-25) | Adapted `a4d6b8a` (real User-Agent, `crypto/tls` in place of uTLS, keeping the h2/h1 fallback transport), `00f1022` and `0b717e4` (shared per-host 429 cooldown, every 429 logged, 404/410 past page 1 ends a feed) | Upstream firmware/device reporting and its settings toggle; upstream's 5-minute Retry-After cap, feed-loop 429 retries, and URL-path logging | Requested in issue #4. Leaf sends only product, version and project URL. Retry-After is capped at 60 s, the transport replays GET/HEAD at most 3 times, a refresh waits at most 2 minutes of cooldown, and logs name only the host because v1 API paths and signed CDN URLs carry secrets |
 
 Future reviews append a row here. Do not rewrite old decisions.
 

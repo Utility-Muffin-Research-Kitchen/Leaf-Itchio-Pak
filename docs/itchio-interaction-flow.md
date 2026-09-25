@@ -333,6 +333,26 @@ signed download page each issue their own token.
   selected transient failures. User-started downloads are not automatically
   repeated, and cancellation remains authoritative.
 
+- **HTTP 429 pauses one host, for every client.** `ratelimit.go` sits under the
+  shared transport, so the metadata client and the streaming/range copies see
+  the same per-host cooldown; `itch.io`, `api.itch.io`, and each CDN host cool
+  down independently. `Retry-After` (seconds or HTTP-date) is honored up to 60
+  seconds, otherwise the back-off doubles from 2 seconds to that cap. Only
+  bodyless GET/HEAD requests are replayed, at most 3 times; POST handshakes
+  wait out a cooldown but are never replayed. A request whose deadline ends
+  inside a cooldown fails at once with `ErrRateLimited`. The feed loop does
+  not retry 429s again, and a catalogue refresh waits out at most 2 minutes of
+  cooldown in total before failing with `ErrRateLimited` and keeping the cache.
+
+- **Identity.** Requests send `User-Agent: Leaf-Itchio-Pak/<version>
+  (+https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak)` over
+  Go's standard TLS stack. There is no browser fingerprint or `Sec-Fetch-*`
+  header set.
+
+- **A missing later feed page is the end of the feed.** itch.io can answer
+  404/410 past the last page of a long feed; that ends the slug and keeps its
+  games. A missing first page is still an error.
+
 - **Logs are local and redacted.** There is no UMRK telemetry endpoint. Both
   Info and Debug logging redact credentials, signed URLs, account names, and
   registered runtime roots.

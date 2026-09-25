@@ -186,6 +186,12 @@ stock Leaf defaults resolve these to `.userdata/mlp1/Itch-io` and
 `.userdata/mlp1/logs/itchio-pak.log` at the primary SD root. Settings displays
 the resolved App Data path. No telemetry or UMRK network endpoint exists.
 
+Every request to itch.io identifies the app as `Leaf-Itchio-Pak/<version>` with
+this project's URL, and sends no device or account details in that header. If
+itch.io asks the app to slow down, it pauses requests to that server and retries
+a few times. A catalogue refresh that stays rate limited stops and keeps your
+existing catalogue.
+
 Info logging is the default. Debug logging is intended for a short reproduction
 of network/download failures; the same secret and private-path redaction applies
 at both levels.
