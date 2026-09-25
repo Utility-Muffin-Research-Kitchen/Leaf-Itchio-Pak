@@ -101,7 +101,7 @@ func TestMultiDownloadKeepsEveryFileWhenUnifiedNamesCollide(t *testing.T) {
 	}
 	worker := NewMultiDownloadWorker(itchio.NewClientWithBase(srv.URL), &settings.Config{UnifiedNaming: true},
 		collisionGame, &itchio.GameDetail{}, downloads, inv, invPath)
-	waitFor(t, func() bool { return worker.loadState() != multiDLDownloading })
+	waitForWorker(t, func() bool { return worker.loadState() != multiDLDownloading })
 	if snapshot := worker.CatSnapshot(); snapshot.State != appui.DownloadProgressDone {
 		t.Fatalf("multi download = %+v", snapshot)
 	}
@@ -131,7 +131,7 @@ func TestMultiDownloadStillUnifiesANonCollidingName(t *testing.T) {
 	}
 	worker := NewMultiDownloadWorker(itchio.NewClientWithBase(srv.URL), &settings.Config{UnifiedNaming: true},
 		collisionGame, &itchio.GameDetail{}, downloads, inv, invPath)
-	waitFor(t, func() bool { return worker.loadState() != multiDLDownloading })
+	waitForWorker(t, func() bool { return worker.loadState() != multiDLDownloading })
 	if filepath.Base(worker.finalPaths[0]) != "Leafbound.gb" || filepath.Base(worker.finalPaths[1]) != "Leafbound.nes" {
 		t.Fatalf("final paths = %q, want both unified", worker.finalPaths)
 	}
@@ -219,7 +219,7 @@ func runArchive(t *testing.T, filename string, data []byte, cfg *settings.Config
 		plan.Pico8GameDir = filepath.Join(primary, "Roms", "PICO8", "Leafbound") + string(filepath.Separator)
 	}
 	worker := NewArchiveDownloadWorker(itchio.NewClientWithBase(srv.URL), cfg, collisionGame, &itchio.GameDetail{}, plan, inv, invPath)
-	waitFor(t, func() bool { state := worker.loadState(); return state == zipDLDone || state == zipDLError })
+	waitForWorker(t, func() bool { state := worker.loadState(); return state == zipDLDone || state == zipDLError })
 	if pico8 {
 		return worker, filepath.Join(primary, "Roms", "PICO8", "Leafbound")
 	}
@@ -295,7 +295,7 @@ func keys(m map[string]string) []string {
 	return out
 }
 
-func waitFor(t *testing.T, done func() bool) {
+func waitForWorker(t *testing.T, done func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for !done() {
