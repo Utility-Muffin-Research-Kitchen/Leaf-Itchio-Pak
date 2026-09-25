@@ -291,7 +291,15 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 		}
 	}
 
-	// Warn if any downloaded file is no longer offered upstream.
+	// A reachable page offering no downloads is a confirmed removal. One that
+	// still offers downloads means the game exists: a downloaded file missing
+	// from the list was superseded by a new version, which HasPendingUpdates
+	// reports as an update (upstream 79539ff).
+	if len(uploads) == 0 {
+		s.inv.MarkRemoved(gameURL)
+		logger.Warn("update-svc: %s offers no downloads", gameURL)
+		return upstreamFiles
+	}
 	// Music files extracted from ZIPs have individual track names that are never
 	// directly listed as upload filenames, so skip them here.
 	for _, f := range downloadedFiles {
@@ -307,13 +315,11 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 		}
 		stem := strings.TrimSuffix(checkName, romFileExt(checkName))
 		if !upstreamNames[checkName] && !upstreamNames[stem] {
-			s.inv.MarkRemoved(gameURL)
-			logger.Warn("update-svc: downloaded file %q no longer available upstream for %s", checkName, gameURL)
-			return upstreamFiles
+			logger.Info("update-svc: downloaded file %q was superseded upstream for %s", checkName, gameURL)
 		}
 	}
 
-	// All downloaded files still available — clear any stale removal state.
+	// Reachable with downloads: clear any stale removal state.
 	s.inv.MarkReachable(gameURL)
 	logger.Debug("update-svc: %s — %d upstream file(s) recorded", gameURL, len(upstreamFiles))
 	return upstreamFiles
