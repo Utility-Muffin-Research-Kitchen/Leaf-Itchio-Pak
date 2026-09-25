@@ -450,19 +450,19 @@ func (c *Client) checkDownloadURL(location *url.URL) error {
 // answers with a redirect to the CDN, which is read, not followed: the
 // caller gets the URL first for archive inspection or the magic-byte probe,
 // and the Authorization header never reaches the CDN.
-func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID string, session *InstallSession) (string, error) {
+func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID string, session *roms.InstallSession) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("resolve upload %s: no install session", uploadID)
 	}
-	uuid, err := session.resolveUUID(ctx, func(ctx context.Context, gameID, downloadKeyID string) (string, error) {
+	uuid, err := session.ResolveUUID(ctx, func(ctx context.Context, gameID, downloadKeyID string) (string, error) {
 		return c.createInstallSession(ctx, apiKey, gameID, downloadKeyID)
 	})
 	if err != nil {
 		return "", err
 	}
 	query := url.Values{}
-	if session.downloadKeyID != "" {
-		query.Set("download_key_id", session.downloadKeyID)
+	if keyID := session.DownloadKeyID(); keyID != "" {
+		query.Set("download_key_id", keyID)
 	}
 	if uuid != "" {
 		query.Set("uuid", uuid)
@@ -540,31 +540,11 @@ func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID s
 
 // DownloadUploadContext resolves an upload within session and streams it to
 // dest. The CDN request carries no Authorization header.
-func (c *Client) DownloadUploadContext(ctx context.Context, apiKey, uploadID string, session *InstallSession, dest string, progress func(int64, int64)) error {
+func (c *Client) DownloadUploadContext(ctx context.Context, apiKey, uploadID string, session *roms.InstallSession, dest string, progress func(int64, int64)) error {
 	cdnURL, err := c.ResolveUploadURLContext(ctx, apiKey, uploadID, session)
 	if err != nil {
 		return err
 	}
 	logger.Info("auth: streaming to %s", dest)
 	return c.streamToFileContext(ctx, cdnURL, dest, progress)
-}
-
-// ResolveAuthURL, ResolveAuthURLContext and DownloadAuthUploadContext resolve
-// through API v2 without grouping requests into an install session. They
-// keep the download flows working until each flow carries one session per
-// install.
-func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string, error) {
-	return c.ResolveAuthURLContext(context.Background(), apiKey, uploadID, downloadKeyID)
-}
-
-func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, downloadKeyID string) (string, error) {
-	return c.ResolveUploadURLContext(ctx, apiKey, uploadID, NewInstallSession("", downloadKeyID))
-}
-
-func (c *Client) DownloadAuthUpload(apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	return c.DownloadAuthUploadContext(context.Background(), apiKey, uploadID, downloadKeyID, dest, progress)
-}
-
-func (c *Client) DownloadAuthUploadContext(ctx context.Context, apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	return c.DownloadUploadContext(ctx, apiKey, uploadID, NewInstallSession("", downloadKeyID), dest, progress)
 }

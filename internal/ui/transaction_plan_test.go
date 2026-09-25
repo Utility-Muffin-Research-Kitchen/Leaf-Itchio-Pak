@@ -54,11 +54,12 @@ func transactionPaths(t *testing.T) (string, string) {
 
 func TestCatDownloadPlanSealFreezesSourceAwareFiles(t *testing.T) {
 	_, secondary := transactionPaths(t)
+	install := roms.NewInstallSession("game-42", "purchase-7")
 	plan := &CatDownloadPlan{
 		Kind: CatDownloadPlanMulti,
 		Uploads: []roms.Upload{
-			{Filename: "adventure.gbc", UploadID: "11", DownloadKeyID: "purchase-7"},
-			{Filename: "manual.gb", UploadID: "12", DownloadKeyID: "purchase-7"},
+			{Filename: "adventure.gbc", UploadID: "11", Install: install},
+			{Filename: "manual.gb", UploadID: "12", Install: install},
 		},
 		DestPaths: []string{
 			filepath.Join(secondary, "Roms", "GBC", "RPG", "adventure.gbc"),
@@ -75,6 +76,11 @@ func TestCatDownloadPlanSealFreezesSourceAwareFiles(t *testing.T) {
 	transaction := sealed.Transaction
 	if transaction.GameID != "game-42" || transaction.PurchaseID != "purchase-7" || transaction.RequiredBytes != -1 {
 		t.Fatalf("transaction identity = %#v", transaction)
+	}
+	for _, planned := range transaction.Files {
+		if planned.Upload.Install != install {
+			t.Fatal("sealing dropped the upload's install session")
+		}
 	}
 	file := transaction.Files[0]
 	if file.SourceID != "secondary_sd" || file.CanonicalSystem != "GBC" ||

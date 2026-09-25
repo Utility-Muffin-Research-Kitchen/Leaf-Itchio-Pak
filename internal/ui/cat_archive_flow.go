@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -66,8 +67,8 @@ func NewCatArchiveFlow(client *itchio.Client, cfg *settings.Config, game itchio.
 func (flow *CatArchiveFlow) inspect() {
 	var cdnURL string
 	var err error
-	if flow.upload.DownloadKeyID != "" {
-		cdnURL, err = flow.client.ResolveAuthURL(flow.cfg.APIKey, flow.upload.UploadID, flow.upload.DownloadKeyID)
+	if flow.upload.ViaAPI() {
+		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.APIKey, flow.upload.UploadID, flow.upload.Install)
 	} else {
 		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: flow.upload.Filename, URL: flow.upload.URL})
 	}
@@ -265,8 +266,11 @@ func (flow *CatArchiveFlow) prepareInitialAction() {
 	if m.IsSingleROMOnly() && !m.HasOtherFiles() {
 		ext := flow.firstROMExt()
 		if ext != ".p8" && ext != ".p8.png" && !strings.EqualFold(filepath.Ext(flow.upload.Filename), ".7z") {
+			// Keep the upload's own source, not the inspected CDN URL: the
+			// worker resolves a fresh URL (a signed URL expires in about a
+			// minute, and a web resolver cannot take a CDN URL), and an API
+			// upload stays in this install's session.
 			patched := flow.upload
-			patched.URL = flow.plan.CDNURL
 			flow.direct = &CatDownloadPlan{Kind: CatDownloadPlanDirect, Uploads: []roms.Upload{patched}}
 			if flow.cfg.ROMLocation == "ask" {
 				flow.direct.Kind = CatDownloadPlanDestination

@@ -124,13 +124,12 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			return
 		}
 
-		isAuth := dl.Upload.DownloadKeyID != ""
-		logger.Info("multi-download: [%d/%d] starting %s → %s auth=%v",
-			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, isAuth)
+		logger.Info("multi-download: [%d/%d] starting %s → %s api=%v",
+			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, dl.Upload.ViaAPI())
 
 		var err error
-		if isAuth {
-			err = s.client.DownloadAuthUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.DownloadKeyID, dl.DestPath, progress)
+		if dl.Upload.ViaAPI() {
+			err = s.client.DownloadUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.Install, dl.DestPath, progress)
 		} else {
 			itchUpload := itchio.Upload{Filename: dl.Upload.Filename, URL: dl.Upload.URL}
 			err = s.client.DownloadFreeContext(ctx, itchUpload, dl.DestPath, progress)

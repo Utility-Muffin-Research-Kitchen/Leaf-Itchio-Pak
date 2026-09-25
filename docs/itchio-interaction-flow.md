@@ -188,7 +188,7 @@ header is used to track progress.
 
 ## Paid game download (API key path)
 
-**Source:** `download_auth.go`, `install_session.go`
+**Source:** `download_auth.go`, `roms/install_session.go`
 
 For paid games the user already owns, every request goes to itch.io API v2 on
 `api.itch.io` with `Authorization: Bearer {API_KEY}`. The key is never placed
@@ -271,9 +271,14 @@ inspection, refreshed URLs, and all files as one download. The POST is never
 replayed. If creation fails the install continues without grouping; if the
 operation is cancelled, it stops. The UUID is never logged or saved.
 
-The download flows do not hand a session through yet: `ResolveAuthURL` and
-`DownloadAuthUploadContext` resolve through v2 without one, so those requests
-are not grouped until each flow carries one session per install.
+Each purchase listing starts one install. Its uploads carry the session by
+pointer (`roms.Upload.Install`), which is also the only test for an API
+download, so a free API download without a purchase ID still goes through
+the API. Every copy made while choosing a format, planning destinations,
+sealing the transaction, or inspecting an archive keeps it: the format
+probe, archive inspection, the archive's refreshed URL, and every file of a
+multi-file download resolve within the same session. Choosing another
+purchase lists again and starts a new install.
 
 ### Step 4 — Resolve CDN URL
 
