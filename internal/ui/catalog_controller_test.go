@@ -133,3 +133,24 @@ func TestBackgroundRefreshKeepsCommittedCacheOnError(t *testing.T) {
 	default:
 	}
 }
+
+func TestCatalogControllerDiscardsValidationFromAReplacedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owned_cache.json")
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		ownedUpdateCh: make(chan map[string]bool, 1), ownedURLs: make(map[string]bool), ownedCachePath: path,
+	}
+	generation := controller.ownedGeneration.Load()
+	controller.ReplaceOwnedGames(nil) // the key changed while validating
+	<-controller.ownedUpdateCh
+	stale := []itchio.OwnedGame{{GameID: 1, URL: "https://old-account.itch.io/game"}}
+	if controller.publishOwnedIfCurrent(generation, stale) {
+		t.Fatal("stale validation was published")
+	}
+	if urls, err := itchio.LoadOwnedCache(path); err != nil || urls != nil {
+		t.Fatalf("owned cache = %v, %v; want nothing written", urls, err)
+	}
+	if !controller.publishOwnedIfCurrent(controller.ownedGeneration.Load(), stale) {
+		t.Fatal("current validation was discarded")
+	}
+}

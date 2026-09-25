@@ -48,7 +48,7 @@ func TestSignedURLsAndAPIKeysAreAbsentFromDebugLogs(t *testing.T) {
 	defer srv.Close()
 
 	buf := captureDebugLog(t)
-	client := itchio.NewClientWithBase(srv.URL)
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	if _, err := client.FetchFileHeader(srv.URL+"/game.gbc?X-Amz-Signature="+signature, 6); err != nil {
 		t.Fatalf("FetchFileHeader: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestCredentialBearingRequestURLsStayOutOfReturnedErrors(t *testing.T) {
 	base := srv.URL
 	srv.Close()
 
-	client := itchio.NewClientWithBase(base)
+	client := itchio.NewClientWithBaseAndButler(base, base)
 	_, headerErr := client.FetchFileHeader(base+"/game.zip?X-Amz-Signature="+signature, 8)
 	_, uploadsErr := client.FetchUploadsForKey(apiKey, "7", downloadID)
 	for name, err := range map[string]error{"signed header": headerErr, "owned uploads": uploadsErr} {
