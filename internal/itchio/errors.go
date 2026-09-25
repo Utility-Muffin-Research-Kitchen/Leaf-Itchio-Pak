@@ -20,6 +20,10 @@ var ErrRateLimited = netlimit.ErrRateLimited
 // download. Its text is shown on screen as is.
 var ErrUploadGone = errors.New("This file is no longer on itch.io.")
 
+// ErrNoAccess is returned when the API refuses a game's upload list: the game
+// is not owned, or the key does not grant access. Its text is safe for the UI.
+var ErrNoAccess = errors.New("Game not owned or API key does not grant access to this game's downloads")
+
 // ErrGameRemoved is returned when the game page responds with HTTP 404 or 410.
 var ErrGameRemoved = errors.New("game removed (HTTP 404/410)")
 
