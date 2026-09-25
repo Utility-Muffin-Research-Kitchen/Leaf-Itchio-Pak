@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -273,16 +272,14 @@ const PerPage = 36 // itch.io XML feeds return 36 items per page
 
 // FetchGames fetches one page of the GB Studio feed. It is used as a quick
 // live-feed preview when no local cache exists yet; the full multi-platform
-// catalogue is built by FetchAllGames.
-func (c *Client) FetchGames(page int, query string) ([]Game, error) {
-	return c.FetchGamesContext(context.Background(), page, query)
+// catalogue is built by FetchAllGames. The browse feeds ignore a q= search
+// parameter, so searching always filters locally.
+func (c *Client) FetchGames(page int) ([]Game, error) {
+	return c.FetchGamesContext(context.Background(), page)
 }
 
-func (c *Client) FetchGamesContext(ctx context.Context, page int, query string) ([]Game, error) {
+func (c *Client) FetchGamesContext(ctx context.Context, page int) ([]Game, error) {
 	feedURL := fmt.Sprintf("%s/games/made-with-gb-studio.xml?page=%d", c.base, page)
-	if query != "" {
-		feedURL += "&q=" + neturl.QueryEscape(query)
-	}
 	return c.FetchGamesFromURLContext(ctx, feedURL)
 }
 

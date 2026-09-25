@@ -36,7 +36,7 @@ var AllPlatforms = []FeedPlatform{
 	{
 		Code:      "GBA",
 		Name:      "Game Boy Advance",
-		FeedSlugs: []string{"tag-gba"},
+		FeedSlugs: []string{"tag-gameboy-advance"},
 	},
 	{
 		Code:      "NES",

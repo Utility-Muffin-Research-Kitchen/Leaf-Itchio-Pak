@@ -18,6 +18,7 @@ Leaf-Itchio-Pak is a hard fork of
 | Review | Accepted | Rejected or deferred | Rationale |
 |---|---|---|---|
 | Initial fork | All history through `42171a5` | None | Establish the exact `v1.0.19` behavioral baseline before Leaf changes |
+| `v1.0.25` feed corrections (2026-09-25) | Maintainer requests from [issue #4](https://github.com/carroarmato0/NextUI-Itchio-Pak/issues/4), not upstream commits: GBA feed uses `tag-gameboy-advance`; the ineffective `q=` preview parameter is removed | None | Avoids a redirect per GBA page and a parameter the feeds ignore. Preview search now filters the live page locally instead of emptying it |
 
 Future reviews append a row here. Do not rewrite old decisions.
 

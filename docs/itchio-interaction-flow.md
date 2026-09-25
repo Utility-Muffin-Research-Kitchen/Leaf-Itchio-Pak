@@ -19,11 +19,16 @@ All HTTP logic lives in `internal/itchio/`.
 
 **Source:** `feed.go`
 
-itch.io publishes an RSS/XML feed for tag-filtered searches:
+itch.io publishes an RSS/XML feed for each tag-filtered browse page:
 
 ```
-GET https://itch.io/games/made-with-gb-studio.xml?page=N&q=QUERY
+GET https://itch.io/games/made-with-gb-studio.xml?page=N
 ```
+
+The feeds ignore a `q=` search parameter, so the app never sends one: search
+filters the cached catalogue, or the preview page before the cache exists,
+locally. Each platform's slugs live in `platforms.go`; use canonical tag slugs
+(`tag-gameboy-advance`, not the redirecting `tag-gba`).
 
 Each `<item>` contains title, link, description, image URL, and price. The
 `<title>` field may include `[Tag]` brackets (e.g. `[GBC]`) which are stripped
