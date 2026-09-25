@@ -305,7 +305,11 @@ func TestFetchOwnedKeys_Pagination(t *testing.T) {
 // non-ROMs are skipped, and unknown extensions are returned with NeedsFormat=true.
 func TestFetchUploadsForKey_ROM(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/1/mykey/game/123/uploads", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/games/123/uploads", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer mykey" || strings.Contains(r.URL.String(), "mykey") {
+			http.Error(w, "key must be in the header only", http.StatusUnauthorized)
+			return
+		}
 		if r.URL.Query().Get("download_key_id") != "456" {
 			http.Error(w, "bad download_key_id", http.StatusForbidden)
 			return
@@ -313,8 +317,8 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"uploads": []map[string]interface{}{
-				{"id": 1, "filename": "game.gbc"},
-				{"id": 2, "filename": "manual.pdf"},  // skipped
+				{"id": 1, "filename": "game.gbc", "size": 32768, "traits": map[string]any{}},
+				{"id": 2, "filename": "manual.pdf", "traits": []string{"p_windows"}}, // skipped
 				{"id": 3, "filename": "game.gb"},
 				{"id": 4, "filename": "patch.ips"},   // NeedsFormat=true
 				{"id": 5, "filename": "disc.chd"},
@@ -326,7 +330,7 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := itchio.NewClientWithBase(srv.URL)
+	c := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	uploads, err := c.FetchUploadsForKey("mykey", "123", "456")
 	if err != nil {
 		t.Fatalf("FetchUploadsForKey: %v", err)
@@ -338,8 +342,8 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 	for _, u := range uploads {
 		byName[u.Filename] = u
 	}
-	if _, ok := byName["game.gbc"]; !ok {
-		t.Error("game.gbc should be included")
+	if u, ok := byName["game.gbc"]; !ok || u.Size != 32768 {
+		t.Errorf("game.gbc should be included with its size, got %+v", u)
 	}
 	if _, ok := byName["game.gb"]; !ok {
 		t.Error("game.gb should be included")
@@ -361,7 +365,7 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 // without error (empty slice returned, no panic).
 func TestFetchUploadsForKey_Empty(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/1/k/game/1/uploads", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/games/1/uploads", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// itch.io returns an object instead of array when uploads list is empty.
 		fmt.Fprint(w, `{"uploads":{}}`)
@@ -369,7 +373,7 @@ func TestFetchUploadsForKey_Empty(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := itchio.NewClientWithBase(srv.URL)
+	c := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	uploads, err := c.FetchUploadsForKey("k", "1", "99")
 	if err != nil {
 		t.Fatalf("FetchUploadsForKey: %v", err)
@@ -384,7 +388,7 @@ func TestFetchUploadsForKey_Empty(t *testing.T) {
 // DownloadAuthUpload).
 func TestFetchUploadsForKey_UploadIDPassedThrough(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/1/k/game/5/uploads", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/games/5/uploads", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"uploads": []map[string]interface{}{
@@ -395,7 +399,7 @@ func TestFetchUploadsForKey_UploadIDPassedThrough(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := itchio.NewClientWithBase(srv.URL)
+	c := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	uploads, err := c.FetchUploadsForKey("k", "5", "1")
 	if err != nil {
 		t.Fatalf("FetchUploadsForKey: %v", err)
@@ -455,26 +459,22 @@ func TestResolveAuthURL(t *testing.T) {
 	const downloadKeyID = "777"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET, got %s", r.Method)
+		if r.Method != http.MethodGet || r.URL.Path != "/uploads/"+uploadID+"/download" {
+			t.Errorf("request = %s %s, want GET /uploads/%s/download", r.Method, r.URL.Path, uploadID)
 		}
-		if !strings.Contains(r.URL.Path, uploadID) {
-			t.Errorf("URL path %q does not contain upload ID %q", r.URL.Path, uploadID)
+		if r.URL.Query().Get("download_key_id") != downloadKeyID || r.Header.Get("Authorization") != "Bearer apikey" {
+			t.Errorf("query %q / auth %q", r.URL.RawQuery, r.Header.Get("Authorization"))
 		}
-		if !strings.Contains(r.URL.RawQuery, downloadKeyID) {
-			t.Errorf("URL query %q does not contain download key ID %q", r.URL.RawQuery, downloadKeyID)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"url":"https://cdn.example.com/auth-file.zip"}`)
+		http.Redirect(w, r, "https://cdn.example.com/auth-file.zip?sig=1", http.StatusFound)
 	}))
 	defer srv.Close()
 
-	client := itchio.NewClientWithBase(srv.URL)
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	cdnURL, err := client.ResolveAuthURL("apikey", uploadID, downloadKeyID)
 	if err != nil {
 		t.Fatalf("ResolveAuthURL: %v", err)
 	}
-	if cdnURL != "https://cdn.example.com/auth-file.zip" {
-		t.Errorf("cdnURL = %q, want %q", cdnURL, "https://cdn.example.com/auth-file.zip")
+	if cdnURL != "https://cdn.example.com/auth-file.zip?sig=1" {
+		t.Errorf("cdnURL = %q, want the redirect location", cdnURL)
 	}
 }
