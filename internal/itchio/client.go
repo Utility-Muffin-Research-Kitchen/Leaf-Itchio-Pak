@@ -36,7 +36,8 @@ const (
 var errH1Negotiated = errors.New("server negotiated http/1.1")
 
 // tlsRootCAs is nil in production, which selects the system roots. Tests
-// substitute the roots of their local TLS servers.
+// substitute the roots of their local TLS servers. Each client captures it
+// once when built.
 var tlsRootCAs *x509.CertPool
 
 // uaTransport identifies the app on every outbound request that does not set
@@ -65,14 +66,14 @@ func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // dialTLSWithALPN dials a standard crypto/tls connection offering protos
 // via ALPN. Certificates are verified against the system roots, which the Pak
 // points at its packaged bundle through SSL_CERT_FILE.
-func dialTLSWithALPN(ctx context.Context, network, addr string, protos []string) (*tls.Conn, error) {
+func dialTLSWithALPN(ctx context.Context, network, addr string, protos []string, roots *x509.CertPool) (*tls.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive},
-		Config:    &tls.Config{ServerName: host, NextProtos: protos, RootCAs: tlsRootCAs},
+		Config:    &tls.Config{ServerName: host, NextProtos: protos, RootCAs: roots},
 	}
 	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
@@ -81,30 +82,35 @@ func dialTLSWithALPN(ctx context.Context, network, addr string, protos []string)
 	return conn.(*tls.Conn), nil
 }
 
-// dialTLS advertises ["h2", "http/1.1"] via ALPN. If the server selects h2
-// the conn is returned to http2.Transport. If it selects http/1.1, the conn
-// is closed and errH1Negotiated is returned so h2FallbackTransport can retry
-// over the h1 transport. The cfg parameter satisfies http2.Transport's
-// DialTLSContext signature but is ignored; ALPN is chosen here.
-func dialTLS(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-	conn, err := dialTLSWithALPN(ctx, network, addr, []string{"h2", "http/1.1"})
-	if err != nil {
-		return nil, err
+// dialTLS returns the http2.Transport dialer, which advertises ["h2",
+// "http/1.1"] via ALPN. If the server selects h2 the conn is returned to
+// http2.Transport. If it selects http/1.1, the conn is closed and
+// errH1Negotiated is returned so h2FallbackTransport can retry over the h1
+// transport. The cfg parameter satisfies http2.Transport's DialTLSContext
+// signature but is ignored; ALPN is chosen here.
+func dialTLS(roots *x509.CertPool) func(context.Context, string, string, *tls.Config) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+		conn, err := dialTLSWithALPN(ctx, network, addr, []string{"h2", "http/1.1"}, roots)
+		if err != nil {
+			return nil, err
+		}
+		state := conn.ConnectionState()
+		logger.Debug("client: TLS addr=%s proto=%s version=%s", addr, state.NegotiatedProtocol, tls.VersionName(state.Version))
+		if state.NegotiatedProtocol != "h2" {
+			conn.Close()
+			return nil, errH1Negotiated
+		}
+		return conn, nil
 	}
-	state := conn.ConnectionState()
-	logger.Debug("client: TLS addr=%s proto=%s version=%s", addr, state.NegotiatedProtocol, tls.VersionName(state.Version))
-	if state.NegotiatedProtocol != "h2" {
-		conn.Close()
-		return nil, errH1Negotiated
-	}
-	return conn, nil
 }
 
-// dialTLSH1 is the http.Transport-compatible dialer (no *tls.Config param)
-// with http/1.1-only ALPN, for servers that do not support h2 (signed
+// dialTLSH1 returns the http.Transport-compatible dialer (no *tls.Config
+// param) with http/1.1-only ALPN, for servers that do not support h2 (signed
 // download CDNs, custom game hosting).
-func dialTLSH1(ctx context.Context, network, addr string) (net.Conn, error) {
-	return dialTLSWithALPN(ctx, network, addr, []string{"http/1.1"})
+func dialTLSH1(roots *x509.CertPool) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialTLSWithALPN(ctx, network, addr, []string{"http/1.1"}, roots)
+	}
 }
 
 // h2FallbackTransport routes HTTPS requests through http2.Transport for h2
@@ -188,13 +194,14 @@ func safeRequestError(operation string, err error) error {
 
 func newHTTPClient(version string) *http.Client {
 	jar, _ := cookiejar.New(nil)
+	roots := tlsRootCAs
 	h2t := &http2.Transport{
-		DialTLSContext:  dialTLS,
+		DialTLSContext:  dialTLS(roots),
 		ReadIdleTimeout: responseHeaderTimeout,
 		PingTimeout:     dialTimeout,
 	}
 	h1t := &http.Transport{
-		DialTLSContext:        dialTLSH1,
+		DialTLSContext:        dialTLSH1(roots),
 		ResponseHeaderTimeout: responseHeaderTimeout,
 		IdleConnTimeout:       keepAlive,
 		MaxIdleConns:          16,
