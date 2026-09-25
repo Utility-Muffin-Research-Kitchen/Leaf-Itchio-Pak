@@ -1,4 +1,4 @@
-package itchio
+package roms
 
 import (
 	"context"
@@ -14,6 +14,9 @@ import (
 // no credential, is never persisted, and its UUID is never logged.
 //
 // A new install or a different purchase selection needs a new InstallSession.
+// Uploads carry it by pointer (Upload.Install), so every copy of an upload
+// made while planning, sealing, or choosing destinations stays in the same
+// install.
 type InstallSession struct {
 	gameID        string
 	downloadKeyID string
@@ -34,11 +37,11 @@ func NewInstallSession(gameID, downloadKeyID string) *InstallSession {
 // DownloadKeyID returns the purchase this install uses, "" for none.
 func (s *InstallSession) DownloadKeyID() string { return s.downloadKeyID }
 
-// resolveUUID returns the server session UUID, creating it on first use.
+// ResolveUUID returns the server session UUID, calling create on first use.
 // Only one creation is attempted per install. When it fails the install
 // continues without grouping, as the download still works; when ctx itself
 // is done the error is returned so the operation stops.
-func (s *InstallSession) resolveUUID(ctx context.Context, create func(context.Context, string, string) (string, error)) (string, error) {
+func (s *InstallSession) ResolveUUID(ctx context.Context, create func(context.Context, string, string) (string, error)) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settled {

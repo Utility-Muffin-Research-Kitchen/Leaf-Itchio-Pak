@@ -1,6 +1,7 @@
 package itchio_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func TestDownloadFreeStreamsFile(t *testing.T) {
@@ -320,7 +322,7 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 				{"id": 1, "filename": "game.gbc", "size": 32768, "traits": map[string]any{}},
 				{"id": 2, "filename": "manual.pdf", "traits": []string{"p_windows"}}, // skipped
 				{"id": 3, "filename": "game.gb"},
-				{"id": 4, "filename": "patch.ips"},   // NeedsFormat=true
+				{"id": 4, "filename": "patch.ips"}, // NeedsFormat=true
 				{"id": 5, "filename": "disc.chd"},
 				{"id": 6, "filename": "disc.cue"},
 				{"id": 7, "filename": "disc.bin"},
@@ -454,7 +456,7 @@ func TestResolveFreeURL(t *testing.T) {
 	}
 }
 
-func TestResolveAuthURL(t *testing.T) {
+func TestResolveUploadURLWithoutSession(t *testing.T) {
 	const uploadID = "555"
 	const downloadKeyID = "777"
 
@@ -470,9 +472,9 @@ func TestResolveAuthURL(t *testing.T) {
 	defer srv.Close()
 
 	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
-	cdnURL, err := client.ResolveAuthURL("apikey", uploadID, downloadKeyID)
+	cdnURL, err := client.ResolveUploadURLContext(context.Background(), "apikey", uploadID, roms.NewInstallSession("", downloadKeyID))
 	if err != nil {
-		t.Fatalf("ResolveAuthURL: %v", err)
+		t.Fatalf("ResolveUploadURLContext: %v", err)
 	}
 	if cdnURL != "https://cdn.example.com/auth-file.zip?sig=1" {
 		t.Errorf("cdnURL = %q, want the redirect location", cdnURL)

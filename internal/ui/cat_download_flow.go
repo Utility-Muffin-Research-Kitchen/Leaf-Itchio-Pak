@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -117,14 +118,18 @@ func (flow *CatDownloadFlow) discover() {
 	}()
 }
 
+// fetchForKey lists the uploads a purchase grants. Each listing starts a new
+// install: its uploads share one session for probes, inspection, refreshed
+// URLs, and every file downloaded.
 func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate {
 	downloadKeyID := strconv.FormatInt(key.ID, 10)
 	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.APIKey, flow.detail.GameID, downloadKeyID)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, UploadID: upload.UploadID,
-			DownloadKeyID: downloadKeyID, NeedsFormat: upload.NeedsFormat,
+			NeedsFormat: upload.NeedsFormat, Install: install,
 		})
 	}
 	return update
@@ -226,8 +231,8 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 func (flow *CatDownloadFlow) detect(upload roms.Upload) {
 	var cdnURL string
 	var err error
-	if upload.DownloadKeyID != "" {
-		cdnURL, err = flow.client.ResolveAuthURL(flow.cfg.APIKey, upload.UploadID, upload.DownloadKeyID)
+	if upload.ViaAPI() {
+		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.APIKey, upload.UploadID, upload.Install)
 	} else {
 		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: upload.Filename, URL: upload.URL})
 	}

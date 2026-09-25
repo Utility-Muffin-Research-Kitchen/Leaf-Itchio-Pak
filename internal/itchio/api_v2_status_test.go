@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // The API v2 calls a download makes turn every expected failure status into
@@ -18,7 +20,7 @@ func TestAPIV2StatusesBecomeScreenText(t *testing.T) {
 			return err
 		},
 		"resolve": func(client *Client) error {
-			_, err := client.ResolveUploadURLContext(context.Background(), "key", "9", NewInstallSession("", "777"))
+			_, err := client.ResolveUploadURLContext(context.Background(), "key", "9", roms.NewInstallSession("", "777"))
 			return err
 		},
 	}
