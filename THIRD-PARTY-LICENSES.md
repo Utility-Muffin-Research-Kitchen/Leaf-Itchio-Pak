@@ -27,12 +27,10 @@ selected by the build. The current Go build list is:
 | Module family | License |
 |---|---|
 | `github.com/holoplot/go-evdev` | MIT |
-| `github.com/refraction-networking/utls` | BSD 3-Clause |
 | `github.com/skip2/go-qrcode` | MIT |
-| `golang.org/x/{crypto,image,net,sys,text}` | BSD 3-Clause |
+| `golang.org/x/{image,net,sys,text}` | BSD 3-Clause |
 | `github.com/andybalholm/brotli` | MIT |
 | `github.com/bodgit/{plumbing,sevenzip,windows}` | BSD 3-Clause |
-| `github.com/gaukas/godicttls` | BSD 3-Clause |
 | `github.com/hashicorp/{errwrap,go-multierror}` | Mozilla Public License 2.0 |
 | `github.com/klauspost/compress` | BSD 3-Clause |
 | `github.com/pierrec/lz4/v4` | BSD 3-Clause |

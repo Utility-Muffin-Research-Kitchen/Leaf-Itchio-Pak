@@ -3,9 +3,11 @@ package itchio_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -519,32 +521,66 @@ func TestFetchGamesFromURL_PublishedAt(t *testing.T) {
 	}
 }
 
-func TestFetchGamesFromURL_sendsBrowserHeaders(t *testing.T) {
-	var gotUA, gotAccept, gotLang, gotFetchMode string
+func TestClientsIdentifyAsLeafWithoutBrowserHeaders(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]http.Header{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotUA = r.Header.Get("User-Agent")
-		gotAccept = r.Header.Get("Accept")
-		gotLang = r.Header.Get("Accept-Language")
-		gotFetchMode = r.Header.Get("Sec-Fetch-Mode")
-		w.Header().Set("Content-Type", "application/rss+xml")
-		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+		mu.Lock()
+		seen[r.URL.Path] = r.Header.Clone()
+		mu.Unlock()
+		if r.URL.Path == "/feed.xml" || r.URL.Path == "/dev" {
+			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+			return
+		}
+		w.Write([]byte("PK\x03\x04 file body"))
 	}))
 	defer srv.Close()
 
-	c := itchio.NewClientWithVersion("v0.1.0")
-	c.FetchGamesFromURL(srv.URL + "/games/made-with-gb-studio.xml?page=1")
+	release := itchio.NewClientWithVersion("v0.2.0")
+	if _, err := release.FetchGamesFromURL(srv.URL + "/feed.xml"); err != nil {
+		t.Fatal(err)
+	}
+	// Streaming copies the client; range reads use it directly.
+	if err := release.DownloadURL(srv.URL+"/stream", filepath.Join(t.TempDir(), "game.zip"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := release.FetchFileHeader(srv.URL+"/range", 4); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := release.HTTPClient().Get(srv.URL + "/shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if _, err := itchio.NewClientWithBase(srv.URL).FetchGamesFromURL(srv.URL + "/dev"); err != nil {
+		t.Fatal(err)
+	}
 
-	if !strings.Contains(gotUA, "Mozilla/5.0") || !strings.Contains(gotUA, "Leaf-Itchio-Pak/v0.1.0") {
-		t.Errorf("User-Agent = %q, want upstream browser identity and Leaf product/version", gotUA)
+	const releaseUA = "Leaf-Itchio-Pak/v0.2.0 (+https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak)"
+	want := map[string]string{
+		"/feed.xml": releaseUA, "/stream": releaseUA, "/range": releaseUA, "/shared": releaseUA,
+		"/dev": "Leaf-Itchio-Pak/dev (+https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak)",
 	}
-	if gotAccept == "" {
+	mu.Lock()
+	defer mu.Unlock()
+	for path, ua := range want {
+		header, ok := seen[path]
+		if !ok {
+			t.Errorf("%s: no request seen", path)
+			continue
+		}
+		if got := header.Get("User-Agent"); got != ua {
+			t.Errorf("%s: User-Agent = %q, want %q", path, got, ua)
+		}
+		for name := range header {
+			lower := strings.ToLower(name)
+			if strings.HasPrefix(lower, "sec-") || strings.Contains(header.Get(name), "Chrome") {
+				t.Errorf("%s: browser impersonation header %s: %q", path, name, header.Get(name))
+			}
+		}
+	}
+	if seen["/feed.xml"].Get("Accept") == "" {
 		t.Error("Accept header not sent")
-	}
-	if gotLang == "" {
-		t.Error("Accept-Language header not sent")
-	}
-	if gotFetchMode == "" {
-		t.Error("Sec-Fetch-Mode header not sent")
 	}
 }
 
@@ -637,5 +673,75 @@ func TestFetchGamesFromURLContext_CancelsRetryWait(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("requests after cancelling retry wait = %d, want 1", got)
+	}
+}
+
+func fullFeedPage(prefix string) string {
+	var items strings.Builder
+	for index := range itchio.PerPage {
+		fmt.Fprintf(&items, "<item><title>%s %d</title><link>https://dev.itch.io/%s-%d</link><price>0</price></item>", prefix, index, prefix, index)
+	}
+	return `<?xml version="1.0"?><rss version="2.0"><channel>` + items.String() + `</channel></rss>`
+}
+
+// itch.io can answer 404/410 for a page past the end of a long feed. That ends
+// the slug and keeps its games; a missing first page is still an error.
+func TestFetchAllGames_LaterPageNotFoundEndsFeed(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/games/tag-pico-8.xml" && r.URL.Query().Get("page") == "1":
+				w.Write([]byte(fullFeedPage("p8")))
+			case r.URL.Path == "/games/tag-pico-8.xml":
+				w.WriteHeader(status)
+			default:
+				w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+			}
+		}))
+		games, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("HTTP %d past the end: %v", status, err)
+		}
+		if len(games) != itchio.PerPage {
+			t.Fatalf("HTTP %d past the end kept %d games, want %d", status, len(games), itchio.PerPage)
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/games/tag-pico-8.xml" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	if _, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil); err == nil {
+		t.Fatal("a missing first feed page was not reported")
+	}
+}
+
+// The transport owns 429 retries; the feed loop must not multiply them, and
+// the refresh fails with the typed error so the caller keeps its cache.
+func TestFetchAllGames_RateLimitFailsTypedWithoutFeedRetries(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/games/tag-homebrew/tag-psx.xml" {
+			// Hold the other feeds so the rate-limited one decides the outcome.
+			<-r.Context().Done()
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	_, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+	if !errors.Is(err, itchio.ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("rate-limited feed requests = %d, want 1 plus 3 transport retries", got)
 	}
 }
