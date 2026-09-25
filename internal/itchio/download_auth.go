@@ -334,7 +334,7 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 	case http.StatusOK:
 	case http.StatusForbidden, http.StatusUnauthorized:
 		logger.Warn("auth: upload list HTTP %d — key may not grant access to this game", resp.StatusCode)
-		return nil, fmt.Errorf("Game not owned or API key does not grant access to this game's downloads")
+		return nil, ErrNoAccess
 	case http.StatusTooManyRequests:
 		return nil, fmt.Errorf("fetch uploads: %w", ErrRateLimited)
 	default:

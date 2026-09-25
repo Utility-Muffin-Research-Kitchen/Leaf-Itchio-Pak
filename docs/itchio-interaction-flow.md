@@ -66,6 +66,16 @@ The CSRF token extracted here is used in the free download flow (Step 2 below).
 
 **Source:** `download.go` — `FetchUploads` + `DownloadFree`
 
+With an API key and a known game ID, a free or name-your-own-price game is
+listed through `GET api.itch.io/games/{GAME_ID}/uploads` without a
+`download_key_id`, and downloads through an install session with no purchase
+ID (see the paid flow below). That skips this web flow and its
+`download_url` POST. `CatDownloadFlow.fetchFree` falls back to the web flow
+at most once, when the API fails or lists nothing. A rate limit or
+cancellation is final and never tries the other endpoint. When the API
+refused access and the web flow fails too, the access error (`ErrNoAccess`)
+is reported. Signed-out users always use the web flow below.
+
 There are six steps. The same `*Client` (and its cookie jar) is used
 throughout, so cookies set in early steps are available in later ones.
 
