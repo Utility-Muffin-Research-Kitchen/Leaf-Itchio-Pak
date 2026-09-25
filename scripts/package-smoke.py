@@ -131,7 +131,7 @@ def main() -> None:
         "platform": "mlp1",
         "pak_version": args.version,
         "min_jawaka_version": args.min_jawaka_version,
-        "author": "Carroarmato0 & Utility Muffin Research Kitchen",
+        "author": "Carroarmato0 & UMRK",
         "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak",
     }
     for key, expected in expected_manifest.items():
