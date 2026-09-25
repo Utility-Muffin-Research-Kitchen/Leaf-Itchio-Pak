@@ -3,6 +3,7 @@ package itchio
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -12,17 +13,14 @@ import (
 	"sync"
 	"time"
 
-	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
 const (
-	// browserUserAgent preserves the upstream browser identity used to avoid Cloudflare bot-protection
-	// responses (which would return HTML instead of the expected XML/JSON payloads).
-	browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-	productName      = "Leaf-Itchio-Pak"
+	productName = "Leaf-Itchio-Pak"
+	productURL  = "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak"
 
 	dialTimeout           = 10 * time.Second
 	keepAlive             = 30 * time.Second
@@ -37,8 +35,15 @@ const (
 // future requests to that host) through the h1 transport instead.
 var errH1Negotiated = errors.New("server negotiated http/1.1")
 
-// uaTransport injects browser-compatible headers on every outbound request
-// that does not already have them, then delegates to the wrapped RoundTripper.
+// tlsRootCAs is nil in production, which selects the system roots. Tests
+// substitute the roots of their local TLS servers. Each client captures it
+// once when built.
+var tlsRootCAs *x509.CertPool
+
+// uaTransport identifies the app on every outbound request that does not set
+// its own headers, then delegates to the wrapped RoundTripper. itch.io asked
+// clients to say what they are rather than pose as a browser
+// (carroarmato0/NextUI-Itchio-Pak#4).
 type uaTransport struct {
 	wrapped   http.RoundTripper
 	userAgent string
@@ -55,84 +60,57 @@ func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	setDefaultHeader(req, "User-Agent", t.userAgent)
 	setDefaultHeader(req, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	setDefaultHeader(req, "Accept-Language", "en-US,en;q=0.9")
-	setDefaultHeader(req, "sec-ch-ua", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
-	setDefaultHeader(req, "sec-ch-ua-mobile", "?0")
-	setDefaultHeader(req, "sec-ch-ua-platform", `"Windows"`)
-	setDefaultHeader(req, "Sec-Fetch-Dest", "document")
-	setDefaultHeader(req, "Sec-Fetch-Mode", "navigate")
-	setDefaultHeader(req, "Sec-Fetch-Site", "none")
-	setDefaultHeader(req, "Sec-Fetch-User", "?1")
-	setDefaultHeader(req, "Cache-Control", "max-age=0")
 	return t.wrapped.RoundTrip(req)
 }
 
-// dialTLS dials a TLS connection using the Chrome ClientHello fingerprint via
-// utls, advertising ["h2", "http/1.1"] ALPN. If the server selects h2 the
-// conn is returned to http2.Transport. If it selects http/1.1, the conn is
-// closed and errH1Negotiated is returned so h2FallbackTransport can retry
-// over the h1 transport. The cfg parameter satisfies http2.Transport's
-// DialTLSContext signature but is ignored — we build our own utls config.
-func dialTLS(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+// dialTLSWithALPN dials a standard crypto/tls connection offering protos
+// via ALPN. Certificates are verified against the system roots, which the Pak
+// points at its packaged bundle through SSL_CERT_FILE.
+func dialTLSWithALPN(ctx context.Context, network, addr string, protos []string, roots *x509.CertPool) (*tls.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := (&net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive}).DialContext(ctx, network, addr)
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive},
+		Config:    &tls.Config{ServerName: host, NextProtos: protos, RootCAs: roots},
+	}
+	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
-	uconn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloChrome_Auto)
-	if err := uconn.BuildHandshakeState(); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	for _, ext := range uconn.Extensions {
-		if alpn, ok := ext.(*utls.ALPNExtension); ok {
-			alpn.AlpnProtocols = []string{"h2", "http/1.1"}
-			break
-		}
-	}
-	if err := uconn.HandshakeContext(ctx); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	proto := uconn.ConnectionState().NegotiatedProtocol
-	logger.Debug("client: TLS addr=%s proto=%s", addr, proto)
-	if proto != "h2" {
-		uconn.Close()
-		return nil, errH1Negotiated
-	}
-	return uconn, nil
+	return conn.(*tls.Conn), nil
 }
 
-// dialTLSH1 is the http.Transport-compatible dialer (no *tls.Config param)
-// using the Chrome utls fingerprint with http/1.1-only ALPN, for servers
-// that do not support h2 (signed download CDNs, custom game hosting).
-func dialTLSH1(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := (&net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive}).DialContext(ctx, network, addr)
-	if err != nil {
-		return nil, err
-	}
-	uconn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloChrome_Auto)
-	if err := uconn.BuildHandshakeState(); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	for _, ext := range uconn.Extensions {
-		if alpn, ok := ext.(*utls.ALPNExtension); ok {
-			alpn.AlpnProtocols = []string{"http/1.1"}
-			break
+// dialTLS returns the http2.Transport dialer, which advertises ["h2",
+// "http/1.1"] via ALPN. If the server selects h2 the conn is returned to
+// http2.Transport. If it selects http/1.1, the conn is closed and
+// errH1Negotiated is returned so h2FallbackTransport can retry over the h1
+// transport. The cfg parameter satisfies http2.Transport's DialTLSContext
+// signature but is ignored; ALPN is chosen here.
+func dialTLS(roots *x509.CertPool) func(context.Context, string, string, *tls.Config) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+		conn, err := dialTLSWithALPN(ctx, network, addr, []string{"h2", "http/1.1"}, roots)
+		if err != nil {
+			return nil, err
 		}
+		state := conn.ConnectionState()
+		logger.Debug("client: TLS addr=%s proto=%s version=%s", addr, state.NegotiatedProtocol, tls.VersionName(state.Version))
+		if state.NegotiatedProtocol != "h2" {
+			conn.Close()
+			return nil, errH1Negotiated
+		}
+		return conn, nil
 	}
-	if err := uconn.HandshakeContext(ctx); err != nil {
-		conn.Close()
-		return nil, err
+}
+
+// dialTLSH1 returns the http.Transport-compatible dialer (no *tls.Config
+// param) with http/1.1-only ALPN, for servers that do not support h2 (signed
+// download CDNs, custom game hosting).
+func dialTLSH1(roots *x509.CertPool) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialTLSWithALPN(ctx, network, addr, []string{"http/1.1"}, roots)
 	}
-	return uconn, nil
 }
 
 // h2FallbackTransport routes HTTPS requests through http2.Transport for h2
@@ -191,7 +169,7 @@ func productUserAgent(version string) string {
 		}
 		return value
 	}, version)
-	return fmt.Sprintf("%s %s/%s", browserUserAgent, productName, version)
+	return fmt.Sprintf("%s/%s (+%s)", productName, version, productURL)
 }
 
 // safeRequestError keeps credential-bearing request URLs out of UI/crash
@@ -204,6 +182,8 @@ func safeRequestError(operation string, err error) error {
 		return fmt.Errorf("%s: %w", operation, context.Canceled)
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
+	case errors.Is(err, ErrRateLimited):
+		return fmt.Errorf("%s: %w", operation, ErrRateLimited)
 	}
 	var networkErr net.Error
 	if errors.As(err, &networkErr) && networkErr.Timeout() {
@@ -214,13 +194,14 @@ func safeRequestError(operation string, err error) error {
 
 func newHTTPClient(version string) *http.Client {
 	jar, _ := cookiejar.New(nil)
+	roots := tlsRootCAs
 	h2t := &http2.Transport{
-		DialTLSContext:  dialTLS,
+		DialTLSContext:  dialTLS(roots),
 		ReadIdleTimeout: responseHeaderTimeout,
 		PingTimeout:     dialTimeout,
 	}
 	h1t := &http.Transport{
-		DialTLSContext:        dialTLSH1,
+		DialTLSContext:        dialTLSH1(roots),
 		ResponseHeaderTimeout: responseHeaderTimeout,
 		IdleConnTimeout:       keepAlive,
 		MaxIdleConns:          16,
@@ -231,11 +212,11 @@ func newHTTPClient(version string) *http.Client {
 		Timeout: metadataTimeout,
 		Transport: &uaTransport{
 			userAgent: productUserAgent(version),
-			wrapped: &h2FallbackTransport{
+			wrapped: newRateLimitTransport(&h2FallbackTransport{
 				h2:      h2t,
 				h1:      h1t,
 				h1hosts: make(map[string]struct{}),
-			},
+			}),
 		},
 	}
 }
@@ -254,8 +235,9 @@ func NewClient() *Client {
 	return NewClientWithVersion("dev")
 }
 
-// NewClientWithVersion builds the production client while preserving the
-// upstream browser fingerprint and appending the Leaf product/version token.
+// NewClientWithVersion builds the production client, which identifies itself
+// as Leaf-Itchio-Pak/<version> with the project URL. Development and test
+// clients use "dev" as the version.
 func NewClientWithVersion(version string) *Client {
 	return &Client{
 		http:   newHTTPClient(version),
