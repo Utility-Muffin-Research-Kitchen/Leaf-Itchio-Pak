@@ -290,7 +290,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		for _, upload := range known {
 			hasArchive = hasArchive || isArchive(upload.Filename)
 		}
-		if !hasArchive {
+		if !hasArchive && !hasAlternativeBuilds(known) {
 			flow.plan = flow.planForUploads(known)
 			return
 		}
@@ -310,6 +310,30 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		})
 	}
 	model.SetChoices("Choose file and format", choices)
+}
+
+// hasAlternativeBuilds reports whether two uploads target the same cartridge
+// system, which makes them alternative builds of one game (an update and the
+// original jam release, say) rather than companions for different systems.
+// PlayStation files are left out: CUE/BIN tracks and the discs of one game
+// are a dependent set, not competing builds.
+func hasAlternativeBuilds(uploads []roms.Upload) bool {
+	seen := make(map[string]bool, len(uploads))
+	for _, upload := range uploads {
+		ext := strings.ToLower(roms.ROMExt(upload.Filename))
+		if roms.IsPSXExt(ext) {
+			continue
+		}
+		system := roms.DestinationDir(ext)
+		if system == "" {
+			continue
+		}
+		if seen[system] {
+			return true
+		}
+		seen[system] = true
+	}
+	return false
 }
 
 func isPairedPSXUploadSet(uploads []roms.Upload) bool {
