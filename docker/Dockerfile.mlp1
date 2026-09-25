@@ -1,4 +1,4 @@
-ARG GO_IMAGE=docker.io/library/golang:1.22.12-bookworm
+ARG GO_IMAGE=docker.io/library/golang:1.27.1-bookworm
 ARG TOOLCHAIN_IMAGE=ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
 FROM ${GO_IMAGE} AS go_toolchain
 

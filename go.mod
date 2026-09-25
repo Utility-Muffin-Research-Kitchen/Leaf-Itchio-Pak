@@ -1,6 +1,6 @@
 module github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak
 
-go 1.22
+go 1.27.0
 
 require (
 	github.com/bodgit/sevenzip v1.4.5
