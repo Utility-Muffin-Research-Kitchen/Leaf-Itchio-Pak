@@ -727,8 +727,7 @@ func TestFetchAllGames_RateLimitFailsTypedWithoutFeedRetries(t *testing.T) {
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/games/tag-homebrew/tag-psx.xml" {
-			// Hold the other feeds so the rate-limited one decides the outcome.
-			<-r.Context().Done()
+			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
 			return
 		}
 		requests.Add(1)
