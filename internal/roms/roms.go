@@ -18,12 +18,18 @@ func ROMExt(filename string) string {
 }
 
 type Upload struct {
-	Filename      string
-	URL           string
-	UploadID      string // itch.io upload ID (API-based paid download)
-	DownloadKeyID string // itch.io download key ID (API-based paid download)
-	NeedsFormat   bool   // true if the user must choose a supported format
+	Filename    string
+	URL         string // web resolver URL; empty for API uploads
+	UploadID    string // itch.io upload ID (API uploads)
+	NeedsFormat bool   // true if the user must choose a supported format
+	// Install is set for uploads listed through the itch.io API and is the
+	// only test for an API download: free API downloads have no purchase ID.
+	// nil means the anonymous web flow.
+	Install *InstallSession
 }
+
+// ViaAPI reports whether the upload downloads through the itch.io API.
+func (upload Upload) ViaAPI() bool { return upload.Install != nil }
 
 var psxLaunchExts = map[string]bool{
 	".cbn": true, ".chd": true, ".cue": true, ".img": true, ".iso": true,

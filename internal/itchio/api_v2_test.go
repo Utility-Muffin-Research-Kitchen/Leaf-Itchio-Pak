@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 const v2Key = "v2-api-secret-5be1"
@@ -96,7 +97,7 @@ func (f *fakeAPI) snapshot() (sessions, uuids, keys, cdnAuth, urls []string) {
 
 func TestResolveReadsRedirectWithoutFetchingTheCDN(t *testing.T) {
 	f := newFakeAPI(t)
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	cdnURL, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", session)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +113,7 @@ func TestResolveReadsRedirectWithoutFetchingTheCDN(t *testing.T) {
 func TestDownloadSendsTheKeyOnlyToTheAPIOrigin(t *testing.T) {
 	f := newFakeAPI(t)
 	dest := filepath.Join(t.TempDir(), "game.gbc")
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", session, dest, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestDownloadSendsTheKeyOnlyToTheAPIOrigin(t *testing.T) {
 func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 	f := newFakeAPI(t)
 	client := f.client()
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	var wg sync.WaitGroup
 	for index := range 6 {
 		wg.Add(1)
@@ -156,7 +157,7 @@ func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 	}
 
 	// A new install gets its own session.
-	if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "1", itchio.NewInstallSession("42", "777")); err != nil {
+	if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "1", roms.NewInstallSession("42", "777")); err != nil {
 		t.Fatal(err)
 	}
 	if sessions, _, _, _, _ := f.snapshot(); len(sessions) != 2 {
@@ -166,7 +167,7 @@ func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 
 func TestFreeAPIDownloadHasNoPurchaseID(t *testing.T) {
 	f := newFakeAPI(t)
-	if _, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "")); err != nil {
+	if _, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("42", "")); err != nil {
 		t.Fatal(err)
 	}
 	sessions, uuids, keys, _, urls := f.snapshot()
@@ -185,7 +186,7 @@ func TestFailedSessionCreationDegradesToUngroupedDownloads(t *testing.T) {
 		f := newFakeAPI(t)
 		f.sessionStatus = status
 		client := f.client()
-		session := itchio.NewInstallSession("42", "777")
+		session := roms.NewInstallSession("42", "777")
 		for range 3 {
 			if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", session); err != nil {
 				t.Fatalf("HTTP %d session: %v", status, err)
@@ -210,7 +211,7 @@ func TestCancellationDuringSessionCreationStopsTheOperation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.client().ResolveUploadURLContext(ctx, v2Key, "9", itchio.NewInstallSession("42", "777"))
+		_, err := f.client().ResolveUploadURLContext(ctx, v2Key, "9", roms.NewInstallSession("42", "777"))
 		done <- err
 	}()
 	for {
@@ -250,7 +251,7 @@ func TestResolverRejectsUnusableResponses(t *testing.T) {
 	for name, handler := range cases {
 		srv := httptest.NewServer(handler)
 		client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
-		_, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("", "777"))
+		_, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("", "777"))
 		srv.Close()
 		if err == nil {
 			t.Errorf("%s: accepted", name)
@@ -268,7 +269,7 @@ func TestSessionUUIDAndKeyStayOutOfLogs(t *testing.T) {
 	f := newFakeAPI(t)
 	buf := captureDebugLog(t)
 	dest := filepath.Join(t.TempDir(), "game.gbc")
-	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "777"), dest, nil); err != nil {
+	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", roms.NewInstallSession("42", "777"), dest, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, secret := range []string{"install-uuid-7f3a", v2Key, "signed-8d2c", "X-Amz-Signature"} {
