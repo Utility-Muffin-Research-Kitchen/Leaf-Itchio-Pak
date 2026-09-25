@@ -61,6 +61,9 @@ type CatalogController struct {
 	ownedURLs       map[string]bool
 	ownedCachePath  string
 	ownedGeneration atomic.Uint64
+	// ownedMu makes a validation's generation check and its owned-cache
+	// write atomic with respect to a key change bumping the generation.
+	ownedMu sync.Mutex
 
 	sortMode       itchio.SortMode
 	platformFilter string
@@ -100,11 +103,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 				logger.Warn("owned: startup key validation failed: %v", err)
 				return
 			}
-			if generation != controller.ownedGeneration.Load() {
-				logger.Debug("owned: discarded stale startup key validation")
-				return
-			}
-			controller.publishOwned(owned)
+			controller.publishOwnedIfCurrent(generation, owned)
 		}()
 	}
 
@@ -136,6 +135,19 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 	return controller
 }
 
+// publishOwnedIfCurrent stores a validation result unless the API key
+// changed after the validation started.
+func (controller *CatalogController) publishOwnedIfCurrent(generation uint64, owned []itchio.OwnedGame) bool {
+	controller.ownedMu.Lock()
+	defer controller.ownedMu.Unlock()
+	if generation != controller.ownedGeneration.Load() {
+		logger.Debug("owned: discarded stale startup key validation")
+		return false
+	}
+	controller.publishOwned(owned)
+	return true
+}
+
 func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
 	urls := make([]string, len(owned))
 	for index, game := range owned {
@@ -160,7 +172,9 @@ func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
 // ReplaceOwnedGames updates the live catalogue's credential-derived state.
 // It does not persist: CatSettingsFlow owns the matching cache transaction.
 func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame) {
+	controller.ownedMu.Lock()
 	controller.ownedGeneration.Add(1)
+	controller.ownedMu.Unlock()
 	ownedURLs := make(map[string]bool, len(owned))
 	for _, game := range owned {
 		ownedURLs[game.URL] = true

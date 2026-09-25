@@ -32,6 +32,7 @@ type Upload struct {
 	URL         string // resolver or CDN URL
 	UploadID    string // itch.io upload ID (from data-upload_id)
 	NeedsFormat bool   // true if extension is unknown and needs a manual format choice
+	Size        int64  // bytes; set for uploads listed through the API, 0 when unknown
 }
 
 var (

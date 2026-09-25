@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -223,12 +224,21 @@ func newHTTPClient(version string) *http.Client {
 
 type Client struct {
 	http   *http.Client
-	base   string // itch.io/api/1/... base URL
-	butler string // api.itch.io base URL (butler-style endpoints)
+	base   string // itch.io web base URL (pages, feeds, free downloads)
+	butler string // api.itch.io base URL (API v2, bearer-authenticated)
 
 	// Background API key validation state (atomic, written once per session).
 	apiKeyStatus   int32 // stores APIKeyStatus constants
 	apiKeyChecking int32 // 0 = not started, 1 = started (CAS gate)
+
+	// keyGeneration changes whenever the API key is replaced or removed, so
+	// account-derived results computed under an older key are discarded.
+	keyGeneration atomic.Uint64
+	// purchaseCounts maps purchase ID to the number of distinct games it
+	// grants, from the last complete owned-library scan under the current
+	// key. nil until such a scan; never persisted.
+	ownedMu        sync.Mutex
+	purchaseCounts map[int64]int
 }
 
 func NewClient() *Client {
@@ -246,12 +256,10 @@ func NewClientWithVersion(version string) *Client {
 	}
 }
 
+// NewClientWithBase is used in tests. The API base is the same server, so a
+// test client can never reach the real api.itch.io.
 func NewClientWithBase(base string) *Client {
-	return &Client{
-		http:   newHTTPClient("dev"),
-		base:   base,
-		butler: apiItchIO,
-	}
+	return NewClientWithBaseAndButler(base, base)
 }
 
 // NewClientWithBaseAndButler is used in tests to override both base URLs.

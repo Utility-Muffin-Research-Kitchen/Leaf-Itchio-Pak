@@ -1,6 +1,7 @@
 package itchio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,7 +37,13 @@ func (c *Client) MarkAPIKeyCheckStarted() bool {
 
 // ResetAPIKeyState clears cached validation state after a key is replaced or
 // removed. It never logs or retains the previous credential.
+// Validations and owned-library scans already running under the old key
+// discard their account-derived results instead of storing them.
 func (c *Client) ResetAPIKeyState() {
+	c.keyGeneration.Add(1)
+	c.ownedMu.Lock()
+	c.purchaseCounts = nil
+	c.ownedMu.Unlock()
 	atomic.StoreInt32(&c.apiKeyStatus, int32(APIKeyStatusUnknown))
 	atomic.StoreInt32(&c.apiKeyChecking, 0)
 }
@@ -85,11 +92,15 @@ type OwnedGame struct {
 
 // ValidateAPIKey checks that apiKey is valid by fetching the caller's itch.io
 // profile, then pages through all owned-game keys and returns the account
-// username and the full owned-game list.
+// username and the full owned-game list. A complete scan also seeds the
+// per-purchase game counts FetchOwnedKeys uses to tell bundles apart, unless
+// the key was replaced while it ran.
 //
 // Each owned game title and public game ID are logged at DEBUG level.
 // Download key IDs are never logged.
 func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGame, err error) {
+	generation := c.keyGeneration.Load()
+
 	// Step 1: verify key and fetch username.
 	req, err := http.NewRequest("GET", c.butler+"/profile", nil)
 	if err != nil {
@@ -99,7 +110,7 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("fetch profile: %w", err)
+		return "", nil, safeRequestError("fetch profile", err)
 	}
 	defer resp.Body.Close()
 
@@ -127,64 +138,24 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 	// local/private identifier. Keep it in memory for callers but never log it.
 	logger.Info("validate: authenticated itch.io account")
 
-	// Step 2: page through all owned-game keys.
-	// Each entry carries a download key ID (never logged) and a public game object.
+	// Step 2: page through all owned-game keys. A failed page keeps the games
+	// found so far, as before, but only a complete scan seeds bundle sizes.
+	keys, complete, scanErr := c.scanOwnedKeys(context.Background(), apiKey, nil)
+	if scanErr != nil {
+		logger.Warn("validate: owned-keys scan stopped early: %v", scanErr)
+	}
 	seen := make(map[int64]bool)
-	for page := 1; page <= 20; page++ { // cap: 20 pages × 10 = 200 games
-		req, err := http.NewRequest("GET",
-			fmt.Sprintf("%s/profile/owned-keys?page=%d", c.butler, page), nil)
-		if err != nil {
-			logger.Warn("validate: build owned-keys request page %d: %v", page, err)
-			break
+	for _, key := range keys {
+		if seen[key.GameID] {
+			continue
 		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			logger.Warn("validate: owned-keys page %d: %v", page, err)
-			break
-		}
-
-		// itch.io returns {"owned_keys":{}} (object, not array) on the last page
-		// when there are no more entries. Use RawMessage to handle both cases.
-		var envelope struct {
-			OwnedKeys json.RawMessage `json:"owned_keys"`
-		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&envelope)
-		resp.Body.Close()
-		if decodeErr != nil {
-			logger.Warn("validate: decode owned-keys page %d: %v", page, decodeErr)
-			break
-		}
-
-		if len(envelope.OwnedKeys) == 0 || envelope.OwnedKeys[0] != '[' {
-			break // empty object or unexpected format — no more pages
-		}
-
-		var keyItems []struct {
-			Game struct {
-				ID    int64  `json:"id"`
-				Title string `json:"title"`
-				URL   string `json:"url"`
-			} `json:"game"`
-		}
-		if err := json.Unmarshal(envelope.OwnedKeys, &keyItems); err != nil {
-			logger.Warn("validate: unmarshal owned-keys page %d: %v", page, err)
-			break
-		}
-
-		if len(keyItems) == 0 {
-			break
-		}
-		for _, k := range keyItems {
-			if seen[k.Game.ID] {
-				continue
-			}
-			seen[k.Game.ID] = true
-			g := OwnedGame{GameID: k.Game.ID, Title: k.Game.Title, URL: k.Game.URL}
-			owned = append(owned, g)
-			logger.Debug("validate: owned game id=%d %q", g.GameID, g.Title)
-		}
+		seen[key.GameID] = true
+		g := OwnedGame{GameID: key.GameID, Title: key.GameTitle, URL: key.GameURL}
+		owned = append(owned, g)
+		logger.Debug("validate: owned game id=%d %q", g.GameID, g.Title)
+	}
+	if scanErr == nil && complete {
+		c.storePurchaseCounts(generation, purchaseGameCounts(keys))
 	}
 
 	logger.Info("validate: %d owned game(s) found", len(owned))

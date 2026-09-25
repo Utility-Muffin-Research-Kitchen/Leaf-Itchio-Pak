@@ -188,27 +188,31 @@ header is used to track progress.
 
 ## Paid game download (API key path)
 
-**Source:** `download_auth.go` — `FetchAuthUploads` + `DownloadAuthUpload`
+**Source:** `download_auth.go`, `install_session.go`
 
-For paid games the user already owns, the pak uses a combination of the
-butler-style `api.itch.io` endpoint (to retrieve the buyer's download key)
-and the public v1 API (to list uploads and resolve CDN URLs). This path is
-taken automatically when all three conditions are true:
+For paid games the user already owns, every request goes to itch.io API v2 on
+`api.itch.io` with `Authorization: Bearer {API_KEY}`. The key is never placed
+in a URL, and the header only reaches `api.itch.io`: download redirects are
+read rather than followed, and the CDN request is separate. This path is taken
+automatically when all three conditions are true:
 
 - `game.IsFree == false`
 - `cfg.APIKey != ""`
 - `detail.GameID != ""`
 
-### Step 1 — Page through all owned keys and find the matching one
+The v1 endpoints (`itch.io/api/1/{API_KEY}/...`) are no longer used. There is
+no automatic fallback to them: a v2 failure is reported, and rolling back
+means reinstalling the previous package.
+
+### Step 1 — Find the purchase keys for the game
 
 ```
-GET https://api.itch.io/profile/owned-keys?page={N}
-Authorization: Bearer {API_KEY}
+GET https://api.itch.io/profile/owned-keys?page={N}&game_ids={GAME_ID}
 ```
 
-The endpoint returns up to 50 keys per page. The code pages through all pages
-until it finds the target `game_id` or exhausts the list. Filtering is done
-client-side; passing `game_id` as a query parameter has no effect server-side.
+`game_ids` (comma-separated, not `game_id`) asks itch.io to return only that
+game's keys. The answer is filtered here as well, so it works whether or not
+the server applies the filter.
 
 Normal page response (JSON):
 
@@ -224,66 +228,77 @@ Normal page response (JSON):
 }
 ```
 
-**Last-page quirk:** when there are no more keys, `owned_keys` is an **empty
-object** (`{}`), not an empty array (`[]`):
+**Empty-collection quirk:** when there are no more keys, `owned_keys` is an
+**empty object** (`{}`) or absent, not an empty array. The code keeps the raw
+value and only unmarshals it when it is an array, so earlier pages survive.
 
-```json
-{ "page": 2, "per_page": 50, "owned_keys": {} }
-```
+The `id` field is the buyer's **download key ID**, tied to one purchase and
+distinct from the API key. A game can have several: one per individual
+purchase and one per bundle that includes it.
 
-The code uses `json.RawMessage` to capture the raw `owned_keys` value and
-checks that the first byte is `[` before attempting to unmarshal it as a slice.
-Decoding `{}` directly into a `[]struct` field causes Go's JSON decoder to
-return an `UnmarshalTypeError`, which would discard all keys collected from
-earlier pages.
-
-The `id` field is the buyer's **download key ID** — a numeric identifier tied
-to their purchase. This is distinct from the API key. It is required to
-authenticate upload listing and CDN URL resolution in subsequent steps.
-
-If no matching `game_id` is found across all pages, the game is not owned by
-this user and an error is surfaced.
-
-**Why `api.itch.io` and not `itch.io/api/1/KEY/game/GAME_ID/download_keys`?**
-The v1 `download_keys` endpoint is a **creator** endpoint — it lists keys a
-game developer has issued to others. It returns `{"errors":["invalid game_id"]}`
-for any game the API key owner did not create. The butler-style
-`api.itch.io/profile/owned-keys` is the buyer-side equivalent.
+**Bundle or individual purchase.** Telling them apart needs the number of
+distinct games per `purchase_id`, which a filtered answer cannot show. The
+startup key validation scans the whole library (no `game_ids`) and caches
+those counts in memory. A filtered answer uses them; on a miss it scans the
+library once more. The counts belong to the current key: replacing or removing
+it clears them, and a scan that started under the old key discards its result.
+Nothing account-derived is persisted except the owned-game URL cache, which is
+deleted when the key changes.
 
 ### Step 2 — List uploads
 
 ```
-GET https://itch.io/api/1/{API_KEY}/game/{GAME_ID}/uploads?download_key_id={KEY_ID}
+GET https://api.itch.io/games/{GAME_ID}/uploads?download_key_id={KEY_ID}
 ```
 
-Returns all uploads for the game, authenticated by the download key. Uploads
+`download_key_id` is omitted for a free or name-your-own-price game. Uploads
 are classified through the same maintained format/archive rules as anonymous
-downloads. The upload ID (`id` field) is stored on each `Upload` struct alongside
-the download key ID.
+downloads, and `size` is kept on each `Upload`. `uploads` may be an array, `{}`,
+`null`, or absent; `errors` is reported generically. Unstable fields such as
+`traits` are not decoded.
 
-### Step 3 — Resolve CDN URL
+### Step 3 — Begin an install
 
 ```
-GET https://itch.io/api/1/{API_KEY}/upload/{UPLOAD_ID}/download?download_key_id={KEY_ID}
+POST https://api.itch.io/games/{GAME_ID}/download-sessions
+download_key_id={KEY_ID}
 ```
 
-Response (JSON):
+Returns `{"uuid": "..."}`. One `InstallSession` covers one install: it
+creates the server session lazily on the first resolution and every later
+resolution of that install reuses it, so itch.io counts probes, archive
+inspection, refreshed URLs, and all files as one download. The POST is never
+replayed. If creation fails the install continues without grouping; if the
+operation is cancelled, it stops. The UUID is never logged or saved.
 
-```json
-{ "url": "https://itchio-mirror.{hash}.r2.cloudflarestorage.com/upload2/..." }
+The download flows do not hand a session through yet: `ResolveAuthURL` and
+`DownloadAuthUploadContext` resolve through v2 without one, so those requests
+are not grouped until each flow carries one session per install.
+
+### Step 4 — Resolve CDN URL
+
 ```
+GET https://api.itch.io/uploads/{UPLOAD_ID}/download?download_key_id={KEY_ID}&uuid={UUID}
+```
+
+The answer is a redirect to the signed CDN URL (some deployments answer
+`{"url": ...}` instead). The redirect is not followed: the location must be
+an absolute HTTPS URL without credentials, and the caller gets it first for
+archive inspection or the magic-byte probe. Missing locations, rejected
+access, and malformed bodies fail with sanitized errors.
 
 The signed CDN URL expires quickly (60 seconds). It is resolved immediately
 before streaming, not cached.
 
-### Step 4 — Stream file
+### Step 5 — Stream file
 
 ```
 GET {CDN_URL}
 ```
 
 The file is streamed directly to the destination path on disk, identical to
-the free download flow. The `Content-Length` header drives the progress bar.
+the free download flow, with no `Authorization` header. The `Content-Length`
+header drives the progress bar.
 
 ---
 
