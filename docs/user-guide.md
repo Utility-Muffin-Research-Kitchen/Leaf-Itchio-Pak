@@ -59,6 +59,11 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
+With **ROM Selection** on `auto`, the app still asks when a game offers more
+than one build for the same system, such as an update and the original jam
+release. Builds for different systems, and a PlayStation game's CUE/BIN tracks
+or discs, download together.
+
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
 writing outside the sealed plan. Partial transfer files use the target directory
@@ -119,6 +124,9 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+A new version that replaces a file you downloaded shows as an update. A game is
+only marked removed when its page is gone or offers no downloads; a network
+error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
@@ -161,7 +169,11 @@ New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
-names when a rename could break references. Every committed ROM/artwork change
+names when a rename could break references. When two files from one download
+or archive would get the same title name, they keep their original names so
+neither replaces the other. FAT32 ignores letter case, so two names that
+differ only in case count as the same file: a download stops before writing
+anything, and an archive skips the later file and reports it. Every committed ROM/artwork change
 requests one Jawaka rescan.
 
 ## Data and logs

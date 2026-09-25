@@ -435,11 +435,10 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 	}
 }
 
-func TestUpdateService_MarksRemovedWhenDownloadedFileVanishesFromStore(t *testing.T) {
-	// Upstream now only has game-v2.gb — the originally downloaded game.gb is gone.
-	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
-	defer srv.Close()
-
+// runFreeGameCheck seeds one downloaded free game and runs a full update
+// check against srv. prior, when set, seeds an earlier check's upload list.
+func runFreeGameCheck(t *testing.T, srv *httptest.Server, prior []string, removed bool) (*inventory.Inventory, string) {
+	t.Helper()
 	dir := t.TempDir()
 	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
@@ -450,20 +449,75 @@ func TestUpdateService_MarksRemovedWhenDownloadedFileVanishesFromStore(t *testin
 
 	invPath := filepath.Join(dir, "inventory.json")
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
-	inv.Add(srv.URL+"/game",
+	gameURL := srv.URL + "/game"
+	inv.Add(gameURL,
 		inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
 		inventory.DownloadedFile{Filename: "game.gb", DestPath: romPath, DownloadedAt: time.Now()})
+	if prior != nil {
+		files := make([]inventory.UpstreamFile, 0, len(prior))
+		for index, name := range prior {
+			files = append(files, inventory.UpstreamFile{Filename: name, UploadID: fmt.Sprint(100 + index), SeenAt: time.Now().Add(-time.Hour)})
+		}
+		inv.SetUpstreamFiles(gameURL, files)
+	}
+	if removed {
+		inv.MarkRemoved(gameURL)
+	}
 	inv.Save(invPath)
 
-	client := itchio.NewClientWithBase(srv.URL)
 	done := make(chan struct{})
-	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase(srv.URL), nil)
 	svc.Start(func() { close(done) })
 	<-done
 	svc.Stop()
+	return inv, gameURL
+}
 
-	if !inv.IsRemoved(srv.URL + "/game") {
-		t.Error("IsRemoved: want true when downloaded file is no longer available upstream")
+// A new version replacing the downloaded upload is an update, not a removal
+// (upstream 79539ff).
+func TestUpdateService_SupersededUploadIsAnUpdateNotARemoval(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, false)
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: a superseded upload marked the game removed")
+	}
+	if !inv.HasPendingUpdates(gameURL) {
+		t.Error("HasPendingUpdates: the replacement upload was not offered as an update")
+	}
+}
+
+func TestUpdateService_SupersededUploadClearsAStaleRemoval(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, true)
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: a reachable game offering downloads kept a stale removal")
+	}
+}
+
+func TestUpdateService_ReachablePageWithoutDownloadsIsARemoval(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, nil)
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, false)
+	if !inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: want true when the game page offers no downloads")
+	}
+}
+
+func TestUpdateService_TransientFailuresPreserveRemovalState(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
+		for _, removed := range []bool{false, true} {
+			srv := freeGameServer(t, status, nil)
+			inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, removed)
+			srv.Close()
+			if inv.IsRemoved(gameURL) != removed {
+				t.Errorf("HTTP %d: IsRemoved = %v, want the prior %v", status, !removed, removed)
+			}
+		}
 	}
 }
 

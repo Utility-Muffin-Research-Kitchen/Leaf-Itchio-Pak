@@ -46,11 +46,17 @@ type ArchiveDownloadWorker struct {
 	inv     *inventory.Inventory
 	invPath string
 
-	state          zipDLState
-	downloaded     int64
-	total          int64
-	extracted      []string
-	skipped        []string
+	state      zipDLState
+	downloaded int64
+	total      int64
+	extracted  []string
+	skipped    []string
+	// names holds every path this extraction has written, so a later entry
+	// (possibly re-classified by magic bytes) never replaces an earlier one.
+	names *roms.NameReservations
+	// keepNames holds the ROM destinations whose unified names would meet
+	// another file of this archive; they keep their original names.
+	keepNames      *roms.NameReservations
 	musicFailed    bool
 	err            error
 	inhibitBlocked atomic.Bool
@@ -90,6 +96,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		logger.Warn("zip-download: continuing without Jawaka suspend protection by user request")
 	}
 	s.inhibitBlocked.Store(false)
+	s.names, s.keepNames = &roms.NameReservations{}, nil
 
 	tempDir, err := s.plan.preflight(s.cfg, s.plan.Manifest)
 	if err != nil {
@@ -240,6 +247,12 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 
+	entries := make([]archiveEntry, 0, len(r.File))
+	for _, f := range r.File {
+		entries = append(entries, archiveEntry{name: f.Name, isDir: f.FileInfo().IsDir(), open: f.Open})
+	}
+	s.planROMNames(entries)
+
 	now := time.Now()
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -329,6 +342,12 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		s.storeState(zipDLDone)
 		return
 	}
+
+	entries := make([]archiveEntry, 0, len(r.File))
+	for _, f := range r.File {
+		entries = append(entries, archiveEntry{name: f.Name, isDir: f.FileInfo().IsDir(), open: f.Open})
+	}
+	s.planROMNames(entries)
 
 	now := time.Now()
 	for _, f := range r.File {
@@ -466,6 +485,11 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		}
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
+		if !s.names.Claim(dest) {
+			logger.Warn("7z-download: pico8 %s: another file from this archive is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			s.skipped = append(s.skipped, base)
 			continue
@@ -479,16 +503,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		finalDest := dest
 		unifiedName := false
 		if ext == ".p8.png" && unifyP8PNG {
-			if newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true); didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("7z-download: pico8 unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download: pico8")
 		}
 
 		logger.Info("7z-download: pico8 extracted %s → %s", base, finalDest)
@@ -507,9 +522,35 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 	}
 }
 
-// extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
-// Used by run7z so the same inventory/naming logic applies to 7z entries.
-func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
+// unifyArchiveROM renames an extracted file to the game title unless that
+// name belongs to another file of this archive, in which case the file keeps
+// its original name. It returns the final path and whether that path is the
+// unified name. Every rename site shares it (upstream c346eb0).
+func (s *ArchiveDownloadWorker) unifyArchiveROM(dest, logPrefix string) (string, bool) {
+	if s.keepNames != nil && s.keepNames.Holds(dest) {
+		logger.Info("%s: keeping %q; its unified name belongs to another file of this archive", logPrefix, filepath.Base(dest))
+		return dest, false
+	}
+	newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true)
+	if !didRename {
+		return dest, true
+	}
+	if s.names.Holds(newDest) {
+		logger.Info("%s: keeping %q; %q belongs to another file of this archive", logPrefix, filepath.Base(dest), filepath.Base(newDest))
+		return dest, false
+	}
+	if err := os.Rename(dest, newDest); err != nil {
+		logger.Warn("%s: unified rename: %v", logPrefix, err)
+		return dest, false
+	}
+	s.names.Release(dest)
+	s.names.Claim(newDest)
+	return newDest, true
+}
+
+// romDest is where an archive ROM entry with baseName (after magic-byte
+// classification) is extracted before any unified rename.
+func (s *ArchiveDownloadWorker) romDest(baseName string) string {
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
@@ -520,7 +561,51 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := archiveOutputPath(destDir, safeName)
+	return archiveOutputPath(destDir, safeName)
+}
+
+// archiveEntry is the part of a ZIP or 7z entry the naming pre-pass reads.
+type archiveEntry struct {
+	name  string
+	isDir bool
+	open  func() (io.ReadCloser, error)
+}
+
+// planROMNames classifies every ROM entry this extraction will write, the
+// same way extraction does (including magic bytes), and records which of
+// them must keep their original names because unified naming would give two
+// files of the archive one name. Deciding up front keeps both files whatever
+// order the entries come in.
+func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
+	var dests []string
+	for _, entry := range entries {
+		name := strings.ReplaceAll(entry.name, "\\", "/")
+		baseName := filepath.Base(name)
+		if entry.isDir || roms.IsInMacOSMetaDir(entry.name) || strings.HasPrefix(baseName, "._") {
+			continue
+		}
+		kind, baseName := classifyWithMagic(baseName, entry.open)
+		if (kind == roms.KindROM || kind == roms.KindROMSupport) && s.shouldExtractROM(name) {
+			dests = append(dests, s.romDest(baseName))
+		}
+	}
+	s.keepNames = &roms.NameReservations{}
+	if !s.cfg.UnifiedNaming {
+		return
+	}
+	for index, keep := range roms.UnifiedCollisions(dests, s.game.Title) {
+		if keep {
+			s.keepNames.Claim(dests[index])
+		}
+	}
+}
+
+// extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
+// Used by run7z so the same inventory/naming logic applies to 7z entries.
+func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
+	ext := strings.ToLower(roms.ROMExt(baseName))
+	dest := s.romDest(baseName)
+	destDir := filepath.Dir(dest)
 
 	// Skip when an identical ROM already exists.
 	if existing := s.findIdenticalFromOpener(open, size, ext); existing != "" {
@@ -529,6 +614,9 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		return existing, nil
 	}
 
+	if !s.names.Claim(dest) {
+		return "", fmt.Errorf("another file from this archive is already saved as %s", filepath.Base(dest))
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdirall %s: %w", destDir, err)
 	}
@@ -542,17 +630,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
-			newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true)
-			if didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("7z-download: unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download")
 		}
 	}
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
@@ -702,16 +780,8 @@ func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
 
 func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now time.Time) (string, error) {
 	ext := strings.ToLower(roms.ROMExt(baseName))
-	destDir := s.plan.ROMDirs[ext]
-	if destDir == "" {
-		destDir = roms.DestinationDir(ext)
-	}
-	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
-	}
-	dest := archiveOutputPath(destDir, safeName)
+	dest := s.romDest(baseName)
+	destDir := filepath.Dir(dest)
 
 	// Skip extraction when the game already has an identical ROM on disk.
 	if existing := s.findIdenticalROMInInventory(f, ext); existing != "" {
@@ -720,6 +790,9 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 		return existing, nil
 	}
 
+	if !s.names.Claim(dest) {
+		return "", fmt.Errorf("another file from this archive is already saved as %s", filepath.Base(dest))
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdirall %s: %w", destDir, err)
 	}
@@ -733,17 +806,7 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
-			newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true)
-			if didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("zip-download: unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "zip-download")
 		}
 	}
 
@@ -861,6 +924,11 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
 
+		if !s.names.Claim(dest) {
+			logger.Warn("zip-download: pico8 %s: another file from this archive is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			logger.Warn("zip-download: pico8 mkdir %s: %v", filepath.Dir(dest), err)
 			s.skipped = append(s.skipped, base)
@@ -875,16 +943,7 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		finalDest := dest
 		unifiedName := false
 		if ext == ".p8.png" && unifyP8PNG {
-			if newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true); didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("zip-download: pico8 unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "zip-download: pico8")
 		}
 
 		logger.Info("zip-download: pico8 extracted %s → %s", base, finalDest)
