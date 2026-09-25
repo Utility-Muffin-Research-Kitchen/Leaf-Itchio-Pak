@@ -11,8 +11,8 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || 
 WORKSPACE_ROOT=${WORKSPACE_ROOT:-$(CDPATH= cd -- "$REPO_DIR/.." && pwd)}
 CATASTROPHE_DIR=${CATASTROPHE_DIR:-$WORKSPACE_ROOT/Catastrophe}
 MLP1_TOOLCHAIN_IMAGE=${MLP1_TOOLCHAIN_IMAGE:-ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local}
-GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.22.12-bookworm}
-MLP1_BUILD_IMAGE=${MLP1_BUILD_IMAGE:-leaf-itchio-pak-mlp1-go1.22.12}
+GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.1-bookworm}
+MLP1_BUILD_IMAGE=${MLP1_BUILD_IMAGE:-leaf-itchio-pak-mlp1-go1.27.1}
 
 ldflags() {
     printf '%s' "-s -w -buildid= -X main.version=$APP_VERSION -X main.gitCommit=$GIT_COMMIT -X github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui.appVersion=$APP_VERSION"

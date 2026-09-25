@@ -10,14 +10,15 @@ Leaf-Itchio-Pak is a hard fork of
 | Local fork-point tag | `upstream-v1.0.19` |
 | Fork established | 2026-07-09 |
 | Local repository | `Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak` |
-| Last upstream review | 2026-07-09 |
-| Next review | Before `v0.1.0`, or 2026-10-09 if earlier |
+| Last upstream review | 2026-09-25, through `v1.0.25` (`123e01c`) |
+| Next review | 2026-12-25 |
 
 ## Review record
 
 | Review | Accepted | Rejected or deferred | Rationale |
 |---|---|---|---|
 | Initial fork | All history through `42171a5` | None | Establish the exact `v1.0.19` behavioral baseline before Leaf changes |
+| `v1.0.25` toolchain (2026-09-25) | Adapted `32b86c5`: Go 1.27.1 for Leaf's own Makefile, build script, MLP1 Dockerfile, CI, and release lock; `go.mod` raised to `go 1.27.0` | Upstream toolchain images and build matrix | Go 1.22 no longer receives security fixes. Unlike upstream, the `go` line moves too, so Go 1.22 GODEBUG defaults (TLS/x509) do not survive the compiler bump |
 
 Future reviews append a row here. Do not rewrite old decisions.
 
