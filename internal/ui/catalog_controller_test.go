@@ -133,3 +133,29 @@ func TestBackgroundRefreshKeepsCommittedCacheOnError(t *testing.T) {
 	default:
 	}
 }
+
+func TestCatalogControllerSearchesUncachedPreviewLocally(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "Cat Quest", Author: "someone", URL: "https://example.invalid/cat"},
+		{Title: "Dog Run", Author: "else", URL: "https://example.invalid/dog"},
+	}}
+	controller.consumeUpdates()
+	if len(controller.viewGames) != 2 {
+		t.Fatalf("preview view = %d games, want 2", len(controller.viewGames))
+	}
+
+	controller.searchQuery = "dog"
+	controller.rebuildView()
+	if len(controller.viewGames) != 1 || controller.viewGames[0].Title != "Dog Run" {
+		t.Fatalf("searched preview = %#v, want Dog Run only", controller.viewGames)
+	}
+	controller.searchQuery = ""
+	controller.rebuildView()
+	if len(controller.viewGames) != 2 {
+		t.Fatalf("cleared search view = %d games, want the full preview page", len(controller.viewGames))
+	}
+}

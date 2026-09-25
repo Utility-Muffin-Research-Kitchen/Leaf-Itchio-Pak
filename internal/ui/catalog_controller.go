@@ -42,10 +42,11 @@ type CatalogController struct {
 	err          error
 	pageUpdateCh chan pageResult
 
-	cachedGames []itchio.Game
-	cacheReady  bool
-	cachePath   string
-	viewGames   []itchio.Game
+	cachedGames  []itchio.Game
+	cacheReady   bool
+	cachePath    string
+	previewGames []itchio.Game // live feed page shown until the cache is ready
+	viewGames    []itchio.Game
 
 	inv           *inventory.Inventory
 	inventoryPath string
@@ -130,7 +131,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		} else {
 			logger.Debug("cache: file exists but contains no games, using live feed")
 		}
-		go controller.loadPage(1, "")
+		go controller.loadPage(1)
 		go controller.buildCache()
 	}
 	return controller
@@ -173,10 +174,10 @@ func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame)
 	controller.wakeUI()
 }
 
-func (controller *CatalogController) loadPage(page int, query string) {
+func (controller *CatalogController) loadPage(page int) {
 	controller.loading.Store(true)
-	logger.Debug("feed: loading page %d query=%q", page, query)
-	games, err := controller.client.FetchGames(page, query)
+	logger.Debug("feed: loading page %d", page)
+	games, err := controller.client.FetchGames(page)
 	if err != nil {
 		logger.Error("feed: page %d error: %v", page, err)
 	} else {
@@ -223,8 +224,9 @@ func (controller *CatalogController) consumeUpdates() {
 	select {
 	case result := <-controller.pageUpdateCh:
 		controller.loading.Store(false)
-		controller.viewGames = result.games
+		controller.previewGames = result.games
 		controller.err = result.err
+		controller.rebuildView()
 		controller.cursor = 0
 	default:
 	}
@@ -302,7 +304,7 @@ func (controller *CatalogController) DismissNotice(index int) {
 	controller.rebuildView()
 }
 
-func (controller *CatalogController) RetryCatLoad() { go controller.loadPage(1, "") }
+func (controller *CatalogController) RetryCatLoad() { go controller.loadPage(1) }
 
 func (controller *CatalogController) ApplyCatCache(games []itchio.Game) {
 	controller.cacheFetched.Store(time.Now().Unix())
@@ -424,7 +426,10 @@ func (controller *CatalogController) rebuildView() {
 		}
 	}
 	filtered := controller.cachedGames
-	if controller.platformFilter != "" {
+	if !controller.cacheReady {
+		// The preview page is one untagged feed, so only search and sort apply.
+		filtered = controller.previewGames
+	} else if controller.platformFilter != "" {
 		filtered = applyPlatformFilter(filtered, controller.platformFilter)
 	}
 	if controller.searchQuery != "" {
