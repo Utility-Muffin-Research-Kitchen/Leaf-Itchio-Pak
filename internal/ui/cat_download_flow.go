@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -105,17 +106,62 @@ func (flow *CatDownloadFlow) discover() {
 			} else {
 				update.err = fmt.Errorf("game is not owned by the configured itch.io account")
 			}
+		} else if flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
+			update = flow.fetchFree()
 		} else {
-			uploads, err := flow.client.FetchUploads(flow.game.URL)
-			update.kind, update.err = catDownloadUpdateUploads, err
-			for _, upload := range uploads {
-				update.uploads = append(update.uploads, roms.Upload{
-					Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-				})
-			}
+			update = flow.fetchWeb()
 		}
 		flow.publish(update)
 	}()
+}
+
+// fetchWeb lists uploads through the anonymous web download flow.
+func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
+	uploads, err := flow.client.FetchUploads(flow.game.URL)
+	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	for _, upload := range uploads {
+		update.uploads = append(update.uploads, roms.Upload{
+			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
+		})
+	}
+	return update
+}
+
+// fetchFree lists a free or name-your-own-price game through the API when a
+// key is set, which skips the web download handshake and its download_url
+// POST. The listing starts one install with no purchase ID.
+//
+// It falls back to the web flow at most once, when the API fails or lists
+// nothing, so the two endpoints are never tried in a loop. A rate limit or
+// cancellation is final: trying the other endpoint would ignore it. When the
+// API refused access and the web flow fails too, the access error is the one
+// reported.
+func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
+	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.APIKey, flow.detail.GameID, "")
+	switch {
+	case err == nil && len(uploads) > 0:
+		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
+		update := catDownloadUpdate{kind: catDownloadUpdateUploads}
+		install := roms.NewInstallSession(flow.detail.GameID, "")
+		for _, upload := range uploads {
+			update.uploads = append(update.uploads, roms.Upload{
+				Filename: upload.Filename, UploadID: upload.UploadID,
+				NeedsFormat: upload.NeedsFormat, Install: install,
+			})
+		}
+		return update
+	case errors.Is(err, itchio.ErrRateLimited) || errors.Is(err, context.Canceled):
+		return catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	case err != nil:
+		logger.Warn("cat download: free game API listing failed, using the web flow: %v", err)
+	default:
+		logger.Info("cat download: API lists no uploads for free game_id=%s, using the web flow", flow.detail.GameID)
+	}
+	update := flow.fetchWeb()
+	if update.err != nil && errors.Is(err, itchio.ErrNoAccess) {
+		update.err = err
+	}
+	return update
 }
 
 // fetchForKey lists the uploads a purchase grants. Each listing starts a new
