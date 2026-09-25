@@ -192,7 +192,7 @@ func decode7z(t *testing.T, fixture string) []byte {
 
 // runArchive extracts data (a .zip or .7z named filename) through the real
 // worker. pico8 selects the path-preserving Pico-8 extraction.
-func runArchive(t *testing.T, filename string, data []byte, cfg *settings.Config, pico8 bool) (*ArchiveDownloadWorker, string) {
+func runArchive(t *testing.T, filename string, data []byte, cfg *settings.Config, pico8 bool, configure ...func(plan *ZIPPlan, primary string)) (*ArchiveDownloadWorker, string) {
 	t.Helper()
 	primary, _ := transactionPaths(t)
 	srv := freeFileServer(t, map[string][]byte{"9": data})
@@ -217,6 +217,9 @@ func runArchive(t *testing.T, filename string, data []byte, cfg *settings.Config
 	}
 	if pico8 {
 		plan.Pico8GameDir = filepath.Join(primary, "Roms", "PICO8", "Leafbound") + string(filepath.Separator)
+	}
+	for _, apply := range configure {
+		apply(&plan, primary)
 	}
 	worker := NewArchiveDownloadWorker(itchio.NewClientWithBase(srv.URL), cfg, collisionGame, &itchio.GameDetail{}, plan, inv, invPath)
 	waitForWorker(t, func() bool { state := worker.loadState(); return state == zipDLDone || state == zipDLError })
@@ -283,6 +286,83 @@ func TestArchiveSkipsAnEntryWhoseOriginalNameIsAlsoTaken(t *testing.T) {
 	}
 	if len(worker.skipped) != 1 || len(worker.extracted) != 1 {
 		t.Fatalf("extracted %v skipped %v, want one of each", worker.extracted, worker.skipped)
+	}
+}
+
+// Music fixtures written by libarchive (bsdtar 3.7.4) from tar streams:
+// folders holds Soundtrack/cd1/01 Theme.ogg and Soundtrack/cd2/01 Theme.ogg;
+// caseOnly holds Soundtrack/Theme.ogg (FIRST) and Soundtrack/theme.ogg.
+const (
+	musicFolders7z  = "N3q8ryccAANuPe61lwAAAAAAAAAhAAAAAAAAACt5JycAIZECIUoi6IpeKwPOP21IPB///xB0AAAAAIEzB64Pz4CuDA/r6p4BDWIDjdNMQj8OeVdVR7yHOmV6Y0mMnUnmPOagPWa+qKF4BtlCogzr0slWp58fkB8fdFFmu4Ew4wXzqcTS+FBtAEchJBWib08dK8KQ89DZA8CNSE9v/l2nix59RuUvHfu4rwYkxK0+x0oHZ//+FweAFwYYAQl/AAcLAQABIwMBAQVdAACAAAyAwgoBFloAJAAA"
+	musicCaseOnly7z = "N3q8ryccAAM0/+SxjAAAAAAAAAAhAAAAAAAAAPfYmGYAIxJGitO8BlFA2/nZcAdE//6bQAAAAIEzB64Pz0tvjAfIQ4CDgVv/rHbPeD8OahwBsRDpkth/XU5hU1AGKndPgpJ+grT8LZPeXoqZNu5CdtjLH9v6nXmBvbPn0vhEcTivzZAeSi4Ty5fT/2qpJFoJdF2V8uMP/mYQ7SitTepA0zgNhSlaZ///amIAABcGFQEJdwAHCwEAASMDAQEFXQAAgAAMgKYKAaIjWZgAAA=="
+)
+
+// musicOnly extracts only the soundtrack into Music/Leafbound.
+func musicOnly(plan *ZIPPlan, primary string) {
+	plan.DownloadROMs = false
+	plan.DownloadMusic = true
+	plan.MusicDir = filepath.Join(primary, "Music", "Leafbound") + string(filepath.Separator)
+}
+
+func musicDir(worker *ArchiveDownloadWorker) string { return filepath.Clean(worker.plan.MusicDir) }
+
+// Tracks with one name in different archive folders land in one flat Music
+// folder; both must survive under distinguishable names.
+func TestArchiveMusicKeepsSameNamedTracksFromDifferentFolders(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"leafbound.zip": zipOf(t, map[string][]byte{
+			"Soundtrack/cd1/01 Theme.ogg": []byte("CD1-THEME"), "Soundtrack/cd2/01 Theme.ogg": []byte("CD2-THEME"),
+		}),
+		"leafbound.7z": decode7z(t, musicFolders7z),
+	} {
+		worker, _ := runArchive(t, name, data, &settings.Config{UnifiedNaming: true}, false, musicOnly)
+		if snapshot := worker.CatSnapshot(); snapshot.State != appui.DownloadProgressDone {
+			t.Fatalf("%s: archive = %+v", name, snapshot)
+		}
+		got := filesIn(t, musicDir(worker))
+		if len(got) != 2 || got["cd1 - 01 Theme.ogg"] != "CD1-THEME" || got["cd2 - 01 Theme.ogg"] != "CD2-THEME" {
+			t.Fatalf("%s: Music folder = %v, want both tracks named by their folders", name, got)
+		}
+		entry, _ := worker.inv.Lookup(collisionGame.URL)
+		recorded := map[string]bool{}
+		for _, file := range entry.Files {
+			if file.FileType != inventory.FileTypeMusic {
+				t.Fatalf("%s: %s recorded as %q, want music", name, file.Filename, file.FileType)
+			}
+			recorded[file.DestPath] = true
+		}
+		if len(recorded) != 2 {
+			t.Fatalf("%s: inventory = %+v, want both tracks", name, entry.Files)
+		}
+	}
+}
+
+// A single track keeps its plain name; only colliding tracks gain a prefix.
+func TestArchiveMusicKeepsPlainNamesWithoutACollision(t *testing.T) {
+	data := zipOf(t, map[string][]byte{"Soundtrack/cd1/01 Theme.ogg": []byte("A"), "Soundtrack/cd2/02 Boss.ogg": []byte("B")})
+	worker, _ := runArchive(t, "leafbound.zip", data, &settings.Config{}, false, musicOnly)
+	if got := filesIn(t, musicDir(worker)); len(got) != 2 || got["01 Theme.ogg"] != "A" || got["02 Boss.ogg"] != "B" {
+		t.Fatalf("Music folder = %v", got)
+	}
+}
+
+// Names that differ only by case are one file on FAT32 and have no folder to
+// tell them apart: the later track is skipped, never written over the first.
+func TestArchiveMusicSkipsACaseOnlyDuplicate(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"leafbound.zip": zipOf(t, map[string][]byte{"Soundtrack/Theme.ogg": []byte("FIRST"), "Soundtrack/theme.ogg": []byte("SECOND")}),
+		"leafbound.7z":  decode7z(t, musicCaseOnly7z),
+	} {
+		worker, _ := runArchive(t, name, data, &settings.Config{}, false, musicOnly)
+		got := filesIn(t, musicDir(worker))
+		if len(worker.extracted) != 1 || len(worker.skipped) != 1 || len(got) != 1 {
+			t.Fatalf("%s: extracted %v skipped %v folder %v, want one kept and one skipped", name, worker.extracted, worker.skipped, got)
+		}
+		for file, data := range got {
+			if data != "FIRST" {
+				t.Fatalf("%s: %s = %q, want the first track intact", name, file, data)
+			}
+		}
 	}
 }
 
