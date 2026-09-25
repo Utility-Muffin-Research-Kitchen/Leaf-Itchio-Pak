@@ -152,6 +152,12 @@ Music support is disabled by default. Enable `auto` or `ask` to include common
 audio files from an upload/archive. Mixed archives may install both ROM and music
 content in one transaction summary.
 
+A game's tracks go into one Music folder. When an archive holds tracks with the
+same name in different folders, such as `cd1/01 Theme.ogg` and
+`cd2/01 Theme.ogg`, each keeps its folder in the name (`cd1 - 01 Theme.ogg`)
+so both are installed. Tracks whose names differ only in letter case are the
+same file on your SD card, so the later one is skipped and noted in the log.
+
 Disco Boy is optional. This pak neither installs nor launches it. Open or relaunch
 Disco Boy after installing music so its normal scan reads the selected Music
 root on either card.

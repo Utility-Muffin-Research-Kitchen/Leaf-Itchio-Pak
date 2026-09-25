@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -56,7 +57,10 @@ type ArchiveDownloadWorker struct {
 	names *roms.NameReservations
 	// keepNames holds the ROM destinations whose unified names would meet
 	// another file of this archive; they keep their original names.
-	keepNames      *roms.NameReservations
+	keepNames *roms.NameReservations
+	// musicNames maps an archive entry path to its music file name, set by
+	// planMusicNames so same-named tracks from different folders both survive.
+	musicNames     map[string]string
 	musicFailed    bool
 	err            error
 	inhibitBlocked atomic.Bool
@@ -252,6 +256,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		entries = append(entries, archiveEntry{name: f.Name, isDir: f.FileInfo().IsDir(), open: f.Open})
 	}
 	s.planROMNames(entries)
+	s.planMusicNames(entries)
 
 	now := time.Now()
 	for _, f := range r.File {
@@ -348,6 +353,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		entries = append(entries, archiveEntry{name: f.Name, isDir: f.FileInfo().IsDir(), open: f.Open})
 	}
 	s.planROMNames(entries)
+	s.planMusicNames(entries)
 
 	now := time.Now()
 	for _, f := range r.File {
@@ -378,7 +384,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 			if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
 				continue
 			}
-			dest, err := s.extractMusicFromOpener(f.Open, f.FileInfo().Size(), baseName, now)
+			dest, err := s.extractMusicFromOpener(f.Open, f.FileInfo().Size(), f.Name, baseName, now)
 			if err != nil {
 				logger.Warn("7z-download: music %s: %v", baseName, err)
 				s.skipped = append(s.skipped, baseName)
@@ -651,19 +657,113 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	return finalDest, nil
 }
 
-// extractMusicFromOpener is like extractMusic but takes an opener func.
-func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
+// musicFileName is a track's file name in the flat Music folder.
+func musicFileName(baseName string) string {
+	ext := filepath.Ext(baseName)
+	if safeName := roms.SanitiseFilename(strings.TrimSuffix(baseName, ext), ext); safeName != "" {
+		return safeName
+	}
+	return baseName
+}
+
+// planMusicNames names every soundtrack track this extraction will write.
+// The Music folder is flat, so tracks with one name in different archive
+// folders ("cd1/01 Theme.ogg", "cd2/01 Theme.ogg") would meet; each of them
+// gains the folder components that tell them apart ("cd1 - 01 Theme.ogg").
+// Deciding up front keeps the names independent of entry order. Tracks
+// that still meet, such as case-only duplicates in one folder, are caught
+// by the reservations when they are written.
+func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
+	s.musicNames = map[string]string{}
+	if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
+		return
+	}
+	type track struct {
+		entry string
+		dirs  []string
+		name  string
+	}
+	groups := map[string][]*track{}
+	var order []string
+	for _, entry := range entries {
+		name := strings.ReplaceAll(entry.name, "\\", "/")
+		baseName := path.Base(name)
+		if entry.isDir || roms.IsInMacOSMetaDir(entry.name) || strings.HasPrefix(baseName, "._") {
+			continue
+		}
+		kind, baseName := classifyWithMagic(baseName, entry.open)
+		if kind != roms.KindMusic {
+			continue
+		}
+		t := &track{entry: name, name: musicFileName(baseName)}
+		if dir := path.Dir(name); dir != "." {
+			t.dirs = strings.Split(dir, "/")
+		}
+		key := strings.ToLower(t.name)
+		if groups[key] == nil {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], t)
+	}
+	for _, key := range order {
+		group := groups[key]
+		if len(group) > 1 {
+			// Drop the leading folders every track shares ("Soundtrack/").
+			shared := len(group[0].dirs)
+			for _, t := range group[1:] {
+				if len(t.dirs) < shared {
+					shared = len(t.dirs)
+				}
+				for index := 0; index < shared; index++ {
+					if !strings.EqualFold(t.dirs[index], group[0].dirs[index]) {
+						shared = index
+						break
+					}
+				}
+			}
+			for _, t := range group {
+				var parts []string
+				for _, dir := range t.dirs[shared:] {
+					if part := roms.SanitiseFilename(dir, ""); part != "" {
+						parts = append(parts, part)
+					}
+				}
+				if len(parts) > 0 {
+					t.name = strings.Join(parts, " - ") + " - " + t.name
+				}
+			}
+		}
+		for _, t := range group {
+			s.musicNames[t.entry] = t.name
+		}
+	}
+}
+
+// musicDest reserves the Music folder path for an archive entry. It fails,
+// writing nothing, when another file of this archive already holds that
+// name, so a track is skipped rather than written over another.
+func (s *ArchiveDownloadWorker) musicDest(entryName, baseName string) (string, error) {
 	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
 		s.musicFailed = true
 		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
 	}
-	ext := filepath.Ext(baseName)
-	stem := strings.TrimSuffix(baseName, ext)
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
+	name, ok := s.musicNames[strings.ReplaceAll(entryName, "\\", "/")]
+	if !ok {
+		name = musicFileName(baseName)
 	}
-	dest := archiveOutputPath(s.plan.MusicDir, safeName)
+	dest := archiveOutputPath(s.plan.MusicDir, name)
+	if !s.names.Claim(dest) {
+		return "", fmt.Errorf("another file from this archive is already saved as %s", name)
+	}
+	return dest, nil
+}
+
+// extractMusicFromOpener is like extractMusic but takes an opener func.
+func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), size int64, entryName, baseName string, now time.Time) (string, error) {
+	dest, err := s.musicDest(entryName, baseName)
+	if err != nil {
+		return "", err
+	}
 	if err := extractEntry(open, size, dest); err != nil {
 		return "", err
 	}
@@ -828,18 +928,10 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 }
 
 func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now time.Time) (string, error) {
-	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
-		s.musicFailed = true
-		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
+	dest, err := s.musicDest(f.Name, baseName)
+	if err != nil {
+		return "", err
 	}
-	ext := filepath.Ext(baseName)
-	stem := strings.TrimSuffix(baseName, ext)
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
-	}
-	dest := archiveOutputPath(s.plan.MusicDir, safeName)
-
 	if err := extractZIPEntry(f, dest); err != nil {
 		return "", err
 	}
