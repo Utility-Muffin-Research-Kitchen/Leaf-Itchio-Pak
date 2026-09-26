@@ -45,7 +45,7 @@ Remote strings and images are clipped to their content rectangles. Text uses
 the bridge's primary/fallback font runs, while textures remain opaque,
 generation-checked handles owned by the main render thread.
 
-Production search and API-key entry call Catastrophe's standard keyboard through
+Production search calls Catastrophe's standard keyboard through
 `Context.Keyboard`. The app-local keyboard layout/draw helpers remain only as
 shared primitive geometry and offline-fixture coverage; they are not a second
 production keyboard implementation.

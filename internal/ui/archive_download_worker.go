@@ -123,7 +123,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	cdnURL := s.plan.CDNURL
 	if s.plan.Upload.ViaAPI() {
 		// Same install session as the inspection that produced this plan.
-		fresh, rerr := s.client.ResolveUploadURLContext(context.Background(), s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
+		fresh, rerr := s.client.ResolveUploadURLContext(context.Background(), s.cfg.Credential(), s.plan.Upload.UploadID, s.plan.Upload.Install)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
 		} else {

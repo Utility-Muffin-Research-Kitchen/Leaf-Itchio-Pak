@@ -68,7 +68,7 @@ func (flow *CatArchiveFlow) inspect() {
 	var cdnURL string
 	var err error
 	if flow.upload.ViaAPI() {
-		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.APIKey, flow.upload.UploadID, flow.upload.Install)
+		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.Credential(), flow.upload.UploadID, flow.upload.Install)
 	} else {
 		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: flow.upload.Filename, URL: flow.upload.URL})
 	}

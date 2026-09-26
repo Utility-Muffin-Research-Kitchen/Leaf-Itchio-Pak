@@ -104,7 +104,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 			var err error
 			if upload.ViaAPI() {
-				err = client.DownloadUploadContext(ctx, cfg.APIKey, upload.UploadID, upload.Install, dest, progress)
+				err = client.DownloadUploadContext(ctx, cfg.Credential(), upload.UploadID, upload.Install, dest, progress)
 			} else {
 				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
 				err = client.DownloadFreeContext(ctx, itchUpload, dest, progress)

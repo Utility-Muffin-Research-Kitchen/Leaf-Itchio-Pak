@@ -94,8 +94,8 @@ func NewCatDownloadFlow(client *itchio.Client, cfg *settings.Config, game itchio
 func (flow *CatDownloadFlow) discover() {
 	go func() {
 		update := catDownloadUpdate{}
-		if !flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
-			keys, err := flow.client.FetchOwnedKeys(flow.cfg.APIKey, flow.detail.GameID)
+		if !flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
+			keys, err := flow.client.FetchOwnedKeys(flow.cfg.Credential(), flow.detail.GameID)
 			if err != nil {
 				update.err = err
 			} else if len(keys) > 1 {
@@ -106,7 +106,7 @@ func (flow *CatDownloadFlow) discover() {
 			} else {
 				update.err = fmt.Errorf("game is not owned by the configured itch.io account")
 			}
-		} else if flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
+		} else if flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
 			update = flow.fetchFree()
 		} else {
 			update = flow.fetchWeb()
@@ -137,7 +137,7 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 // API refused access and the web flow fails too, the access error is the one
 // reported.
 func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
-	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.APIKey, flow.detail.GameID, "")
+	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.Credential(), flow.detail.GameID, "")
 	switch {
 	case err == nil && len(uploads) > 0:
 		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
@@ -169,7 +169,7 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 // URLs, and every file downloaded.
 func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate {
 	downloadKeyID := strconv.FormatInt(key.ID, 10)
-	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.APIKey, flow.detail.GameID, downloadKeyID)
+	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.Credential(), flow.detail.GameID, downloadKeyID)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
 	for _, upload := range uploads {
@@ -278,7 +278,7 @@ func (flow *CatDownloadFlow) detect(upload roms.Upload) {
 	var cdnURL string
 	var err error
 	if upload.ViaAPI() {
-		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.APIKey, upload.UploadID, upload.Install)
+		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.Credential(), upload.UploadID, upload.Install)
 	} else {
 		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: upload.Filename, URL: upload.URL})
 	}

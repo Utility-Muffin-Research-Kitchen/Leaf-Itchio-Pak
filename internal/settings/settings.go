@@ -54,24 +54,31 @@ type RememberedDestination struct {
 
 // Config is the top-level application configuration.
 type Config struct {
-	APIKey                string                           `json:"api_key"`
-	APIKeyWarningAccepted bool                             `json:"api_key_physical_warning_accepted,omitempty"`
-	ROMSelection          string                           `json:"rom_selection"`
-	ROMLocation           string                           `json:"rom_location"`
-	ROMDestinations       map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`
-	MusicDestination      *RememberedDestination           `json:"remembered_music_destination,omitempty"`
-	Filter                ContentFilter                    `json:"content_filter"`
-	LogLevel              string                           `json:"log_level,omitempty"`       // "debug" | "" (resolves to "info")
-	SortMode              string                           `json:"sort_mode,omitempty"`       // "az" | "za" | "new" | "dl" | "free" | "paid" | "" (empty = [RSS])
-	PlatformFilter        string                           `json:"platform_filter,omitempty"` // "" = All; persisted to config.json
-	UnifiedNaming         bool                             `json:"unified_naming"`            // default true — no omitempty so false survives save/load
-	MusicDownload         string                           `json:"music_download,omitempty"`  // "auto" | "ask" | "off"
-	MusicLocation         string                           `json:"music_location,omitempty"`  // "auto" | "ask"
+	// AuthToken is the itch.io key from QR sign-in, sent as Authorization:
+	// Bearer. AuthUser is the account's display name for Settings.
+	AuthToken string `json:"auth_token,omitempty"`
+	AuthUser  string `json:"auth_user,omitempty"`
+	// CredentialWarningAccepted records that the physical-access warning was
+	// shown; it keeps the JSON name used when keys were typed in.
+	CredentialWarningAccepted bool `json:"api_key_physical_warning_accepted,omitempty"`
+	// LegacyKeyRemoved is set when Load removed a manually entered API key,
+	// so the app can explain once that sign-in replaces it.
+	LegacyKeyRemoved bool                             `json:"legacy_key_removed,omitempty"`
+	ROMSelection     string                           `json:"rom_selection"`
+	ROMLocation      string                           `json:"rom_location"`
+	ROMDestinations  map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`
+	MusicDestination *RememberedDestination           `json:"remembered_music_destination,omitempty"`
+	Filter           ContentFilter                    `json:"content_filter"`
+	LogLevel         string                           `json:"log_level,omitempty"`       // "debug" | "" (resolves to "info")
+	SortMode         string                           `json:"sort_mode,omitempty"`       // "az" | "za" | "new" | "dl" | "free" | "paid" | "" (empty = [RSS])
+	PlatformFilter   string                           `json:"platform_filter,omitempty"` // "" = All; persisted to config.json
+	UnifiedNaming    bool                             `json:"unified_naming"`            // default true — no omitempty so false survives save/load
+	MusicDownload    string                           `json:"music_download,omitempty"`  // "auto" | "ask" | "off"
+	MusicLocation    string                           `json:"music_location,omitempty"`  // "auto" | "ask"
 }
 
 func defaults() *Config {
 	return &Config{
-		APIKey:        "",
 		ROMSelection:  "auto",
 		ROMLocation:   "auto",
 		UnifiedNaming: true,
@@ -104,8 +111,35 @@ func Load(path string) (*Config, error) {
 		logger.Warn("settings: config at %s is invalid, using defaults: %v", path, err)
 		return defaults(), nil
 	}
+	removeLegacyAPIKey(path, data, cfg)
 	return cfg, nil
 }
+
+// removeLegacyAPIKey drops a manually entered API key from the file: QR
+// sign-in replaces it. The key is never logged. Inventory and every other
+// setting are untouched.
+func removeLegacyAPIKey(path string, data []byte, cfg *Config) {
+	var legacy struct {
+		APIKey *string `json:"api_key"`
+	}
+	if json.Unmarshal(data, &legacy) != nil || legacy.APIKey == nil {
+		return
+	}
+	if *legacy.APIKey != "" {
+		cfg.LegacyKeyRemoved = true
+	}
+	if err := cfg.Save(path); err != nil {
+		logger.Warn("settings: could not remove the saved API key yet: %v", err)
+		return
+	}
+	logger.Info("settings: removed the saved API key; sign in with itch.io instead")
+}
+
+// Credential is the key sent as Authorization: Bearer, empty when signed out.
+func (c *Config) Credential() string { return c.AuthToken }
+
+// SignedIn reports whether a QR sign-in key is stored.
+func (c *Config) SignedIn() bool { return c.AuthToken != "" }
 
 func (c *Config) Save(path string) error {
 	data, err := json.MarshalIndent(c, "", "  ")
