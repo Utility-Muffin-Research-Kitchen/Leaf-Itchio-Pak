@@ -19,6 +19,9 @@ type DetailGame struct {
 	Title, Author, URL, Platform    string
 	Price                           float64
 	IsFree, Downloaded, CanDownload bool
+	// NeedsSignIn marks a paid game that can download once the user signs
+	// in with itch.io; A then opens sign-in instead.
+	NeedsSignIn bool
 }
 
 type DetailModel struct {
@@ -42,6 +45,7 @@ const (
 	DetailIntentSettings
 	DetailIntentDownload
 	DetailIntentManage
+	DetailIntentSignIn
 )
 
 func NewDetailModel(game DetailGame) *DetailModel {
@@ -103,6 +107,9 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonA:
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
+		}
+		if m.Game.NeedsSignIn && !m.BrowserOnly {
+			return DetailIntentSignIn
 		}
 	case ButtonX:
 		if m.Game.Downloaded {

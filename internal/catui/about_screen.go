@@ -1,10 +1,6 @@
 package catui
 
-import (
-	"strings"
-
-	"github.com/skip2/go-qrcode"
-)
+import "strings"
 
 const (
 	catAboutRepo = "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak"
@@ -32,9 +28,7 @@ func NewAboutScreen(ctx *Context, appVersion, leafVersion string) (*AboutScreen,
 		leafVersion = "unknown"
 	}
 	screen := &AboutScreen{ctx: ctx, ui: ui, appVersion: appVersion, leafVersion: leafVersion}
-	if code, qrErr := qrcode.New(catAboutRepo, qrcode.Medium); qrErr == nil {
-		screen.qr, _ = ctx.TextureFromImage(code.Image(256))
-	}
+	screen.qr = newQRTexture(ctx, catAboutRepo)
 	return screen, nil
 }
 

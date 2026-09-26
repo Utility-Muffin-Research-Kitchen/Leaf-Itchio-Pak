@@ -3,8 +3,8 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,7 +21,7 @@ type CatSettingsAction uint8
 
 const (
 	CatSettingsNone CatSettingsAction = iota
-	CatSettingsEditAPIKey
+	CatSettingsSignIn
 	CatSettingsClearImages
 	CatSettingsRefreshGames
 	CatSettingsUpdateInventory
@@ -33,12 +33,13 @@ type catSettingsConfirm uint8
 
 const (
 	catSettingsConfirmNone catSettingsConfirm = iota
-	catSettingsConfirmAPIWarning
-	catSettingsConfirmRemoveAPI
+	catSettingsConfirmSignInWarning
+	catSettingsConfirmSignOut
 	catSettingsConfirmResetDestinations
 )
 
 type catAPIResult struct {
+	user       string
 	owned      []itchio.OwnedGame
 	err        error
 	generation uint64
@@ -56,11 +57,14 @@ type CatSettingsFlow struct {
 	apiResults     chan catAPIResult
 	validating     atomic.Bool
 	apiGeneration  atomic.Uint64
-	ownedChanged   func([]itchio.OwnedGame)
+	account        *Account
 }
 
+// SetAccount shares the app's Account; without one the flow keeps its own.
+func (flow *CatSettingsFlow) SetAccount(account *Account) { flow.account = account }
+
 func (flow *CatSettingsFlow) SetOwnedChanged(callback func([]itchio.OwnedGame)) {
-	flow.ownedChanged = callback
+	flow.account.SetOwnedChanged(callback)
 }
 
 func NewCatSettingsFlow(cfg *settings.Config, cfgPath, ownedCachePath, appDataPath string,
@@ -68,6 +72,7 @@ func NewCatSettingsFlow(cfg *settings.Config, cfgPath, ownedCachePath, appDataPa
 	flow := &CatSettingsFlow{
 		cfg: cfg, cfgPath: cfgPath, ownedCachePath: ownedCachePath, appDataPath: appDataPath,
 		sources: sources, client: client, wake: wake, apiResults: make(chan catAPIResult, 1),
+		account: NewAccount(cfg, cfgPath, ownedCachePath, client),
 	}
 	model := appui.NewSettingsModel("Settings")
 	flow.Refresh(model)
@@ -76,13 +81,10 @@ func NewCatSettingsFlow(cfg *settings.Config, cfgPath, ownedCachePath, appDataPa
 
 func (flow *CatSettingsFlow) Refresh(model *appui.SettingsModel) {
 	rows := []appui.SettingsRow{{
-		Key: appui.SettingsAPIKey, Label: "API Key", Value: maskedAPIKey(flow.cfg.APIKey), ActionEnabled: true,
+		Key: appui.SettingsAccount, Label: "itch.io Account", Value: accountValue(flow.cfg), ActionEnabled: true,
 	}}
-	if flow.cfg.APIKey != "" {
-		rows = append(rows,
-			appui.SettingsRow{Key: appui.SettingsEditAPIKey, Label: "Edit API Key", Value: "", ActionEnabled: true},
-			appui.SettingsRow{Key: appui.SettingsRemoveAPIKey, Label: "Remove API Key", Value: "", ActionEnabled: true},
-		)
+	if flow.cfg.SignedIn() {
+		rows = append(rows, appui.SettingsRow{Key: appui.SettingsSignOut, Label: "Sign Out", Value: "", ActionEnabled: true})
 	}
 	rows = append(rows,
 		appui.SettingsRow{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: settingValue(flow.cfg.ROMSelection, "auto"), ActionEnabled: true},
@@ -114,27 +116,25 @@ func (flow *CatSettingsFlow) Activate(model *appui.SettingsModel) (CatSettingsAc
 		return CatSettingsNone, nil
 	}
 	switch row.Key {
-	case appui.SettingsAPIKey:
-		if flow.cfg.APIKey != "" {
-			flow.startAPIValidation(model, flow.cfg.APIKey)
+	case appui.SettingsAccount:
+		if flow.cfg.SignedIn() {
+			flow.startAPIValidation(model, flow.cfg.Credential())
 			return CatSettingsNone, nil
 		}
-		if !flow.cfg.APIKeyWarningAccepted {
-			flow.pending = catSettingsConfirmAPIWarning
-			model.SetConfirm("Store an itch.io API key?", []string{
-				"The key is stored in App Data on the SD card.",
+		if !flow.cfg.CredentialWarningAccepted {
+			flow.pending = catSettingsConfirmSignInWarning
+			model.SetConfirm("Sign in with itch.io?", []string{
+				"Signing in stores an itch.io key in App Data on the SD card.",
 				"FAT32 cannot protect it from someone with physical access to the card.",
-				"Settings shows only a suffix; editing starts blank and typed characters are visible.",
-				"The complete key is redacted from logs.",
+				"The key is redacted from logs and never shown on screen.",
+				"You can sign out here, and delete the key on itch.io.",
 			})
 			return CatSettingsNone, nil
 		}
-		return CatSettingsEditAPIKey, nil
-	case appui.SettingsRemoveAPIKey:
-		flow.pending = catSettingsConfirmRemoveAPI
-		model.SetConfirm("Remove the API key?", []string{"Owned-game authentication data is cleared.", "Downloaded content and inventory remain installed."})
-	case appui.SettingsEditAPIKey:
-		return CatSettingsEditAPIKey, nil
+		return CatSettingsSignIn, nil
+	case appui.SettingsSignOut:
+		flow.pending = catSettingsConfirmSignOut
+		model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
 	case appui.SettingsROMSelection:
 		flow.cfg.ROMSelection = toggleTwo(flow.cfg.ROMSelection, "auto", "ask")
 		return CatSettingsNone, flow.saveAndRefresh(model)
@@ -182,33 +182,22 @@ func (flow *CatSettingsFlow) Confirm(model *appui.SettingsModel) (CatSettingsAct
 	pending := flow.pending
 	flow.pending = catSettingsConfirmNone
 	switch pending {
-	case catSettingsConfirmAPIWarning:
-		flow.cfg.APIKeyWarningAccepted = true
+	case catSettingsConfirmSignInWarning:
+		flow.cfg.CredentialWarningAccepted = true
 		if err := flow.cfg.Save(flow.cfgPath); err != nil {
-			flow.cfg.APIKeyWarningAccepted = false
+			flow.cfg.CredentialWarningAccepted = false
 			return CatSettingsNone, err
 		}
 		flow.Refresh(model)
-		return CatSettingsEditAPIKey, nil
-	case catSettingsConfirmRemoveAPI:
-		oldKey := flow.cfg.APIKey
-		flow.cfg.APIKey = ""
-		if err := flow.cfg.Save(flow.cfgPath); err != nil {
-			flow.cfg.APIKey = oldKey
-			return CatSettingsNone, err
-		}
-		flow.client.ResetAPIKeyState()
+		return CatSettingsSignIn, nil
+	case catSettingsConfirmSignOut:
 		flow.apiGeneration.Add(1)
 		flow.validating.Store(false)
-		logger.RemoveSecret("[API-KEY]")
-		if flow.ownedChanged != nil {
-			flow.ownedChanged(nil)
-		}
-		if err := os.Remove(flow.ownedCachePath); err != nil && !os.IsNotExist(err) {
-			return CatSettingsNone, fmt.Errorf("remove owned cache: %w", err)
+		if err := flow.account.SignOut(); err != nil {
+			return CatSettingsNone, err
 		}
 		flow.Refresh(model)
-		model.SetMessage("API key and owned authentication cache removed. Downloads were not changed.")
+		model.SetMessage("Signed out. Downloads were not changed. The key stays valid on itch.io until you delete it from your account's API keys.")
 	case catSettingsConfirmResetDestinations:
 		flow.cfg.ROMDestinations = nil
 		flow.cfg.MusicDestination = nil
@@ -238,31 +227,6 @@ func (flow *CatSettingsFlow) Back(model *appui.SettingsModel) bool {
 	return true
 }
 
-func (flow *CatSettingsFlow) SetAPIKey(model *appui.SettingsModel, value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fmt.Errorf("API key cannot be empty")
-	}
-	oldKey := flow.cfg.APIKey
-	flow.cfg.APIKey = value
-	if err := flow.cfg.Save(flow.cfgPath); err != nil {
-		flow.cfg.APIKey = oldKey
-		return err
-	}
-	logger.RegisterSecret(value, "[API-KEY]")
-	flow.client.ResetAPIKeyState()
-	flow.apiGeneration.Add(1)
-	flow.validating.Store(false)
-	if flow.ownedChanged != nil {
-		flow.ownedChanged(nil)
-	}
-	if err := os.Remove(flow.ownedCachePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("clear previous owned cache: %w", err)
-	}
-	flow.startAPIValidation(model, value)
-	return nil
-}
-
 func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 	select {
 	case result := <-flow.apiResults:
@@ -270,24 +234,26 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 			return true
 		}
 		flow.validating.Store(false)
+		if errors.Is(result.err, itchio.ErrSignInRejected) {
+			flow.apiGeneration.Add(1)
+			if err := flow.account.SignOut(); err != nil {
+				model.SetError(err.Error())
+				return true
+			}
+			flow.Refresh(model)
+			model.SetError("itch.io no longer accepts this sign-in, so you were signed out. Sign in again to download games you own.")
+			return true
+		}
 		if result.err != nil {
-			flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusRejected)
-			model.SetError("API key validation failed. The stored key remains available to replace or remove.")
+			model.SetError("Couldn't check your itch.io account. You're still signed in; try again when online.")
 			return true
 		}
-		flow.client.StoreAPIKeyStatus(itchio.APIKeyStatusWorking)
-		urls := make([]string, 0, len(result.owned))
-		for _, game := range result.owned {
-			urls = append(urls, game.URL)
-		}
-		if err := itchio.SaveOwnedCache(flow.ownedCachePath, urls); err != nil {
-			model.SetError("API key is valid, but the owned-game cache could not be saved.")
+		if err := flow.account.Validated(result.user, result.owned); err != nil {
+			model.SetError("Your sign-in works, but the owned-game list could not be saved.")
 			return true
 		}
-		if flow.ownedChanged != nil {
-			flow.ownedChanged(result.owned)
-		}
-		model.SetMessage(fmt.Sprintf("API key validated. %d owned game(s) found.", len(result.owned)))
+		flow.Refresh(model)
+		model.SetMessage(fmt.Sprintf("Signed in to itch.io. %d owned game(s) found.", len(result.owned)))
 		return true
 	default:
 		return false
@@ -295,12 +261,12 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 }
 
 func (flow *CatSettingsFlow) startAPIValidation(model *appui.SettingsModel, key string) {
-	model.State, model.Message = appui.SettingsWorking, "Validating the stored API key with itch.io…"
+	model.State, model.Message = appui.SettingsWorking, "Checking your itch.io account…"
 	generation := flow.apiGeneration.Add(1)
 	flow.validating.Store(true)
 	go func() {
-		_, owned, err := flow.client.ValidateAPIKey(key)
-		flow.apiResults <- catAPIResult{owned: owned, err: err, generation: generation}
+		user, owned, err := flow.client.ValidateAPIKey(key)
+		flow.apiResults <- catAPIResult{user: user, owned: owned, err: err, generation: generation}
 		if flow.wake != nil {
 			flow.wake()
 		}
@@ -365,16 +331,15 @@ func preferenceLabel(sources leaf.SourceList, pref settings.RememberedDestinatio
 	return label
 }
 
-func maskedAPIKey(key string) string {
-	if key == "" {
-		return "Not set"
+func accountValue(cfg *settings.Config) string {
+	switch {
+	case !cfg.SignedIn():
+		return "Not signed in"
+	case cfg.AuthUser != "":
+		return cfg.AuthUser
+	default:
+		return "Signed in"
 	}
-	runes := []rune(key)
-	suffix := string(runes)
-	if len(runes) > 4 {
-		suffix = string(runes[len(runes)-4:])
-	}
-	return "••••" + suffix
 }
 
 func settingValue(value, fallback string) string {

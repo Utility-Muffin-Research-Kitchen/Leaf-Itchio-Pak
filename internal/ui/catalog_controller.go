@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,9 @@ type CatalogController struct {
 	// ownedMu makes a validation's generation check and its owned-cache
 	// write atomic with respect to a key change bumping the generation.
 	ownedMu sync.Mutex
+	// signInRejected is set when itch.io rejected the stored key at startup;
+	// the UI goroutine signs out when it takes the flag.
+	signInRejected atomic.Bool
 
 	sortMode       itchio.SortMode
 	platformFilter string
@@ -94,13 +98,18 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		logger.Warn("owned: failed to load owned cache: %v", err)
 	}
 
-	if cfg.APIKey != "" {
-		key := cfg.APIKey
+	if cfg.SignedIn() {
+		key := cfg.Credential()
 		generation := controller.ownedGeneration.Load()
 		go func() {
 			_, owned, err := client.ValidateAPIKey(key)
+			if errors.Is(err, itchio.ErrSignInRejected) {
+				controller.rejectSignInIfCurrent(generation)
+				return
+			}
 			if err != nil {
-				logger.Warn("owned: startup key validation failed: %v", err)
+				// Offline or a transient failure: stay signed in.
+				logger.Warn("owned: startup sign-in check failed: %v", err)
 				return
 			}
 			controller.publishOwnedIfCurrent(generation, owned)
@@ -135,7 +144,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 	return controller
 }
 
-// publishOwnedIfCurrent stores a validation result unless the API key
+// publishOwnedIfCurrent stores a validation result unless the sign-in
 // changed after the validation started.
 func (controller *CatalogController) publishOwnedIfCurrent(generation uint64, owned []itchio.OwnedGame) bool {
 	controller.ownedMu.Lock()
@@ -146,6 +155,25 @@ func (controller *CatalogController) publishOwnedIfCurrent(generation uint64, ow
 	}
 	controller.publishOwned(owned)
 	return true
+}
+
+// rejectSignInIfCurrent flags a startup rejection of the stored key, unless
+// the key changed after the check started.
+func (controller *CatalogController) rejectSignInIfCurrent(generation uint64) {
+	controller.ownedMu.Lock()
+	defer controller.ownedMu.Unlock()
+	if generation != controller.ownedGeneration.Load() {
+		return
+	}
+	logger.Warn("owned: itch.io rejected the stored sign-in")
+	controller.signInRejected.Store(true)
+	controller.wakeUI()
+}
+
+// TakeSignInRejected reports, once, that itch.io rejected the stored key at
+// startup. The caller signs out through Account on the UI goroutine.
+func (controller *CatalogController) TakeSignInRejected() bool {
+	return controller.signInRejected.Swap(false)
 }
 
 func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {

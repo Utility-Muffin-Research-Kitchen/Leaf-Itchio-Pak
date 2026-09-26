@@ -224,8 +224,8 @@ func TestFetchOwnedKeys_NotOwned(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when game not owned, got nil")
 	}
-	if !strings.Contains(err.Error(), "not owned") {
-		t.Errorf("error should mention 'not owned', got: %v", err)
+	if !strings.Contains(err.Error(), "doesn't own this game") {
+		t.Errorf("error should say the account doesn't own the game, got: %v", err)
 	}
 }
 

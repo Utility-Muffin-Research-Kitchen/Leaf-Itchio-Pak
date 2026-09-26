@@ -35,7 +35,7 @@ usable if refresh fails.
 
 The supported categories are All, GB, GBC, GBA, NES, Mega Drive, Pico-8, and
 PlayStation. Sort choices are RSS, A-Z, Z-A, Newest, Free, Paid, Downloaded, and
-Owned. Owned requires a validated API key.
+Owned. Owned requires signing in with itch.io.
 
 ## Detail and gallery
 
@@ -122,24 +122,34 @@ removed upstream games, and newly offered uploads without deleting local files.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
-## API key
+## Sign in with itch.io
 
-Free browsing/downloads work without a key. Add a key to authenticate owned paid
-games. With a key, free and pay-what-you-want games are also listed through the
-itch.io API, which is quicker than the web download page. If the API fails or
-lists nothing, the app tries the web download page once. If itch.io asks the
-app to slow down, it stops and asks you to try again later instead.
+Free browsing and downloads work without an account. Sign in to download paid
+games you own. Signed in, free and pay-what-you-want games are also listed
+through the itch.io API, which is quicker than the web download page. If the
+API fails or lists nothing, the app tries the web download page once. If
+itch.io asks the app to slow down, it stops and asks you to try again later
+instead.
 
-1. Open Start > Settings > API Key.
-2. Accept the physical-access warning.
-3. Enter the complete key with the Catastrophe keyboard and confirm.
-4. Wait for validation and the owned-game count.
+1. Open Start > Settings > itch.io Account, or press A on a paid game.
+2. Accept the physical-access warning (first time only).
+3. Scan the QR code with your phone, or open the address shown and enter the
+   code. The code expires after a few minutes; press A for a new one.
+4. Approve Leaf on itch.io. The app loads your owned games and shows your
+   account name.
 
-The key is stored in `config.json`. FAT32 cannot enforce owner-only permissions
-against physical access, and the key is not encrypted. After saving, Settings
-shows only its suffix. Editing starts from a blank field and never prefills the
-saved key. Newly typed characters are visible. Removing/replacing the key clears
-credential-derived cache state but preserves downloads and inventory.
+If the screen says **Sign-in isn't available yet**, itch.io has not enabled
+sign-in for Leaf. Free games still download.
+
+itch.io gives the app a key, stored in `config.json`. FAT32 cannot enforce
+owner-only permissions against physical access, and the key is not encrypted.
+It never appears on screen. **Sign Out** clears it and the owned-game cache but
+keeps downloads and inventory. The app cannot revoke the key on itch.io, so
+delete it from your itch.io account's API keys if you lose the card. If itch.io
+stops accepting the key, the app signs you out and asks you to sign in again.
+
+Earlier releases stored a typed API key. This release removes it on first
+start and opens Settings so you can sign in.
 
 ## Soundtracks
 
@@ -172,7 +182,7 @@ requests one Jawaka rescan.
 The Settings screen displays the resolved App Data directory. Under the normal
 Leaf contract it is `$USERDATA_PATH/Itch-io` and contains:
 
-- `config.json`: settings and optional API key;
+- `config.json`: settings and the itch.io sign-in key, when signed in;
 - `games_cache.json`: timestamped public catalogue;
 - `owned_cache.json`: owned-game URL cache;
 - `inventory.json`: installed-file and artwork ownership records.
@@ -181,7 +191,7 @@ The log is `$LOGS_PATH/itchio-pak.log`. On the stock primary card these normally
 appear under `.userdata/mlp1/Itch-io` and `.userdata/mlp1/logs`. No state is
 stored inside `.system/leaf` or the replaceable pak directory.
 
-Logs remain local. API keys, authorization/cookie values, signed URLs, account
+Logs remain local. itch.io keys, authorization/cookie values, signed URLs, account
 names, and known absolute runtime roots are redacted at Info and Debug levels.
 There is no telemetry and no UMRK network service.
 
@@ -209,9 +219,9 @@ does not guess between arbitrary mounts.
 
 ### A paid/owned game is unavailable
 
-Validate the stored API key again from Settings. A successful validation reports
-the owned-game count. Replacing/removing a key invalidates the old owned cache by
-design.
+Select **itch.io Account** in Settings to check your sign-in again. A
+successful check reports the owned-game count. Signing out, or signing in to a
+different account, clears the old owned cache by design.
 
 ### A network or download request fails
 

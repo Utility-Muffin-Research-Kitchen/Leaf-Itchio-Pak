@@ -69,7 +69,7 @@ func newFreeGameSite(t *testing.T, api http.HandlerFunc) *freeGameSite {
 func (site *freeGameSite) discover(t *testing.T, apiKey string) catDownloadUpdate {
 	t.Helper()
 	flow := &CatDownloadFlow{
-		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: apiKey},
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{AuthToken: apiKey},
 		game:   itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true},
 		detail: &itchio.GameDetail{GameID: "42"}, updates: make(chan catDownloadUpdate, 1),
 	}

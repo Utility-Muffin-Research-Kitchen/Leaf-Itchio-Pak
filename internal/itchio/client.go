@@ -234,10 +234,6 @@ type Client struct {
 	base    string // itch.io web base URL (pages, feeds, free downloads)
 	butler  string // api.itch.io base URL (API v2, bearer-authenticated)
 
-	// Background API key validation state (atomic, written once per session).
-	apiKeyStatus   int32 // stores APIKeyStatus constants
-	apiKeyChecking int32 // 0 = not started, 1 = started (CAS gate)
-
 	// keyGeneration changes whenever the API key is replaced or removed, so
 	// account-derived results computed under an older key are discarded.
 	keyGeneration atomic.Uint64
