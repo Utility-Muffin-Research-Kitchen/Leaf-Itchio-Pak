@@ -25,7 +25,7 @@ func listFixture(t *testing.T, fixture, selection string) (*CatDownloadFlow, *ap
 	site := newFreeGameSite(t, func(w http.ResponseWriter, _ *http.Request) { w.Write(body) })
 	flow, model := newCatDownloadFlowForTest(t)
 	flow.client = itchio.NewClientWithBase(site.srv.URL)
-	flow.cfg.APIKey, flow.cfg.ROMSelection = sessionTestKey, selection
+	flow.cfg.AuthToken, flow.cfg.ROMSelection = sessionTestKey, selection
 	flow.game.IsFree = true
 	flow.detail = &itchio.GameDetail{GameID: "42"}
 	flow.updates = make(chan catDownloadUpdate, 1)

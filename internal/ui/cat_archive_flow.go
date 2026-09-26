@@ -84,7 +84,7 @@ func (flow *CatArchiveFlow) requestContext() context.Context {
 }
 
 func (flow *CatArchiveFlow) inspect() {
-	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, flow.upload)
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, flow.upload)
 	if err != nil {
 		flow.publish(catArchiveUpdate{err: err})
 		return

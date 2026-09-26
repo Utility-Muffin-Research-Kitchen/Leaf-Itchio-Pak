@@ -5,38 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
-// APIKeyStatus is the result of the background API key validation.
-type APIKeyStatus int32
-
-const (
-	APIKeyStatusUnknown  APIKeyStatus = 0 // not yet tested, or network unavailable
-	APIKeyStatusWorking  APIKeyStatus = 1 // accepted by itch.io
-	APIKeyStatusRejected APIKeyStatus = 2 // explicitly rejected by itch.io
-)
-
-// GetAPIKeyStatus returns the cached result of the most recent key check.
-func (c *Client) GetAPIKeyStatus() APIKeyStatus {
-	return APIKeyStatus(atomic.LoadInt32(&c.apiKeyStatus))
-}
-
-// StoreAPIKeyStatus saves the result of a completed key check.
-func (c *Client) StoreAPIKeyStatus(s APIKeyStatus) {
-	atomic.StoreInt32(&c.apiKeyStatus, int32(s))
-}
-
-// MarkAPIKeyCheckStarted atomically marks the background check as started.
-// Returns true only on the first call — the caller should then launch the check.
-func (c *Client) MarkAPIKeyCheckStarted() bool {
-	return atomic.CompareAndSwapInt32(&c.apiKeyChecking, 0, 1)
-}
-
-// ResetAPIKeyState clears cached validation state after a key is replaced or
-// removed. It never logs or retains the previous credential.
+// ResetAPIKeyState clears account-derived state after the sign-in changes.
+// It never logs or retains the previous credential.
 // Validations and owned-library scans already running under the old key
 // discard their account-derived results instead of storing them.
 func (c *Client) ResetAPIKeyState() {
@@ -44,41 +18,6 @@ func (c *Client) ResetAPIKeyState() {
 	c.ownedMu.Lock()
 	c.purchaseCounts = nil
 	c.ownedMu.Unlock()
-	atomic.StoreInt32(&c.apiKeyStatus, int32(APIKeyStatusUnknown))
-	atomic.StoreInt32(&c.apiKeyChecking, 0)
-}
-
-// CheckAPIKey does a lightweight /profile fetch to determine whether apiKey is
-// accepted. Returns APIKeyStatusWorking on success, APIKeyStatusRejected when
-// the server explicitly rejects the key, and APIKeyStatusUnknown on network or
-// other transient errors (so the UI can show "PRESENT" rather than "REJECTED").
-func (c *Client) CheckAPIKey(apiKey string) APIKeyStatus {
-	logger.Debug("validate: background API key check starting")
-	req, err := http.NewRequest("GET", c.butler+"/profile", nil)
-	if err != nil {
-		logger.Error("validate: build profile request: %v", err)
-		return APIKeyStatusUnknown
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		logger.Debug("validate: background key check network error (device may be offline): %v", err)
-		return APIKeyStatusUnknown
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		logger.Info("validate: API key valid")
-		return APIKeyStatusWorking
-	case http.StatusUnauthorized, http.StatusForbidden:
-		logger.Warn("validate: API key rejected by itch.io (HTTP %d)", resp.StatusCode)
-		return APIKeyStatusRejected
-	default:
-		logger.Warn("validate: background key check unexpected HTTP %d", resp.StatusCode)
-		return APIKeyStatusUnknown
-	}
 }
 
 // OwnedGame is a public summary of a game the user owns.

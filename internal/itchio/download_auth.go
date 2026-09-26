@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,8 +51,6 @@ type rawOwnedKey struct {
 }
 
 const ownedKeysMaxPages = 20
-
-var errAPIKeyRejected = errors.New("API key invalid or does not grant access")
 
 // isJSONArray reports whether raw holds a JSON array. itch.io answers an
 // empty collection as {} (or omits it) instead of [].
@@ -103,7 +100,7 @@ func (c *Client) scanOwnedKeys(ctx context.Context, apiKey string, gameIDs []int
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			logger.Warn("auth: owned-keys HTTP %d (page %d)", resp.StatusCode, page)
-			return keys, false, errAPIKeyRejected
+			return keys, false, fmt.Errorf("fetch owned keys: %w", ErrSignInRejected)
 		case resp.StatusCode == http.StatusTooManyRequests:
 			return keys, false, netlimit.FromResponse("auth: owned-keys", resp)
 		case resp.StatusCode != http.StatusOK:
@@ -219,7 +216,7 @@ func (c *Client) cachedPurchaseCounts(keys []rawOwnedKey) map[int64]int {
 // single key, or a failed scan, gets BundleSize 1.
 //
 // Returns a non-empty slice when the game is owned, or an error when it is
-// not owned / the API key is invalid.
+// not owned or the sign-in was rejected.
 func (c *Client) FetchOwnedKeys(apiKey, gameID string) ([]OwnedKey, error) {
 	return c.FetchOwnedKeysContext(context.Background(), apiKey, gameID)
 }
@@ -275,7 +272,7 @@ func (c *Client) FetchOwnedKeysContext(ctx context.Context, apiKey, gameID strin
 		})
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("Game not owned or API key invalid (game_id=%s not found in owned keys)", gameID)
+		return nil, fmt.Errorf("your itch.io account doesn't own this game (game_id=%s)", gameID)
 	}
 	logger.Debug("auth: found %d owned key(s) for game_id=%s (server-filtered=%v)", len(matches), gameID, serverFiltered)
 	return matches, nil

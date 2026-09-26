@@ -12,8 +12,8 @@ set, release archive, or bootstrap flow.
 ## Features
 
 - Browse, search, filter, and sort itch.io console-homebrew feeds.
-- Download anonymous free/pay-what-you-want uploads or owned paid uploads with
-  an optional itch.io API key.
+- Download free/pay-what-you-want uploads without an account, or games you own
+  after signing in with itch.io by scanning a QR code.
 - Support GB, GBC, GBA, NES, Mega Drive, Pico-8, and PlayStation (`PSX`).
 - Inspect ZIP and 7z archives before extraction, including mixed ROM/music
   archives and multi-file Pico-8 games.
@@ -92,7 +92,7 @@ This explicit target does not add the app to Leaf's default payload.
 | Menu | Reserved for Leaf; it does not exit or navigate the app |
 
 Footer hints show the active subset. The standard Catastrophe keyboard is used
-for search and API-key entry. Short/long power-button behavior remains under
+for search. Short/long power-button behavior remains under
 the app's Jawaka-protected Leaf power flow while a transfer is active.
 
 ## Storage and dual SD cards
@@ -136,23 +136,28 @@ or ask for a mounted card and folder. Disco Boy is optional and is not installed
 or launched by this pak. Open or relaunch Disco Boy after a download so its
 normal library scan sees the new files.
 
-## API key and physical security
+## Sign in with itch.io and physical security
 
-Anonymous browsing and free downloads do not require a key. A key enables the
-Owned filter and authenticated downloads for games already present in the
-account's itch.io library.
+Anonymous browsing and free downloads do not need an account. Signing in
+enables the Owned filter and downloads of games already in your itch.io
+library.
 
-Enter or replace it in **Start > Settings > API Key**. Before the first save,
-the app warns that the key is stored in App Data on the SD card. POSIX storage
-can request owner-only mode, but FAT32 cannot protect the file from someone
-with physical access to the card. The key is not encrypted at rest.
+Sign in from **Start > Settings > itch.io Account**, or press **A** on a paid
+game. The app shows a QR code and a short code: scan it with your phone, or
+open the address shown and enter the code, then approve Leaf on itch.io. No
+password is typed on the handheld, and nothing needs to be copied.
 
-After saving, Settings shows only a short suffix. Editing always starts blank,
-so the persisted key is never prefilled; newly typed characters remain visible
-because fully masked controller entry was rejected during device testing. Keys,
-authorization values, cookies, signed download URLs, account names, and known
-runtime roots are redacted from local logs. Removing or replacing a key clears
-the old owned-game authentication cache without deleting installed content.
+itch.io then gives the app a key, which is stored in App Data on the SD card.
+Before the first sign-in, the app warns that POSIX storage can request
+owner-only mode, but FAT32 cannot protect the file from someone with physical
+access to the card. The key is not encrypted at rest and never appears on
+screen. Keys, authorization values, cookies, signed download URLs, account
+names, and known runtime roots are redacted from local logs.
+
+**Sign Out** clears the key and the owned-game cache without deleting installed
+content. itch.io has no way for the app to revoke the key, so delete it from
+your itch.io account's API keys if the card is lost. Earlier releases stored a
+typed API key; this release removes it on first start and asks you to sign in.
 
 ## Content-warning defaults
 
@@ -176,7 +181,7 @@ Durable state is stored under `$USERDATA_PATH/Itch-io`:
 
 | File | Purpose |
 | --- | --- |
-| `config.json` | Settings and optional API key |
+| `config.json` | Settings and the itch.io sign-in key, when signed in |
 | `games_cache.json` | Timestamped public catalogue cache |
 | `owned_cache.json` | URLs found through successful key validation |
 | `inventory.json` | App-managed downloads, source identities, and artwork ownership |
