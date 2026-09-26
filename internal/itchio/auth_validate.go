@@ -115,7 +115,7 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return "", nil, fmt.Errorf("API key invalid or expired (HTTP %d)", resp.StatusCode)
+		return "", nil, fmt.Errorf("fetch profile (HTTP %d): %w", resp.StatusCode, ErrSignInRejected)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf("fetch profile: HTTP %d", resp.StatusCode)
