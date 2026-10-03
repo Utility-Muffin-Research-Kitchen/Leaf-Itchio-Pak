@@ -244,6 +244,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	list.SetWake(func() { _ = ctx.Wake() })
 	account := ui.NewAccount(cfg, cfgPath, ownedCachePath, client)
 	account.SetOwnedChanged(list.ReplaceOwnedGames)
+	account.SetCredentialChanged(updateSvc.TriggerNow)
 	model := appui.NewMainListModel(nil)
 	model.SetLoading()
 	screen, err := catui.NewMainListScreen(ctx, model, imageCache)

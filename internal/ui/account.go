@@ -20,15 +20,22 @@ const tokenSecretLabel = "[TOKEN]"
 // client, the live owned-game list, and owned_cache.json. Call it only from
 // the UI goroutine, which owns cfg.
 type Account struct {
-	cfg            *settings.Config
-	cfgPath        string
-	ownedCachePath string
-	client         *itchio.Client
-	ownedChanged   func([]itchio.OwnedGame)
+	cfg               *settings.Config
+	cfgPath           string
+	ownedCachePath    string
+	client            *itchio.Client
+	ownedChanged      func([]itchio.OwnedGame)
+	credentialChanged func()
 }
 
 func NewAccount(cfg *settings.Config, cfgPath, ownedCachePath string, client *itchio.Client) *Account {
+	client.SetAuthToken(cfg.Credential())
 	return &Account{cfg: cfg, cfgPath: cfgPath, ownedCachePath: ownedCachePath, client: client}
+}
+
+// SetCredentialChanged schedules a fresh inventory check after sign-in changes.
+func (account *Account) SetCredentialChanged(callback func()) {
+	account.credentialChanged = callback
 }
 
 // SetOwnedChanged registers the catalogue's live owned-game update
@@ -101,9 +108,18 @@ func (account *Account) Validated(user string, owned []itchio.OwnedGame) error {
 }
 
 func (account *Account) reset() error {
-	account.client.ResetAPIKeyState()
+	token := account.cfg.Credential()
+	if account.client.AuthToken() == token {
+		// Signing in again with the same token still invalidates earlier scans.
+		account.client.ResetAPIKeyState()
+	} else {
+		account.client.SetAuthToken(token)
+	}
 	if account.ownedChanged != nil {
 		account.ownedChanged(nil)
+	}
+	if account.credentialChanged != nil {
+		account.credentialChanged()
 	}
 	if err := os.Remove(account.ownedCachePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove the previous owned-game cache: %w", err)

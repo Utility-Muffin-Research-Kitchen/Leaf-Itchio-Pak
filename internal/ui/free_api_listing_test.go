@@ -114,7 +114,7 @@ func TestCurrentMetadataRoutesFormerlyFreeGameThroughPurchaseCheck(t *testing.T)
 		}
 	}))
 	defer srv.Close()
-	flow := NewCatDownloadFlow(itchio.NewClientWithBase(srv.URL), &settings.Config{APIKey: sessionTestKey},
+	flow := NewCatDownloadFlow(itchio.NewClientWithBase(srv.URL), &settings.Config{AuthToken: sessionTestKey},
 		itchio.Game{URL: srv.URL + "/game", IsFree: true},
 		&itchio.GameDetail{GameID: "42", Data: &itchio.GameData{ID: 42, Price: "$2.00"}}, nil, nil)
 	update := <-flow.updates
