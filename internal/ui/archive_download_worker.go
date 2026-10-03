@@ -422,8 +422,9 @@ func manifestFromZIP(files []*zip.File) roms.ZIPManifest {
 		if file.FileInfo().IsDir() {
 			continue
 		}
+		kind, name := classifyWithMagic(file.Name, file.Open)
 		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
+			Name: name, Kind: kind,
 			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
 		})
 	}
@@ -436,8 +437,9 @@ func manifestFrom7z(files []*sevenzip.File) roms.ZIPManifest {
 		if file.FileInfo().IsDir() {
 			continue
 		}
+		kind, name := classifyWithMagic(file.Name, file.Open)
 		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: file.Name, Kind: roms.ClassifyEntry(file.Name), Size: file.UncompressedSize,
+			Name: name, Kind: kind, Size: file.UncompressedSize,
 		})
 	}
 	return manifest

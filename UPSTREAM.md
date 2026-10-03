@@ -19,6 +19,7 @@ Leaf-Itchio-Pak is a hard fork of
 |---|---|---|---|
 | Initial fork | All history through `42171a5` | None | Establish the exact `v1.0.19` behavioral baseline before Leaf changes |
 | `v1.0.25` inventory and naming (2026-09-25) | Adapted `79539ff` (superseded upload is an update), `dc94f66` (ask between alternative builds), `4915dde` and `c346eb0` (no rename inside one operation replaces another of its files) | Upstream's screen files and palette/tooling changes bundled with `c346eb0` | Each defect reproduced first with a failing test on Leaf `main`. Leaf's versions: PlayStation CUE/BIN and multi-disc sets stay one batch; names are reserved per operation and compared as FAT32 does; files whose unified names meet keep their original names, planned up front for ZIP and 7z after magic-byte classification; case-only duplicates fail the download before writing, or are skipped in an archive, including both Pico-8 paths |
+| `v1.1.0-rc3` archive Markdown (2026-10-03) | Adapted `65a17f60e79437b2f29eed50d0a230592e3a6e3b` (identify `.md` ROMs by their header) | None | ZIP and 7z inspection, downloaded-archive preflight, and extraction now agree: Markdown stays an ordinary file, and a real Mega Drive image stays installable. Regression tests first reproduced README-only and mixed bundles being installed as ROMs |
 
 Future reviews append a row here. Do not rewrite old decisions.
 
