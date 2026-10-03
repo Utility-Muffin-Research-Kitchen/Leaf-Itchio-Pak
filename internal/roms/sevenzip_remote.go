@@ -73,8 +73,9 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 		// Skip for known image extensions — a .png is always artwork.
 		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
 			if detected := classify7zByMagic(f); detected != "" {
-				stem := strings.TrimSuffix(name, filepath.Ext(name))
-				name = stem + detected
+				if !strings.EqualFold(filepath.Ext(name), detected) {
+					name = strings.TrimSuffix(name, filepath.Ext(name)) + detected
+				}
 				kind = KindROM
 			}
 		}

@@ -179,8 +179,11 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	defer r.Close()
-	actualManifest := manifestFromZIP(r.File)
-	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+	actualManifest, err := manifestFromZIP(r.File)
+	if err == nil {
+		_, err = s.plan.preflight(s.cfg, actualManifest)
+	}
+	if err != nil {
 		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
 		s.storeState(zipDLError)
 		return
@@ -331,8 +334,11 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		return
 	}
 	defer r.Close()
-	actualManifest := manifestFrom7z(r.File)
-	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+	actualManifest, err := manifestFrom7z(r.File)
+	if err == nil {
+		_, err = s.plan.preflight(s.cfg, actualManifest)
+	}
+	if err != nil {
 		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
 		s.storeState(zipDLError)
 		return
@@ -416,33 +422,55 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	s.storeState(zipDLDone)
 }
 
-func manifestFromZIP(files []*zip.File) roms.ZIPManifest {
+// Validate downloaded headers before opening any member. In a solid 7z,
+// even reading one small header can decode all preceding members.
+func manifestFromZIP(files []*zip.File) (roms.ZIPManifest, error) {
 	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
 	for _, file := range files {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		kind, name := classifyWithMagic(file.Name, file.Open)
 		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: name, Kind: kind,
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
 			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
 		})
 	}
-	return manifest
+	if err := ValidateArchiveManifest(manifest, DefaultArchiveLimits); err != nil {
+		return roms.ZIPManifest{}, err
+	}
+	index := 0
+	for _, file := range files {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		manifest.Entries[index].Kind, manifest.Entries[index].Name = classifyWithMagic(file.Name, file.Open)
+		index++
+	}
+	return manifest, nil
 }
 
-func manifestFrom7z(files []*sevenzip.File) roms.ZIPManifest {
+func manifestFrom7z(files []*sevenzip.File) (roms.ZIPManifest, error) {
 	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
 	for _, file := range files {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		kind, name := classifyWithMagic(file.Name, file.Open)
 		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: name, Kind: kind, Size: file.UncompressedSize,
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name), Size: file.UncompressedSize,
 		})
 	}
-	return manifest
+	if err := ValidateArchiveManifest(manifest, DefaultArchiveLimits); err != nil {
+		return roms.ZIPManifest{}, err
+	}
+	index := 0
+	for _, file := range files {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		manifest.Entries[index].Kind, manifest.Entries[index].Name = classifyWithMagic(file.Name, file.Open)
+		index++
+	}
+	return manifest, nil
 }
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
@@ -1033,6 +1061,9 @@ func classifyWithMagic(baseName string, open func() (io.ReadCloser, error)) (rom
 	detected := roms.DetectPlayableROMExt(buf[:n])
 	if detected == "" {
 		return kind, baseName
+	}
+	if strings.EqualFold(filepath.Ext(baseName), detected) {
+		return roms.KindROM, baseName
 	}
 	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 	return roms.KindROM, stem + detected

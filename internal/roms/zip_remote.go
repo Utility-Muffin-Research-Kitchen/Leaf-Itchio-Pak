@@ -254,8 +254,9 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		// artwork even if it is 128 px wide (e.g. raspi/linux Pico-8 exports).
 		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
 			if detected := classifyByMagic(f); detected != "" {
-				stem := strings.TrimSuffix(name, filepath.Ext(name))
-				name = stem + detected
+				if !strings.EqualFold(filepath.Ext(name), detected) {
+					name = strings.TrimSuffix(name, filepath.Ext(name)) + detected
+				}
 				kind = KindROM
 			}
 		}
