@@ -46,7 +46,12 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 	case result := <-loader.updates:
 		if result.err != nil {
 			logger.Error("cat detail: %v", result.err)
-			model.SetError(result.err.Error())
+			model.Tags = dedupeStrings(loader.game.Tags)
+			model.Images = dedupeStrings([]string{loader.game.CoverURL})
+			model.SetError("Go back and reopen this game to try again.")
+			if itchio.IsAdvisoryTriggered(model.Tags, catFilterConfig(cfg)) {
+				model.State = appui.DetailWarning
+			}
 			return true
 		}
 		detail := result.detail

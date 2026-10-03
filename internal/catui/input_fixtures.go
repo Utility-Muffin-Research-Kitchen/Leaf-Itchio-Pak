@@ -62,14 +62,22 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
-	case "detail", "warning":
+	case "detail", "warning", "detail-unavailable", "detail-unavailable-downloaded":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
-			Platform: "GBC", IsFree: true, CanDownload: true, Downloaded: config.Screen == "detail",
+			Platform: "GBC", IsFree: true, CanDownload: true,
+			Downloaded: config.Screen == "detail" || config.Screen == "detail-unavailable-downloaded",
 		})
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
 			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")
+		if config.Screen == "detail-unavailable" || config.Screen == "detail-unavailable-downloaded" {
+			model.SetError("Go back and reopen this game to try again.")
+			model.Images = nil
+			if model.Game.Downloaded {
+				model.Images = []string{"fixture://detail-cover"}
+			}
+		}
 		screen, screenErr := NewDetailScreen(ctx, model, cache)
 		if screenErr != nil {
 			return screenErr

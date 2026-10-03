@@ -84,6 +84,17 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	if event.Button == ButtonStart {
 		return DetailIntentSettings
 	}
+	if event.Button == ButtonX && m.Game.Downloaded && (m.State == DetailReady || m.State == DetailError) {
+		return DetailIntentManage
+	}
+	if m.State == DetailError && (event.Button == ButtonUp || event.Button == ButtonDown) {
+		if event.Button == ButtonUp {
+			m.ScrollLine--
+		} else {
+			m.ScrollLine++
+		}
+		m.clampScroll()
+	}
 	if m.State != DetailReady {
 		return DetailIntentNone
 	}
@@ -103,10 +114,6 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonA:
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
-		}
-	case ButtonX:
-		if m.Game.Downloaded {
-			return DetailIntentManage
 		}
 	}
 	return DetailIntentNone
