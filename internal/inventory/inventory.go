@@ -678,7 +678,7 @@ func (inv *Inventory) SetUpstreamFilesFrom(gameURL, source string, files []Upstr
 }
 
 func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []UpstreamFile) {
-	baseline := e.UpdateCheckedAt.IsZero() || e.UpstreamSource != source || len(e.KnownUpstreamFiles) == 0
+	baseline := e.UpdateCheckedAt.IsZero() || e.UpstreamSource != source
 	byID := make(map[string]UpstreamFile, len(e.KnownUpstreamFiles))
 	byName := make(map[string]UpstreamFile, len(e.KnownUpstreamFiles)*2)
 	for _, file := range e.KnownUpstreamFiles {

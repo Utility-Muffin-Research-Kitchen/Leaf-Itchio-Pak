@@ -158,3 +158,13 @@ func TestArchiveUpdateRequiresEveryTrackedMember(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyAPIListingRemainsAnEstablishedBaseline(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "old.gb", UploadID: "1"})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "replacement.gb", UploadID: "2"}})
+	if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || pending[0].UploadID != "2" || !pending[0].IsNew {
+		t.Fatalf("new upload after authoritative empty listing = %+v, want an update", pending)
+	}
+}

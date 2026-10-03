@@ -5,12 +5,13 @@ package ui
 import (
 	"archive/zip"
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -50,12 +51,6 @@ func TestDownloadWorkersRetainSelectedUploadVersion(t *testing.T) {
 
 func TestArchiveWorkerRetainsOriginalUploadForROMAndMusic(t *testing.T) {
 	primary, _ := transactionPaths(t)
-	f := newInstallAPI(t, `{"uploads":[{"id":5,"filename":"release.zip","build_id":9}]}`, nil)
-	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
-	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
-	if listing.err != nil {
-		t.Fatal(listing.err)
-	}
 	var data bytes.Buffer
 	w := zip.NewWriter(&data)
 	for _, name := range []string{"cart.gb", "theme.mp3"} {
@@ -72,23 +67,36 @@ func TestArchiveWorkerRetainsOriginalUploadForROMAndMusic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := &ArchiveDownloadWorker{client: flow.client, cfg: flow.cfg, game: flow.game, detail: flow.detail, inv: flow.inv,
-		plan: ZIPPlan{Upload: listing.uploads[0], ROMDirs: map[string]string{".gb": filepath.Join(primary, "Roms", "GB")}, MusicDir: filepath.Join(primary, "Music")}}
+	manifest := roms.ZIPManifest{}
 	for _, file := range reader.File {
-		if filepath.Ext(file.Name) == ".gb" {
-			_, err = worker.extractROM(file, file.Name, time.Now())
-		} else {
-			_, err = worker.extractMusic(file, file.Name, time.Now())
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
+			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
+		})
+	}
+	f := newInstallAPI(t, `{"uploads":[{"id":5,"filename":"release.zip","build_id":9}]}`,
+		map[string][]byte{"5": data.Bytes()})
+	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
+	if listing.err != nil {
+		t.Fatal(listing.err)
+	}
+	plan := ZIPPlan{Upload: listing.uploads[0], Manifest: manifest, DownloadROMs: true, DownloadMusic: true,
+		ROMDirs: map[string]string{".gb": filepath.Join(primary, "Roms", "GB")}, MusicDir: filepath.Join(primary, "Music")}
+	worker := NewArchiveDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, plan, flow.inv,
+		filepath.Join(t.TempDir(), "inventory.json"))
+	waitFor(t, func() bool { return worker.loadState() == zipDLDone || worker.loadState() == zipDLError })
+	if state := worker.CatSnapshot(); state.State != appui.DownloadProgressDone {
+		t.Fatalf("archive download failed: %+v", state)
 	}
 	entry, _ := flow.inv.Lookup(flow.game.URL)
 	if entry.GameID != "42" || len(entry.Files) != 2 {
 		t.Fatalf("archive entry = %+v", entry)
 	}
 	for _, file := range entry.Files {
+		if content, err := os.ReadFile(file.DestPath); err != nil || string(content) != "file contents" {
+			t.Fatalf("extracted contents for %s: %q, %v", file.Filename, content, err)
+		}
 		if file.UploadID != "5" || file.UploadFingerprint != "build:9" || file.OriginalUpload != "release.zip" {
 			t.Fatalf("extracted upload identity = %+v", file)
 		}
