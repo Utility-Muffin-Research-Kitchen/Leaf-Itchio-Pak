@@ -101,6 +101,28 @@ func TestFreeGameWithAKeyIsListedThroughTheAPI(t *testing.T) {
 	}
 }
 
+func TestCurrentMetadataRoutesFormerlyFreeGameThroughPurchaseCheck(t *testing.T) {
+	var ownership atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			ownership.Add(1)
+			fmt.Fprint(w, `{"owned_keys":[],"per_page":50}`)
+		default:
+			t.Errorf("paid game tried a download path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	flow := NewCatDownloadFlow(itchio.NewClientWithBase(srv.URL), &settings.Config{APIKey: sessionTestKey},
+		itchio.Game{URL: srv.URL + "/game", IsFree: true},
+		&itchio.GameDetail{GameID: "42", Data: &itchio.GameData{ID: 42, Price: "$2.00"}}, nil, nil)
+	update := <-flow.updates
+	if update.err == nil || ownership.Load() == 0 || flow.game.IsFree {
+		t.Fatalf("paid route: ownership=%d free=%v error=%v", ownership.Load(), flow.game.IsFree, update.err)
+	}
+}
+
 func TestFreeGameWithoutAKeyUsesTheWebFlow(t *testing.T) {
 	site := newFreeGameSite(t, apiUploads(`{"uploads":[{"id":5,"filename":"api.gb"}]}`))
 	update := site.discover(t, "")

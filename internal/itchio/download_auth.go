@@ -379,34 +379,46 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		Errors  []string        `json:"errors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, fmt.Errorf("decode uploads response: %w", err)
+		return nil, fmt.Errorf("decode uploads response")
 	}
 	if len(envelope.Errors) > 0 {
-		logger.Error("auth: upload list rejected: %s", strings.Join(envelope.Errors, "; "))
+		logger.Error("auth: upload list rejected")
 		return nil, fmt.Errorf("itch.io rejected the upload list request")
 	}
 
 	// Only the fields used here are decoded. "traits" is unstable ({} when
 	// empty, an array otherwise), so it is read leniently.
 	var items []struct {
-		ID       int64           `json:"id"`
-		Filename string          `json:"filename"`
-		Size     int64           `json:"size"`
-		Type     string          `json:"type"`
-		Traits   json.RawMessage `json:"traits"`
+		ID          int64           `json:"id"`
+		Filename    string          `json:"filename"`
+		DisplayName string          `json:"display_name"`
+		Type        string          `json:"type"`
+		Traits      json.RawMessage `json:"traits"`
+		Size        int64           `json:"size"`
+		MD5         string          `json:"md5_hash"`
+		BuildID     int64           `json:"build_id"`
+		UpdatedAt   time.Time       `json:"updated_at"`
 	}
 	if isJSONArray(envelope.Uploads) {
 		if err := json.Unmarshal(envelope.Uploads, &items); err != nil {
-			return nil, fmt.Errorf("decode uploads array: %w", err)
+			return nil, fmt.Errorf("decode uploads array")
 		}
 	} else {
-		logger.Debug("auth: uploads field is not an array (%.50s) — treating as empty", envelope.Uploads)
+		// Empty collections use {}, null, or an omitted field. Other shapes
+		// must not masquerade as an empty list and mark installed games removed.
+		if raw := bytes.TrimSpace(envelope.Uploads); len(raw) != 0 && !bytes.Equal(raw, []byte("null")) {
+			var empty map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &empty); err != nil || len(empty) != 0 {
+				return nil, fmt.Errorf("decode uploads: unexpected collection shape")
+			}
+		}
 	}
 
 	var uploads []Upload
 	for _, u := range items {
 		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size,
-			Type: u.Type, Traits: decodeTraits(u.Traits)}
+			DisplayName: u.DisplayName, Type: u.Type, Traits: decodeTraits(u.Traits),
+			MD5: u.MD5, BuildID: u.BuildID, UpdatedAt: u.UpdatedAt}
 		ext := strings.ToLower(roms.ROMExt(u.Filename))
 		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, upload)

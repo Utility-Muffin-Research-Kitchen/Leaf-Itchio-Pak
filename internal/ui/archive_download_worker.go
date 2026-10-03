@@ -213,15 +213,17 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
 					s.extracted = append(s.extracted, m3uPath)
 					file := inventory.DownloadedFile{
-						UploadID:      s.plan.Upload.UploadID,
-						Filename:      filepath.Base(m3uPath),
-						DestPath:      m3uPath,
-						DownloadedAt:  now,
-						FileType:      inventory.FileTypeM3U,
-						SourceArchive: s.plan.Upload.Filename,
+						UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+						OriginalUpload: s.plan.Upload.Filename,
+						Filename:       filepath.Base(m3uPath),
+						DestPath:       m3uPath,
+						DownloadedAt:   now,
+						FileType:       inventory.FileTypeM3U,
+						SourceArchive:  s.plan.Upload.Filename,
 					}
 					applyArtwork(&file, artwork)
 					s.inv.Add(s.game.URL, inventory.Entry{
+						GameID:  downloadGameID(s.detail),
 						GameURL: s.game.URL, Title: s.game.Title,
 						Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 					}, file)
@@ -496,16 +498,18 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		logger.Info("7z-download: pico8 extracted %s → %s", base, finalDest)
 		s.extracted = append(s.extracted, finalDest)
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:  downloadGameID(s.detail),
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
-			UploadID:      s.plan.Upload.UploadID,
-			Filename:      filepath.Base(finalDest),
-			DestPath:      finalDest,
-			DownloadedAt:  now,
-			FileType:      inventory.FileTypeROM,
-			UnifiedName:   unifiedName,
-			SourceArchive: s.plan.Upload.Filename,
+			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+			OriginalUpload: s.plan.Upload.Filename,
+			Filename:       filepath.Base(finalDest),
+			DestPath:       finalDest,
+			DownloadedAt:   now,
+			FileType:       inventory.FileTypeROM,
+			UnifiedName:    unifiedName,
+			SourceArchive:  s.plan.Upload.Filename,
 		})
 	}
 }
@@ -561,16 +565,18 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
-		UploadID:      s.plan.Upload.UploadID,
-		Filename:      filepath.Base(finalDest),
-		DestPath:      finalDest,
-		DownloadedAt:  now,
-		FileType:      inventory.FileTypeROM,
-		UnifiedName:   unifiedName,
-		SourceArchive: s.plan.Upload.Filename,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       filepath.Base(finalDest),
+		DestPath:       finalDest,
+		DownloadedAt:   now,
+		FileType:       inventory.FileTypeROM,
+		UnifiedName:    unifiedName,
+		SourceArchive:  s.plan.Upload.Filename,
 	}
 	applyArtwork(&file, artwork)
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, file)
@@ -594,22 +600,22 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		return "", err
 	}
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		UploadID:     s.plan.Upload.UploadID,
-		Filename:     filepath.Base(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       filepath.Base(dest),
+		DestPath:       dest,
+		DownloadedAt:   now,
+		FileType:       inventory.FileTypeMusic,
 	})
 	return dest, nil
 }
 
-// backfillSourceArchive patches SourceArchive into an existing inventory entry
-// whose DestPath matches. Called when extraction is skipped because an identical
-// file already exists — pre-fix entries have SourceArchive="" which causes the
-// update service to incorrectly mark the game as removed.
+// backfillSourceArchive records the current upload identity when an existing
+// managed ROM was verified byte-for-byte identical to its archive entry.
 func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 	if s.plan.Upload.Filename == "" {
 		return
@@ -619,9 +625,12 @@ func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 		return
 	}
 	for _, f := range entry.Files {
-		if f.DestPath == destPath && f.SourceArchive == "" {
+		if f.DestPath == destPath {
 			f.SourceArchive = s.plan.Upload.Filename
-			s.inv.UpdateFile(s.game.URL, destPath, f)
+			f.OriginalUpload = s.plan.Upload.Filename
+			f.UploadID = s.plan.Upload.UploadID
+			f.UploadFingerprint = s.plan.Upload.UploadFingerprint
+			s.inv.Add(s.game.URL, entry, f)
 			logger.Debug("zip-download: backfilled SourceArchive=%q for %s",
 				s.plan.Upload.Filename, filepath.Base(destPath))
 			return
@@ -754,16 +763,18 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
-		UploadID:      s.plan.Upload.UploadID,
-		Filename:      filepath.Base(finalDest),
-		DestPath:      finalDest,
-		DownloadedAt:  now,
-		UnifiedName:   unifiedName,
-		FileType:      inventory.FileTypeROM,
-		SourceArchive: s.plan.Upload.Filename,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       filepath.Base(finalDest),
+		DestPath:       finalDest,
+		DownloadedAt:   now,
+		UnifiedName:    unifiedName,
+		FileType:       inventory.FileTypeROM,
+		SourceArchive:  s.plan.Upload.Filename,
 	}
 	applyArtwork(&file, artwork)
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, file)
@@ -787,14 +798,16 @@ func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now t
 		return "", err
 	}
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		UploadID:     s.plan.Upload.UploadID,
-		Filename:     filepath.Base(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       filepath.Base(dest),
+		DestPath:       dest,
+		DownloadedAt:   now,
+		FileType:       inventory.FileTypeMusic,
 	})
 	return dest, nil
 }
@@ -898,16 +911,18 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		s.extracted = append(s.extracted, finalDest)
 
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:  downloadGameID(s.detail),
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
-			UploadID:      s.plan.Upload.UploadID,
-			Filename:      filepath.Base(finalDest),
-			DestPath:      finalDest,
-			DownloadedAt:  now,
-			FileType:      inventory.FileTypeROM,
-			UnifiedName:   unifiedName,
-			SourceArchive: s.plan.Upload.Filename,
+			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+			OriginalUpload: s.plan.Upload.Filename,
+			Filename:       filepath.Base(finalDest),
+			DestPath:       finalDest,
+			DownloadedAt:   now,
+			FileType:       inventory.FileTypeROM,
+			UnifiedName:    unifiedName,
+			SourceArchive:  s.plan.Upload.Filename,
 		})
 	}
 }

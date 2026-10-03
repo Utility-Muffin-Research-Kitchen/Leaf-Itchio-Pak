@@ -51,6 +51,29 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		}
 		detail := result.detail
 		loader.detail = detail
+		if data := detail.Data; data != nil {
+			loader.game.IsFree = data.Pricing() != itchio.PricingPaid
+			model.Game.IsFree = loader.game.IsFree
+			model.Game.CanDownload = loader.game.IsFree || (cfg != nil && cfg.SignedIn())
+			model.Game.NeedsSignIn = !model.Game.CanDownload
+			if data.CoverImage != "" {
+				loader.game.CoverURL = data.CoverImage
+			}
+			switch data.Pricing() {
+			case itchio.PricingFree:
+				model.Game.PriceLabel = "Free"
+			case itchio.PricingNameYourOwnPrice:
+				model.Game.PriceLabel = "Free / name your price"
+				if data.SuggestedPrice != "" {
+					model.Game.PriceLabel = "Free / suggested " + data.SuggestedPrice
+				}
+			case itchio.PricingPaid:
+				model.Game.PriceLabel = data.Price
+				if data.OriginalPrice != "" && data.OriginalPrice != data.Price {
+					model.Game.PriceLabel += " (was " + data.OriginalPrice + ")"
+				}
+			}
+		}
 		images := dedupeStrings(append([]string{loader.game.CoverURL}, detail.ScreenshotURLs...))
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
 		warning := itchio.IsAdvisoryTriggered(detail.PageTags, catFilterConfig(cfg))
@@ -64,6 +87,9 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 // Detail returns the fully scraped detail after Sync publishes a ready model.
 // It is only read and written by the Cat owner thread.
 func (loader *CatDetailLoader) Detail() *itchio.GameDetail { return loader.detail }
+
+// Game preserves inventory identity while refreshing mutable public fields.
+func (loader *CatDetailLoader) Game() itchio.Game { return loader.game }
 
 func dedupeStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))

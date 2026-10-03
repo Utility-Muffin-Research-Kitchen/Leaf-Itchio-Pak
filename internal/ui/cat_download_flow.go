@@ -89,6 +89,9 @@ type CatDownloadFlow struct {
 
 func NewCatDownloadFlow(client *itchio.Client, cfg *settings.Config, game itchio.Game,
 	detail *itchio.GameDetail, inv *inventory.Inventory, wake func()) *CatDownloadFlow {
+	if detail != nil && detail.Data != nil {
+		game.IsFree = detail.Data.Pricing() != itchio.PricingPaid
+	}
 	flow := &CatDownloadFlow{
 		client: client, cfg: cfg, game: game, detail: detail, inv: inv, wake: wake,
 		updates: make(chan catDownloadUpdate, 2),
@@ -145,7 +148,7 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-			UploadID: upload.UploadID,
+			UploadID: upload.UploadID, UploadFingerprint: upload.Fingerprint(),
 		})
 	}
 	return update
@@ -171,7 +174,8 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 		for _, upload := range uploads {
 			update.uploads = append(update.uploads, roms.Upload{
 				Filename: upload.Filename, UploadID: upload.UploadID,
-				NeedsFormat: upload.NeedsFormat, Install: install,
+				UploadFingerprint: upload.Fingerprint(),
+				NeedsFormat:       upload.NeedsFormat, Install: install,
 				DesktopOrWeb: upload.DesktopOrWebOnly(),
 			})
 		}
@@ -201,7 +205,8 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, UploadID: upload.UploadID,
-			NeedsFormat: upload.NeedsFormat, Install: install,
+			UploadFingerprint: upload.Fingerprint(),
+			NeedsFormat:       upload.NeedsFormat, Install: install,
 			DesktopOrWeb: upload.DesktopOrWebOnly(),
 		})
 	}

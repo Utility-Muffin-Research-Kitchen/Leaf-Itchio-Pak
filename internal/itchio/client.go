@@ -255,6 +255,8 @@ type Client struct {
 	// keyGeneration changes whenever the API key is replaced or removed, so
 	// account-derived results computed under an older key are discarded.
 	keyGeneration atomic.Uint64
+	// Credential snapshot for background checks; never serialized or logged.
+	authToken atomic.Pointer[string]
 	// purchaseCounts maps purchase ID to the number of distinct games it
 	// grants, from the last complete owned-library scan under the current
 	// key. nil until such a scan; never persisted.

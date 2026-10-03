@@ -83,6 +83,7 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 			TempPattern:   filepath.Join(filepath.Dir(dest), ".itchio-download-*.part"),
 			ExpectedBytes: -1, ArtworkPath: inventory.CanonicalArtworkPath(dest),
 			InventoryMutation: inventory.DownloadedFile{
+				UploadID: upload.UploadID, UploadFingerprint: upload.UploadFingerprint,
 				OriginalUpload: upload.Filename, InstalledName: filepath.Base(dest),
 				SourceID: identity.SourceID, RelativePath: identity.RelativePath,
 				CanonicalSystem: identity.CanonicalSystem, DestPath: dest,

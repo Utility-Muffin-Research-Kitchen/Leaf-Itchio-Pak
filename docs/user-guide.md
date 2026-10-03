@@ -128,8 +128,18 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+When signed in, it also detects files replaced under the same name, including
+paid games you own. These checks read metadata without starting a download.
+When signed out, it can find newly listed filenames on public pages, but cannot
+verify changed file contents or hidden paid downloads. Switching between these
+sources establishes a new baseline without marking every file as an update.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
+
+Game details use itch.io's current price and currency when available. A suggested
+contribution still allows a free download. Sale prices show the original amount
+alongside the current price. If that metadata cannot load, you still get the
+available game-page details.
 
 ## Sign in with itch.io
 

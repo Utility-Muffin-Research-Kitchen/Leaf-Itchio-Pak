@@ -3,7 +3,6 @@ package inventory_test
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -231,87 +230,33 @@ func TestUpdateServiceMigratesOwnedMediaArtworkAndRequestsScan(t *testing.T) {
 	}
 }
 
-// freeGameServer builds an httptest.Server that mimics a free itch.io game page
-// with the given upload filenames. Pass status 404 to simulate a removed game.
+// freeGameServer exposes public upload names without starting any download.
 func freeGameServer(t *testing.T, status int, filenames []string) *httptest.Server {
 	t.Helper()
-	var srv *httptest.Server
-	mux := http.NewServeMux()
-
-	if status != http.StatusOK {
-		mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "not found", status)
-		})
-		srv = httptest.NewServer(mux)
-		return srv
-	}
-
-	var srvURL string
-
-	// GET /game — game page with CSRF token
-	mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><head><meta name="csrf_token" value="TESTCSRF"/></head></html>`))
-	})
-
-	// POST /game/download_url — returns signed URL (last path segment is the key)
-	mux.HandleFunc("/game/download_url", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		data, _ := json.Marshal(map[string]string{"url": srvURL + "/dl/TESTKEY"})
-		w.Write(data)
-	})
-
-	// GET /dl/TESTKEY — signed download page with upload list
-	mux.HandleFunc("/dl/TESTKEY", func(w http.ResponseWriter, r *http.Request) {
-		var body bytes.Buffer
-		body.WriteString(`<html><head><meta name="csrf_token" value="DLCSRF"/></head><body>`)
-		for i, fn := range filenames {
-			body.WriteString(`<div class="upload"><div class="info_column"><div class="upload_name">`)
-			body.WriteString(`<strong class="name" title="` + fn + `">` + fn + `</strong>`)
-			body.WriteString(`</div></div><div class="actions">`)
-			body.WriteString(fmt.Sprintf(`<a class="button download_btn" href="javascript:void(0);" data-upload_id="%d">Download</a>`, 100+i))
-			body.WriteString(`</div></div>`)
-		}
-		body.WriteString(`</body></html>`)
-		w.Write(body.Bytes())
-	})
-
-	srv = httptest.NewServer(mux)
-	srvURL = srv.URL
-	return srv
+	return publicGameServer(t, status, &filenames)
 }
 
-// freeGameServerDynamic is like freeGameServer but reads filenames from the
-// pointed-to slice at request time, so callers can mutate it between runs.
 func freeGameServerDynamic(t *testing.T, filenames *[]string) *httptest.Server {
 	t.Helper()
-	var srvURL string
-	mux := http.NewServeMux()
+	return publicGameServer(t, http.StatusOK, filenames)
+}
 
-	mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><head><meta name="csrf_token" value="TESTCSRF"/></head></html>`))
-	})
-	mux.HandleFunc("/game/download_url", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		data, _ := json.Marshal(map[string]string{"url": srvURL + "/dl/TESTKEY"})
-		w.Write(data)
-	})
-	mux.HandleFunc("/dl/TESTKEY", func(w http.ResponseWriter, r *http.Request) {
-		var body bytes.Buffer
-		body.WriteString(`<html><head><meta name="csrf_token" value="DLCSRF"/></head><body>`)
-		for i, fn := range *filenames {
-			body.WriteString(`<div class="upload"><div class="info_column"><div class="upload_name">`)
-			body.WriteString(`<strong class="name" title="` + fn + `">` + fn + `</strong>`)
-			body.WriteString(`</div></div><div class="actions">`)
-			body.WriteString(fmt.Sprintf(`<a class="button download_btn" href="javascript:void(0);" data-upload_id="%d">Download</a>`, 100+i))
-			body.WriteString(`</div></div>`)
+func publicGameServer(t *testing.T, status int, filenames *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/game" {
+			t.Errorf("background check started an unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
 		}
-		body.WriteString(`</body></html>`)
-		w.Write(body.Bytes())
-	})
-
-	srv := httptest.NewServer(mux)
-	srvURL = srv.URL
-	return srv
+		if status != http.StatusOK {
+			http.Error(w, "not found", status)
+			return
+		}
+		for _, name := range *filenames {
+			fmt.Fprintf(w, `<div class="upload"><strong class="name" title="%s">%s</strong></div>`, name, name)
+		}
+	}))
 }
 
 func TestUpdateService_Marks404AsRemoved(t *testing.T) {
@@ -435,7 +380,7 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 	}
 }
 
-func TestUpdateService_MarksRemovedWhenDownloadedFileVanishesFromStore(t *testing.T) {
+func TestUpdateService_KeepsReachableWhenDownloadedFileIsSuperseded(t *testing.T) {
 	// Upstream now only has game-v2.gb — the originally downloaded game.gb is gone.
 	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
 	defer srv.Close()
@@ -462,8 +407,8 @@ func TestUpdateService_MarksRemovedWhenDownloadedFileVanishesFromStore(t *testin
 	<-done
 	svc.Stop()
 
-	if !inv.IsRemoved(srv.URL + "/game") {
-		t.Error("IsRemoved: want true when downloaded file is no longer available upstream")
+	if inv.IsRemoved(srv.URL + "/game") {
+		t.Error("IsRemoved: want false when another upload supersedes the downloaded file")
 	}
 }
 

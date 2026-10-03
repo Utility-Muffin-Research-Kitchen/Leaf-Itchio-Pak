@@ -229,6 +229,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	imageCache := catui.NewImageCache(50, client.HTTPClient())
 	defer imageCache.Clear()
 	imageCache.SetNotify(func() { _ = ctx.Wake() })
+	client.SetAuthToken(cfg.AuthToken)
 	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() { _ = ctx.Wake() })
 	updateSvc.SetSources(sources)
 	updateSvc.SetLibraryScanRequester(func() (string, error) {
@@ -845,6 +846,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
@@ -1248,6 +1250,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		list.SyncCatModel(model)
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {

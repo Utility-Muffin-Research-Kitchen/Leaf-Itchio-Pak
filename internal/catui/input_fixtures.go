@@ -63,11 +63,19 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
-	case "detail", "warning":
+	case "detail", "detail-price", "detail-donation", "warning":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
 			Platform: "GBC", IsFree: true, CanDownload: true, Downloaded: config.Screen == "detail",
 		})
+		if config.Screen == "detail-price" {
+			model.Game.IsFree = false
+			model.Game.CanDownload = false
+			model.Game.PriceLabel = "€2,50 (was €5,00)"
+		}
+		if config.Screen == "detail-donation" {
+			model.Game.PriceLabel = "Free / suggested $3.00"
+		}
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
 			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")

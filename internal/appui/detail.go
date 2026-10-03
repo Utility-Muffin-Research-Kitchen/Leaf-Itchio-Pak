@@ -25,7 +25,8 @@ type DetailGame struct {
 	// Owned is set when the game is in the signed-in account's owned set.
 	// A paid game that is neither downloadable nor waiting for a sign-in is
 	// one that account does not own (NotOwned).
-	Owned bool
+	Owned      bool
+	PriceLabel string
 }
 
 // NotOwned reports a paid game the signed-in account does not own: it has

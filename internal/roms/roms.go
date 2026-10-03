@@ -18,10 +18,11 @@ func ROMExt(filename string) string {
 }
 
 type Upload struct {
-	Filename    string
-	URL         string // web resolver URL; empty for API uploads
-	UploadID    string // itch.io upload ID; recorded with each installed file
-	NeedsFormat bool   // true if the user must choose a supported format
+	UploadFingerprint string // metadata captured when this version was selected
+	Filename          string
+	URL               string // web resolver URL; empty for API uploads
+	UploadID          string // itch.io upload ID; recorded with each installed file
+	NeedsFormat       bool   // true if the user must choose a supported format
 	// DesktopOrWeb marks a build for a computer, phone or browser, from the
 	// API listing's upload type and traits. Such a file is never chosen
 	// automatically and is listed last.

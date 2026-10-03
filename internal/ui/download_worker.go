@@ -140,14 +140,16 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
-					UploadID:     upload.UploadID,
-					Filename:     upload.Filename,
-					DestPath:     finalDest,
-					DownloadedAt: time.Now(),
-					UnifiedName:  unifiedName,
+					UploadID: upload.UploadID, UploadFingerprint: upload.UploadFingerprint,
+					OriginalUpload: upload.Filename,
+					Filename:       upload.Filename,
+					DestPath:       finalDest,
+					DownloadedAt:   time.Now(),
+					UnifiedName:    unifiedName,
 				}
 				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{
+					GameID:   downloadGameID(s.detail),
 					GameURL:  game.URL,
 					Title:    game.Title,
 					Author:   game.Author,
@@ -181,4 +183,12 @@ func (s *DirectDownloadWorker) Cancel() {
 // IsBusy implements BusyChecker. Returns true while a download is in flight.
 func (s *DirectDownloadWorker) IsBusy() bool {
 	return s.loadState() == dlDownloading
+}
+
+// downloadGameID is empty for offline/legacy detail views without metadata.
+func downloadGameID(detail *itchio.GameDetail) string {
+	if detail == nil {
+		return ""
+	}
+	return detail.GameID
 }
