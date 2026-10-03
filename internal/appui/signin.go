@@ -27,14 +27,13 @@ const (
 // SignInModel is the QR sign-in screen. It never holds the key or the
 // device code, only what the user is meant to see.
 type SignInModel struct {
-	State     SignInState
-	UserCode  string
-	QRURL     string
-	ManualURL string
-	Expires   time.Time
-	Heading   string
-	Detail    string
-	CanRetry  bool
+	State    SignInState
+	UserCode string
+	QRURL    string
+	Expires  time.Time
+	Heading  string
+	Detail   string
+	CanRetry bool
 }
 
 func NewSignInModel() *SignInModel { return &SignInModel{State: SignInStarting} }

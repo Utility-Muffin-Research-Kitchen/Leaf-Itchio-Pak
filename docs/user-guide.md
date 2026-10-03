@@ -137,13 +137,13 @@ asks the app to slow down, it stops and asks you to try again later instead.
 
 1. Open Start > Settings > itch.io Account, or press A on a paid game.
 2. Accept the physical-access warning (first time only).
-3. Scan the QR code with your phone, or open the address shown and enter the
-   code. The code expires after a few minutes; press A for a new one.
-4. Approve Leaf on itch.io. The app loads your owned games and shows your
-   account name.
+3. Scan the QR code with your phone. The code expires after a few minutes;
+   press A for a new one.
+4. Check that itch.io shows the same short code as the handheld, then approve
+   Leaf. The app loads your owned games and shows your account name.
 
-If the screen says **Sign-in isn't available yet**, itch.io has not enabled
-sign-in for Leaf. Free games still download.
+If the screen says **Sign-in is unavailable**, itch.io could not start the
+sign-in. Free games still download.
 
 itch.io gives the app a key, stored in `config.json`. FAT32 cannot enforce
 owner-only permissions against physical access, and the key is not encrypted.

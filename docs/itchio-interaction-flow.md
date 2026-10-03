@@ -202,18 +202,23 @@ header is used to track progress.
 
 **Source:** `oauth.go`, `ui/cat_signin_flow.go`, `ui/account.go`
 
-The app gets its key through itch.io's device authorization grant with PKCE
-(https://itch.io/docs/api/oauth). itch.io enables this flow per OAuth
+The app gets its key through itch.io's [device authorization grant with PKCE](https://itch.io/docs/api/oauth).
+itch.io enables this flow per OAuth
 application; Leaf's own client ID is `OAuthClientID` in `oauth.go`. There is no
-client secret. Until itch.io approves the client, `/oauth/device` answers 404
-and the app shows "Sign-in isn't available yet".
+client secret. Leaf's client approval was confirmed on 2026-10-03, its registered
+redirect URI is `urn:itchio:poll`, and a live `POST /oauth/device` returned
+HTTP 200 with the required fields, a 600-second expiry and a 5-second poll
+interval. No returned codes or credentials were logged. Phone approval and
+the live token exchange still need a full device sign-in check.
 
 1. `POST https://api.itch.io/oauth/device` with `client_id`,
    `scope=profile:me profile:owned game:view:uploads`, `code_challenge`
    (S256 of a random 32-byte verifier) and `code_challenge_method=S256`.
    The answer carries `device_code`, `user_code`, `verification_uri`,
-   `verification_uri_complete` (shown as the QR code), `expires_in` and
-   `interval`.
+   `verification_uri_complete`, `expires_in` and `interval`. The QR code uses
+   the complete URI unchanged. The bare `verification_uri` has no manual
+   code entry. The short `user_code` is shown beside the QR so the user can
+   match it to the phone's approval page.
 2. `POST /oauth/device/poll` with `client_id` and `device_code`, waiting
    `interval` after each answer. `pending` continues (adopting a new interval),
    `approved` carries a single-use `code`, `denied` and `expired` end the

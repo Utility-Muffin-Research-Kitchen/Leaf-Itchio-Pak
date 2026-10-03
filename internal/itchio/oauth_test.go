@@ -50,7 +50,7 @@ func newFakeOAuth(t *testing.T) *fakeOAuth {
 	f.start = func(w http.ResponseWriter, _ url.Values) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"device_code": "device-secret-6a1f", "user_code": "ABCD-1234",
-			"verification_uri": "https://itch.io/device", "verification_uri_complete": "https://itch.io/device?code=ABCD-1234",
+			"verification_uri": "https://itch.io/user/oauth/device", "verification_uri_complete": "https://itch.io/user/oauth/device?code=verification-fixture",
 			"expires_in": 600, "interval": 5,
 		})
 	}
@@ -132,8 +132,8 @@ func TestBeginDeviceLoginSendsPKCEAndReturnsTheCode(t *testing.T) {
 	if form.Get("code_challenge") != PKCEChallenge(login.verifier) || form.Has("code_verifier") || form.Has("client_secret") {
 		t.Fatal("start request must carry only the S256 challenge, never the verifier or a secret")
 	}
-	if login.UserCode != "ABCD-1234" || login.QRURL != "https://itch.io/device?code=ABCD-1234" ||
-		login.ManualURL != "https://itch.io/device" || login.interval != 5*time.Second {
+	if login.UserCode != "ABCD-1234" || login.QRURL != "https://itch.io/user/oauth/device?code=verification-fixture" ||
+		login.interval != 5*time.Second {
 		t.Fatalf("login = %+v", login)
 	}
 	if left := time.Until(login.Expires); left < 9*time.Minute || left > 10*time.Minute {
@@ -151,6 +151,12 @@ func TestBeginDeviceLoginErrors(t *testing.T) {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
 		}, ErrRateLimited},
+		"bare verification URI only": {func(w http.ResponseWriter, _ url.Values) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"device_code": "x", "user_code": "ABCD-1234",
+				"verification_uri": "https://itch.io/user/oauth/device", "expires_in": 600,
+			})
+		}, nil},
 		"incomplete": {func(w http.ResponseWriter, _ url.Values) {
 			writeJSON(w, http.StatusOK, map[string]any{"device_code": "x"})
 		}, nil},

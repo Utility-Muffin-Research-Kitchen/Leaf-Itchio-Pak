@@ -39,9 +39,9 @@ const (
 )
 
 var (
-	// ErrSignInUnavailable means itch.io has not enabled QR sign-in for
-	// Leaf's application yet.
-	ErrSignInUnavailable = errors.New("sign-in with itch.io isn't available yet")
+	// ErrSignInUnavailable means itch.io cannot start QR sign-in for Leaf's
+	// application, for example if its registration is no longer valid.
+	ErrSignInUnavailable = errors.New("sign-in with itch.io is unavailable")
 	// ErrSignInDenied means the user declined on their phone.
 	ErrSignInDenied = errors.New("sign-in was declined on itch.io")
 	// ErrSignInExpired means the code timed out or was already used; a new
@@ -74,10 +74,9 @@ func PKCEChallenge(verifier string) string {
 type DeviceLogin struct {
 	// UserCode is shown beside the QR code; the phone shows the same code.
 	UserCode string
-	// QRURL is the approval page with the code filled in.
+	// QRURL is verification_uri_complete, the approval page for this attempt.
+	// The bare verification_uri has no manual code entry.
 	QRURL string
-	// ManualURL is the approval page for people who type the code instead.
-	ManualURL string
 	// Expires is when the code stops working.
 	Expires time.Time
 
@@ -97,7 +96,6 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 	var resp struct {
 		DeviceCode              string `json:"device_code"`
 		UserCode                string `json:"user_code"`
-		VerificationURI         string `json:"verification_uri"`
 		VerificationURIComplete string `json:"verification_uri_complete"`
 		ExpiresIn               int64  `json:"expires_in"`
 		Interval                int64  `json:"interval"`
@@ -112,7 +110,7 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 	case err != nil:
 		return nil, err
 	case status == http.StatusNotFound:
-		logger.Warn("oauth: itch.io has not enabled QR sign-in for client %s", OAuthClientID)
+		logger.Warn("oauth: QR sign-in is unavailable for client %s", OAuthClientID)
 		return nil, ErrSignInUnavailable
 	case status == http.StatusTooManyRequests:
 		return nil, fmt.Errorf("start sign-in: %w", ErrRateLimited)
@@ -129,7 +127,6 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 	return &DeviceLogin{
 		UserCode:   resp.UserCode,
 		QRURL:      resp.VerificationURIComplete,
-		ManualURL:  resp.VerificationURI,
 		Expires:    time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second),
 		client:     c,
 		deviceCode: resp.DeviceCode,

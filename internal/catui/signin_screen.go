@@ -2,7 +2,6 @@ package catui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
@@ -90,8 +89,8 @@ func (screen *SignInScreen) drawCode(frame *ScreenFrame) error {
 	}
 	remaining := model.Remaining(screen.now()).Round(time.Second)
 	lines := []string{
-		"Scan the QR code with your phone and approve Leaf on itch.io.",
-		"Can't scan it? Open " + shortURL(model.ManualURL) + " and enter the code.",
+		"Scan the QR code with your phone.",
+		"Check that itch.io shows the same code, then approve Leaf.",
 		fmt.Sprintf("Expires in %d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60),
 	}
 	split := ListDetailSplit(frame.Layout.Content, 60, screen.ui.BasePadding)
@@ -104,12 +103,4 @@ func (screen *SignInScreen) drawCode(frame *ScreenFrame) error {
 	rect := split.Detail.Content()
 	size := minInt(rect.W, rect.H)
 	return screen.qr.Draw(Rect{X: rect.X + (rect.W-size)/2, Y: rect.Y + (rect.H-size)/2, W: size, H: size})
-}
-
-// shortURL drops the scheme so the address fits on one line.
-func shortURL(url string) string {
-	if url == "" {
-		return "itch.io"
-	}
-	return strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
 }

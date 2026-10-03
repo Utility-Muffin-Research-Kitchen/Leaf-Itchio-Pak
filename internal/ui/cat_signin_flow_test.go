@@ -40,8 +40,8 @@ func newSignInSite(t *testing.T) *signInSite {
 				w.WriteHeader(site.deviceStatus)
 				return
 			}
-			fmt.Fprint(w, `{"device_code":"device-code","user_code":"ABCD-1234","verification_uri":"https://itch.io/device",`+
-				`"verification_uri_complete":"https://itch.io/device?code=ABCD-1234","expires_in":600,"interval":1}`)
+			fmt.Fprint(w, `{"device_code":"device-code","user_code":"ABCD-1234","verification_uri":"https://itch.io/user/oauth/device",`+
+				`"verification_uri_complete":"https://itch.io/user/oauth/device?code=verification-fixture","expires_in":600,"interval":1}`)
 		case "/oauth/device/poll":
 			site.polls.Add(1)
 			fmt.Fprintf(w, `{"status":%q,"code":"approval"}`, site.pollStatus)
@@ -133,7 +133,7 @@ func TestSignInShowsTheCodeAndCancelChangesNothing(t *testing.T) {
 	site.pollStatus = "pending"
 	f := startSignIn(t, site, &settings.Config{})
 	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInWaiting })
-	if f.model.UserCode != "ABCD-1234" || f.model.QRURL != "https://itch.io/device?code=ABCD-1234" || f.model.Remaining(time.Now()) <= 0 {
+	if f.model.UserCode != "ABCD-1234" || f.model.QRURL != "https://itch.io/user/oauth/device?code=verification-fixture" || f.model.Remaining(time.Now()) <= 0 {
 		t.Fatalf("waiting model = %+v", f.model)
 	}
 	f.flow.Cancel()
@@ -155,10 +155,10 @@ func TestSignInOutcomes(t *testing.T) {
 		configure func(*signInSite)
 		heading   string
 	}{
-		"not approved yet": {func(s *signInSite) { s.deviceStatus = http.StatusNotFound }, "Sign-in isn't available yet"},
-		"declined":         {func(s *signInSite) { s.pollStatus = "denied" }, "Sign-in was declined"},
-		"expired":          {func(s *signInSite) { s.pollStatus = "expired" }, "The code expired"},
-		"key rejected":     {func(s *signInSite) { s.profileStatus = http.StatusUnauthorized }, "itch.io didn't accept the sign-in"},
+		"unavailable":  {func(s *signInSite) { s.deviceStatus = http.StatusNotFound }, "Sign-in is unavailable"},
+		"declined":     {func(s *signInSite) { s.pollStatus = "denied" }, "Sign-in was declined"},
+		"expired":      {func(s *signInSite) { s.pollStatus = "expired" }, "The code expired"},
+		"key rejected": {func(s *signInSite) { s.profileStatus = http.StatusUnauthorized }, "itch.io didn't accept the sign-in"},
 	} {
 		site := newSignInSite(t)
 		test.configure(site)

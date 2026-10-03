@@ -291,9 +291,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "signin", "signin-error", "signin-done", "detail-signin":
 		model := &appui.SignInModel{
 			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
-			QRURL:     "https://itch.io/user/oauth/device?user_code=KXR4-7PLM",
-			ManualURL: "https://itch.io/user/oauth/device",
-			Expires:   time.Now().Add(9*time.Minute + 42*time.Second),
+			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
+			Expires: time.Now().Add(9*time.Minute + 42*time.Second),
 		}
 		switch config.Screen {
 		case "signin-error":

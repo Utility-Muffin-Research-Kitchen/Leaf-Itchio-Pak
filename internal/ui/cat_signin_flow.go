@@ -109,7 +109,7 @@ func (flow *CatSignInFlow) apply(model *appui.SignInModel, update signInUpdate) 
 		flow.fail(model, update.err)
 	case update.login != nil:
 		model.State = appui.SignInWaiting
-		model.UserCode, model.QRURL, model.ManualURL = update.login.UserCode, update.login.QRURL, update.login.ManualURL
+		model.UserCode, model.QRURL = update.login.UserCode, update.login.QRURL
 		model.Expires = update.login.Expires
 	case update.token != "":
 		if err := flow.account.Store(update.token); err != nil {
@@ -158,8 +158,8 @@ func (flow *CatSignInFlow) fail(model *appui.SignInModel, err error) {
 	model.State, model.CanRetry = appui.SignInError, true
 	switch {
 	case errors.Is(err, itchio.ErrSignInUnavailable):
-		model.Heading = "Sign-in isn't available yet"
-		model.Detail = "itch.io hasn't enabled sign-in for Leaf yet. Free games still download without signing in."
+		model.Heading = "Sign-in is unavailable"
+		model.Detail = "itch.io could not start sign-in for Leaf. Free games still download without signing in."
 	case errors.Is(err, itchio.ErrSignInExpired):
 		model.Heading, model.Detail = "The code expired", "Press A for a new code."
 	case errors.Is(err, itchio.ErrSignInDenied):

@@ -143,9 +143,9 @@ enables the Owned filter and downloads of games already in your itch.io
 library.
 
 Sign in from **Start > Settings > itch.io Account**, or press **A** on a paid
-game. The app shows a QR code and a short code: scan it with your phone, or
-open the address shown and enter the code, then approve Leaf on itch.io. No
-password is typed on the handheld, and nothing needs to be copied.
+game. Scan the QR code with your phone, check that itch.io shows the same
+short code as the handheld, then approve Leaf. No password is typed on the
+handheld, and nothing needs to be copied.
 
 itch.io then gives the app a key, which is stored in App Data on the SD card.
 Before the first sign-in, the app warns that POSIX storage can request
