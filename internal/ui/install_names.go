@@ -69,6 +69,17 @@ func (n *installNamer) free(path string) bool {
 	return (n.names == nil || !n.names.Holds(path)) && n.replaceable(path)
 }
 
+// onlyThisGame reports whether every record at path belongs to this game.
+func (n *installNamer) onlyThisGame(path string) bool {
+	owners := n.owners(path)
+	for _, owner := range owners {
+		if owner.GameURL != n.gameURL {
+			return false
+		}
+	}
+	return len(owners) > 0
+}
+
 // realPath returns the existing file's own spelling of path, so replacing a
 // file whose name differs only in case writes that file on every host.
 func realPath(path string) string {
@@ -76,6 +87,13 @@ func realPath(path string) string {
 		return existing
 	}
 	return path
+}
+
+func (n *installNamer) uploadStem() string {
+	if isArchive(n.upload) {
+		return strings.TrimSuffix(n.upload, filepath.Ext(n.upload))
+	}
+	return strings.TrimSuffix(n.upload, roms.ROMExt(n.upload))
 }
 
 // ownName returns path when this install may write it. Otherwise it returns
@@ -97,7 +115,9 @@ func (n *installNamer) ownName(path string) (string, error) {
 
 // unifiedName returns where unified naming moves current, and whether that
 // name is title-based. The title name is used when this install may write
-// it; otherwise the next free "<Title> (2)" is.
+// it. When it holds another build of this game, the file is named
+// "<Title> (<upload>)" so both builds stay. When it holds another game's or
+// an unknown file, the next free "<Title> (2)" is used.
 func (n *installNamer) unifiedName(current string) (string, bool) {
 	target := roms.UnifiedTarget(current, n.title)
 	if target == "" {
@@ -111,6 +131,11 @@ func (n *installNamer) unifiedName(current string) (string, bool) {
 	}
 	ext := roms.ROMExt(filepath.Base(current))
 	prefix := strings.TrimSuffix(filepath.Base(target), ext)
+	if n.onlyThisGame(target) {
+		if named := roms.SanitiseFilename(fmt.Sprintf("%s (%s)", prefix, n.uploadStem()), ""); named != "" {
+			prefix = named
+		}
+	}
 	path, err := n.firstFree(filepath.Dir(current), prefix, ext, current)
 	if err != nil {
 		logger.Warn("unified-naming: keeping %q: %v", filepath.Base(current), err)

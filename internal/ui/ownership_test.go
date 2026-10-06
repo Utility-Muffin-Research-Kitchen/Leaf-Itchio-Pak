@@ -260,3 +260,36 @@ func TestCatManageKeepsAFileAnotherGameReferences(t *testing.T) {
 func sameFAT32(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
+
+// A second build for the same system keeps the first one: both stay, under
+// distinct names (review finding R18-2, decision D2).
+func TestDirectDownloadKeepsBothBuildsOfOneSystem(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	gbaDir := filepath.Join(primary, "Roms", "GBA")
+	inv, invPath := collisionInventory(t)
+	game := itchio.Game{Title: "Glory Hunters", URL: "https://dev.itch.io/glory-hunters", IsFree: true}
+	srv := freeFileServer(t, map[string][]byte{"1": []byte("PLAIN"), "2": []byte("EZ-IV")})
+	cfg := &settings.Config{UnifiedNaming: true}
+
+	plain := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+		freeUpload(srv, "1", "glory.gba"), filepath.Join(gbaDir, "glory.gba"))
+	ez := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+		freeUpload(srv, "2", "glory_ez4.gba"), filepath.Join(gbaDir, "glory_ez4.gba"))
+
+	if filepath.Base(plain.dest) != "Glory Hunters.gba" || filepath.Base(ez.dest) != "Glory Hunters (glory_ez4).gba" {
+		t.Fatalf("saved %q and %q", filepath.Base(plain.dest), filepath.Base(ez.dest))
+	}
+	got := filesIn(t, gbaDir)
+	if len(got) != 2 || got["Glory Hunters.gba"] != "PLAIN" || got["Glory Hunters (glory_ez4).gba"] != "EZ-IV" {
+		t.Fatalf("GBA folder = %v", keys(got))
+	}
+	if paths := entryPaths(t, inv, game.URL); len(paths) != 2 {
+		t.Fatalf("inventory rows = %v, want one per build", paths)
+	}
+
+	again := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+		freeUpload(srv, "2", "glory_ez4.gba"), inv.ExistingDestPath(game.URL, "glory_ez4.gba"))
+	if again.dest != ez.dest || len(filesIn(t, gbaDir)) != 2 {
+		t.Fatalf("reinstalling the second build saved %q", filepath.Base(again.dest))
+	}
+}

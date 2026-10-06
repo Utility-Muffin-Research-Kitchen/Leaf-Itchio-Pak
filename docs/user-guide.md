@@ -64,6 +64,10 @@ than one build for the same system, such as an update and the original jam
 release. Builds for different systems, and a PlayStation game's CUE/BIN tracks
 or discs, download together.
 
+If you download another build for the same system later, the app keeps both.
+The first build keeps the title name, such as `Glory Hunters.gba`, and the
+next one is saved with its upload name added: `Glory Hunters (glory_ez4).gba`.
+
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
 writing outside the sealed plan. Partial transfer files use the target directory
