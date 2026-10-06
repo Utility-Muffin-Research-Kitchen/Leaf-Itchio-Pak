@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
@@ -104,7 +105,7 @@ func (c *Client) scanOwnedKeys(ctx context.Context, apiKey string, gameIDs []int
 			logger.Warn("auth: owned-keys HTTP %d (page %d)", resp.StatusCode, page)
 			return keys, false, errAPIKeyRejected
 		case resp.StatusCode == http.StatusTooManyRequests:
-			return keys, false, fmt.Errorf("fetch owned keys: %w", ErrRateLimited)
+			return keys, false, netlimit.FromResponse("auth: owned-keys", resp)
 		case resp.StatusCode != http.StatusOK:
 			logger.Error("auth: owned-keys HTTP %d (page %d)", resp.StatusCode, page)
 			return keys, false, fmt.Errorf("fetch owned keys: HTTP %d", resp.StatusCode)
@@ -366,7 +367,10 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		logger.Warn("auth: upload list HTTP %d — key may not grant access to this game", resp.StatusCode)
 		return nil, fmt.Errorf("Game not owned or API key does not grant access to this game's downloads")
 	case http.StatusTooManyRequests:
-		return nil, fmt.Errorf("fetch uploads: %w", ErrRateLimited)
+		return nil, netlimit.FromResponse("auth: upload list", resp)
+	case http.StatusNotFound, http.StatusGone:
+		logger.Warn("auth: upload list HTTP %d", resp.StatusCode)
+		return nil, ErrUploadGone
 	default:
 		logger.Error("auth: upload list HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch uploads: HTTP %d", resp.StatusCode)
@@ -551,7 +555,10 @@ func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID s
 		logger.Warn("auth: CDN resolve HTTP %d", resp.StatusCode)
 		return "", fmt.Errorf("Game not owned or API key does not grant access to this download")
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return "", fmt.Errorf("resolve authenticated download: %w", ErrRateLimited)
+		return "", netlimit.FromResponse("auth: CDN resolve", resp)
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		logger.Warn("auth: CDN resolve HTTP %d", resp.StatusCode)
+		return "", ErrUploadGone
 	default:
 		logger.Error("auth: CDN resolve HTTP %d", resp.StatusCode)
 		return "", fmt.Errorf("auth CDN resolve status %d", resp.StatusCode)

@@ -16,5 +16,9 @@ var ErrCloudflareBlocked = errors.New("Cloudflare blocked the request (HTTP 403)
 // internal/roms reports the same error.
 var ErrRateLimited = netlimit.ErrRateLimited
 
+// ErrUploadGone is returned when the API answers HTTP 404 or 410 for a
+// download. Its text is shown on screen as is.
+var ErrUploadGone = errors.New("This file is no longer on itch.io.")
+
 // ErrGameRemoved is returned when the game page responds with HTTP 404 or 410.
 var ErrGameRemoved = errors.New("game removed (HTTP 404/410)")

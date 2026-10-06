@@ -285,7 +285,9 @@ The answer is a redirect to the signed CDN URL (some deployments answer
 `{"url": ...}` instead). The redirect is not followed: the location must be
 an absolute HTTPS URL without credentials, and the caller gets it first for
 archive inspection or the magic-byte probe. Missing locations, rejected
-access, and malformed bodies fail with sanitized errors.
+access, and malformed bodies fail with sanitized errors. Here and in the
+upload list, 404 or 410 reports "This file is no longer on itch.io.", 401 or
+403 the no-access error, and 429 the shared rate-limit message.
 
 The signed CDN URL expires quickly (60 seconds). It is resolved immediately
 before streaming, not cached.
