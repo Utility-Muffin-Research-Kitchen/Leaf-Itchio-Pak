@@ -699,3 +699,29 @@ func TestUploadTraitsMarkDesktopAndWebBuilds(t *testing.T) {
 		t.Error("a web-flow upload carries no traits and is never a desktop or web build")
 	}
 }
+
+// R21-5: only an authentication answer signs you out. A 403 without
+// itch.io's JSON errors (a proxy or Cloudflare page) is a transient failure.
+func TestProfileCheckRejectsTheSignInOnlyForAuthErrors(t *testing.T) {
+	for name, test := range map[string]struct {
+		status   int
+		body     string
+		rejected bool
+	}{
+		"401":                     {http.StatusUnauthorized, `{"errors":["invalid key"]}`, true},
+		"401 without a body":      {http.StatusUnauthorized, "", true},
+		"403 with itch.io errors": {http.StatusForbidden, `{"errors":["invalid key"]}`, true},
+		"403 from a proxy":        {http.StatusForbidden, `<html><body>Access denied</body></html>`, false},
+		"403 with no errors":      {http.StatusForbidden, `{"errors":[]}`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(test.status)
+			fmt.Fprint(w, test.body)
+		}))
+		_, _, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).ValidateAPIKey(v2Key)
+		srv.Close()
+		if err == nil || errors.Is(err, itchio.ErrSignInRejected) != test.rejected {
+			t.Errorf("%s: err = %v, want rejected=%v", name, err, test.rejected)
+		}
+	}
+}

@@ -243,9 +243,11 @@ registers it for log redaction as `[TOKEN]`, and resets account-derived state:
 the client's key generation and bundle-size cache, the live owned list, and
 `owned_cache.json`. A profile check then loads the account name and owned
 games. Signing out clears the same state; itch.io has no revoke endpoint, so
-the key stays valid on the website until the user deletes it. A 401/403 from
-`/profile` (`ErrSignInRejected`) signs out, at startup or when checking the
-account from Settings; network errors never do. The device code, verifier,
+the key stays valid on the website until the user deletes it. A 401 from
+`/profile`, or a 403 carrying itch.io's JSON `errors` list
+(`ErrSignInRejected`), signs out, at startup or when checking the account;
+network errors and a 403 page from anything in between (a proxy or
+Cloudflare) never do. The device code, verifier,
 approval code and key are never logged.
 
 Typed API keys are gone: `settings.Load` removes a stored `api_key`, sets

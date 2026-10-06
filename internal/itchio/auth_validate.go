@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
@@ -18,6 +19,16 @@ func (c *Client) ResetAPIKeyState() {
 	c.ownedMu.Lock()
 	c.purchaseCounts = nil
 	c.ownedMu.Unlock()
+}
+
+// hasItchIOErrors reports whether body is itch.io's JSON error answer, a
+// non-empty "errors" list, as opposed to a page from something in between.
+func hasItchIOErrors(body io.Reader) bool {
+	var answer struct {
+		Errors []string `json:"errors"`
+	}
+	data, err := io.ReadAll(io.LimitReader(body, 64<<10))
+	return err == nil && json.Unmarshal(data, &answer) == nil && len(answer.Errors) > 0
 }
 
 // OwnedGame is a public summary of a game the user owns.
@@ -53,8 +64,16 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return "", nil, fmt.Errorf("fetch profile (HTTP %d): %w", resp.StatusCode, ErrSignInRejected)
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		return "", nil, fmt.Errorf("fetch profile (HTTP 401): %w", ErrSignInRejected)
+	case resp.StatusCode == http.StatusForbidden && hasItchIOErrors(resp.Body):
+		return "", nil, fmt.Errorf("fetch profile (HTTP 403): %w", ErrSignInRejected)
+	case resp.StatusCode == http.StatusForbidden:
+		// Not itch.io's own answer (a proxy or Cloudflare page): keep the
+		// sign-in, as for any other transient failure.
+		logger.Warn("validate: profile HTTP 403 without itch.io errors; keeping the sign-in")
+		return "", nil, fmt.Errorf("fetch profile: HTTP 403")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf("fetch profile: HTTP %d", resp.StatusCode)
