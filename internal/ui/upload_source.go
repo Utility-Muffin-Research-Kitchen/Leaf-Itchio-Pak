@@ -59,12 +59,12 @@ func freeResolveRefused(upload roms.Upload, err error) bool {
 // webFallbackUpload finds upload in the anonymous web listing of gameURL, by
 // upload ID first and then by filename. It runs the web flow once. When the
 // web flow cannot offer the file, the API's refusal is the error reported,
-// unless the operation was cancelled.
+// unless the operation was cancelled or itch.io is limiting requests.
 func webFallbackUpload(ctx context.Context, client *itchio.Client, gameURL string, upload roms.Upload, refused error) (itchio.Upload, error) {
 	logger.Warn("download: itch.io refused free upload id=%s through the API, trying the web download page", upload.UploadID)
 	uploads, err := client.FetchWebUploadsContext(ctx, gameURL)
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, itchio.ErrRateLimited) {
 			return itchio.Upload{}, err
 		}
 		logger.Warn("download: web download page failed too: %v", err)

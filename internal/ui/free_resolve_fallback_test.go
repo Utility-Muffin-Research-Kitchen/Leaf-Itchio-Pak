@@ -30,6 +30,7 @@ type refusingSite struct {
 	rom      []byte
 	refusals atomic.Int32
 	webFiles atomic.Int32
+	webBusy  bool // the game page answers HTTP 429
 }
 
 func newRefusingSite(t *testing.T, rom []byte) *refusingSite {
@@ -42,6 +43,9 @@ func newRefusingSite(t *testing.T, rom []byte) *refusingSite {
 		case strings.HasPrefix(r.URL.Path, "/uploads/"):
 			site.refusals.Add(1)
 			http.Error(w, "", http.StatusForbidden)
+		case r.URL.Path == "/game" && site.webBusy:
+			w.Header().Set("Retry-After", "60") // past the request deadline: no replay
+			w.WriteHeader(http.StatusTooManyRequests)
 		case r.URL.Path == "/game":
 			fmt.Fprint(w, `<html><head><meta name="csrf_token" value="CSRF"/></head></html>`)
 		case r.URL.Path == "/game/download_url":
@@ -126,5 +130,22 @@ func TestRefusedPurchaseDownloadDoesNotTryTheWebFlow(t *testing.T) {
 	}
 	if site.webFiles.Load() != 0 {
 		t.Fatal("a purchase download fell back to the anonymous web flow")
+	}
+}
+
+// A rate limit on the web fallback is reported as such: it is final and
+// tells you what to do, unlike the API's refusal.
+func TestRefusedFreeAPIDownloadReportsAWebRateLimit(t *testing.T) {
+	site := newRefusingSite(t, nesTestROM())
+	site.webBusy = true
+	flow := &CatDownloadFlow{
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: sessionTestKey},
+		game:    itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true},
+		detail:  &itchio.GameDetail{GameID: "42"},
+		updates: make(chan catDownloadUpdate, 1),
+	}
+	flow.detect(roms.Upload{Filename: "mystery", UploadID: "5", NeedsFormat: true, Install: roms.NewInstallSession("42", "")})
+	if probe := <-flow.updates; !errors.Is(probe.err, itchio.ErrRateLimited) {
+		t.Fatalf("probe err = %v, want the rate limit", probe.err)
 	}
 }
