@@ -305,3 +305,14 @@ func waitForWorker(t *testing.T, done func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// The skipped entry reaches the done screen, not only the log (review
+// finding R18-5).
+func TestArchiveDoneSnapshotListsSkippedFiles(t *testing.T) {
+	data := zipOf(t, map[string][]byte{"game.gb": gbROM("FIRST"), "game.dat": gbROM("SECOND")})
+	worker, _ := runArchive(t, "game.zip", data, &settings.Config{}, false)
+	snapshot := worker.CatSnapshot()
+	if snapshot.State != appui.DownloadProgressDone || len(snapshot.Skipped) != 1 || snapshot.Skipped[0] != "game.gb" {
+		t.Fatalf("snapshot = %+v, want done with game.gb skipped", snapshot)
+	}
+}

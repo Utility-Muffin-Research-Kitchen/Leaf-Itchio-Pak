@@ -165,6 +165,9 @@ func (screen *DownloadProgressScreen) Draw() error {
 			detail = "Saved: " + strings.Join(paths, ", ")
 		}
 		lines := []string{detail}
+		if skipped := appui.SkippedFilesLine(screen.model.Skipped); skipped != "" {
+			lines = append(lines, skipped)
+		}
 		if screen.model.LibraryStatus != "" {
 			lines = append(lines, screen.model.LibraryStatus)
 		}

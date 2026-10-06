@@ -59,10 +59,12 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
-With **ROM Selection** on `auto`, the app still asks when a game offers more
-than one build for the same system, such as an update and the original jam
-release. Builds for different systems, and a PlayStation game's CUE/BIN tracks
-or discs, download together.
+With **ROM Selection** on `auto`, the app downloads every supported upload
+together when each one is for a different system. A PlayStation game's CUE/BIN
+tracks or discs count as one set. When the game offers more than one build for
+the same system, such as an update and the original jam release, or offers an
+archive, the app lists every upload instead and downloads only the one you
+choose.
 
 If you download another build for the same system later, the app keeps both.
 The first build keeps the title name, such as `Glory Hunters.gba`, and the
@@ -179,8 +181,15 @@ names when a rename could break references. When two files from one download
 or archive would get the same title name, they keep their original names so
 neither replaces the other. FAT32 ignores letter case, so two names that
 differ only in case count as the same file: a download stops before writing
-anything, and an archive skips the later file and reports it. Every committed ROM/artwork change
-requests one Jawaka rescan.
+anything, and an archive skips the later file and lists it on the
+**Download complete** screen. Every committed ROM/artwork change requests one
+Jawaka rescan.
+
+A download never replaces a file that another game installed, or a file the
+app did not install. It saves its own copy as `<Title> - <file name>` instead,
+and downloading the same game again later updates that copy. If two games
+already share a file from an earlier version, deleting one of them in Manage
+keeps the file for the other.
 
 ## Data and logs
 
