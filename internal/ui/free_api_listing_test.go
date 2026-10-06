@@ -131,7 +131,9 @@ func TestFreeGameFallsBackToTheWebFlowOnce(t *testing.T) {
 
 func TestFreeGameRateLimitDoesNotTryTheWebFlow(t *testing.T) {
 	site := newFreeGameSite(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Retry-After", "0")
+		// Past the request's deadline, so the transport gives up at once
+		// instead of waiting out three replays.
+		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 	update := site.discover(t, sessionTestKey)
