@@ -252,7 +252,9 @@ exchange is `ErrRateLimited`. Only network failures read "Can't reach itch.io".
 registers it for log redaction as `[TOKEN]`, and resets account-derived state:
 the client's key generation and bundle-size cache, the live owned list, and
 `owned_cache.json`. A profile check then loads the account name and owned
-games. Signing out clears the same state; itch.io has no revoke endpoint, so
+games (`ValidateAPIKeyContext`, bounded to 2 minutes). B leaves that screen:
+the check finishes in the background and is applied only if its key is still
+the stored one. Signing out clears the same state; itch.io has no revoke endpoint, so
 the key stays valid on the website until the user deletes it. A 401 from
 `/profile`, or a 403 carrying itch.io's JSON `errors` list
 (`ErrSignInRejected`), signs out, at startup or when checking the account;

@@ -140,7 +140,8 @@ asks the app to slow down, it stops and asks you to try again later instead.
 3. Scan the QR code with your phone. The code expires after a few minutes;
    press A for a new one.
 4. Check that itch.io shows the same short code as the handheld, then approve
-   Leaf. The app loads your owned games and shows your account name.
+   Leaf. The app loads your owned games and shows your account name. You can
+   press B while they load; loading finishes on its own.
 
 If the screen says **Sign-in is unavailable**, itch.io could not start the
 sign-in. Free games still download.
