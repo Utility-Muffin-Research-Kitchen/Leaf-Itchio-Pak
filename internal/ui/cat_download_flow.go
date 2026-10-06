@@ -144,6 +144,7 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
+			UploadID: upload.UploadID,
 		})
 	}
 	return update

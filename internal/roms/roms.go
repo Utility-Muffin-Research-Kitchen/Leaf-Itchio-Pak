@@ -20,7 +20,7 @@ func ROMExt(filename string) string {
 type Upload struct {
 	Filename    string
 	URL         string // web resolver URL; empty for API uploads
-	UploadID    string // itch.io upload ID (API uploads)
+	UploadID    string // itch.io upload ID; recorded with each installed file
 	NeedsFormat bool   // true if the user must choose a supported format
 	// Install is set for uploads listed through the itch.io API and is the
 	// only test for an API download: free API downloads have no purchase ID.

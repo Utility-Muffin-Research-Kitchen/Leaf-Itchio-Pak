@@ -140,6 +140,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
+					UploadID:     upload.UploadID,
 					Filename:     upload.Filename,
 					DestPath:     finalDest,
 					DownloadedAt: time.Now(),

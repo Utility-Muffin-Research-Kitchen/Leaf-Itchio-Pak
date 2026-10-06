@@ -167,6 +167,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest
 		file := inventory.DownloadedFile{
+			UploadID:     dl.Upload.UploadID,
 			Filename:     dl.Upload.Filename,
 			DestPath:     finalDest,
 			DownloadedAt: time.Now(),

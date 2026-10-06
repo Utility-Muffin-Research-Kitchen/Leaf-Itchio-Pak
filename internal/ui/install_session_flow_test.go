@@ -242,3 +242,77 @@ func TestZIPPlanSealKeepsTheInstall(t *testing.T) {
 		t.Fatal("sealing the archive plan dropped its install session")
 	}
 }
+
+// R20-2: every installed file records the upload it came from, so the update
+// check can match it by ID when the web page lists another name.
+func TestDownloadsRecordTheirUploadID(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	gbROM := append(make([]byte, 0x104), bytes.Repeat([]byte{0xCE, 0xED}, 24)...)
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	for name, body := range map[string]string{"game.gba": strings.Repeat("GBA", 64), "readme.txt": "hi"} {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry.Write([]byte(body))
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f := newInstallAPI(t, `{"uploads":[{"id":1,"filename":"a.gb"},{"id":2,"filename":"b.gbc"},{"id":3,"filename":"c.gb"},{"id":5,"filename":"game.zip"}]}`,
+		map[string][]byte{"1": gbROM, "2": []byte("GBC-ROM"), "3": gbROM, "5": archive.Bytes()})
+	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
+	if listing.err != nil || len(listing.uploads) != 4 {
+		t.Fatalf("listing = %+v", listing)
+	}
+	invPath := filepath.Join(t.TempDir(), "inventory.json")
+
+	direct := NewDirectDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, listing.uploads[2],
+		filepath.Join(primary, "Roms", "GB", "c.gb"), flow.inv, invPath)
+	waitFor(t, func() bool { return direct.loadState() != dlDownloading })
+	multi := NewMultiDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, []romDownload{
+		{Upload: listing.uploads[0], DestPath: filepath.Join(primary, "Roms", "GB", "a.gb")},
+		{Upload: listing.uploads[1], DestPath: filepath.Join(primary, "Roms", "GBC", "b.gbc")},
+	}, flow.inv, invPath)
+	waitFor(t, func() bool { return multi.loadState() != multiDLDownloading })
+
+	inspect := NewCatArchiveFlow(flow.client, flow.cfg, flow.game, listing.uploads[3], flow.inv, nil)
+	model := inspect.Snapshot()
+	waitFor(t, func() bool { return inspect.Sync(&model) })
+	if action := inspect.TakeAction(); action != CatArchiveStartExtraction {
+		t.Fatalf("archive action = %v (%s)", action, model.Detail)
+	}
+	extract := NewArchiveDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, inspect.ExtractionPlan(), flow.inv, invPath)
+	waitFor(t, func() bool {
+		state := extract.loadState()
+		return state != zipDLDownloading && state != zipDLExtracting
+	})
+	for name, state := range map[string]appui.DownloadProgressModel{
+		"direct": direct.CatSnapshot(), "multi": multi.CatSnapshot(), "archive": extract.CatSnapshot(),
+	} {
+		if state.State != appui.DownloadProgressDone {
+			t.Fatalf("%s download = %+v", name, state)
+		}
+	}
+
+	entry, ok := flow.inv.Lookup(flow.game.URL)
+	if !ok {
+		t.Fatal("nothing was recorded")
+	}
+	want := map[string]string{"c.gb": "3", "a.gb": "1", "b.gbc": "2", "game.gba": "5"}
+	for _, file := range entry.Files {
+		name := file.Filename
+		if file.SourceArchive != "" {
+			name = filepath.Base(file.DestPath)
+		}
+		if id, listed := want[name]; listed && file.UploadID != id {
+			t.Errorf("%s recorded upload %q, want %q", name, file.UploadID, id)
+		}
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		t.Errorf("not recorded: %v", want)
+	}
+}
