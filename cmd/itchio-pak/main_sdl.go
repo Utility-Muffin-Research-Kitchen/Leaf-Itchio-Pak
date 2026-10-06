@@ -394,7 +394,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			// An earlier sign-in is still saving its key in the background:
 			// reuse its flow so nothing it delivers is lost.
 			signInModel = appui.NewSignInModel()
-			signInFlow.Start(signInModel)
+			signInFlow.Open(signInModel)
 		} else {
 			signInFlow, signInModel = ui.NewCatSignInFlow(client, account, func() { _ = ctx.Wake() })
 		}
@@ -1169,6 +1169,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					closeSignIn()
 				case appui.SignInIntentRetry:
 					signInFlow.Start(signInModel)
+				case appui.SignInIntentAccept:
+					if err := signInFlow.AcceptWarning(signInModel); err != nil {
+						logger.Error("sign-in: %v", err)
+						signInModel.State, signInModel.CanRetry = appui.SignInError, false
+						signInModel.Heading, signInModel.Detail = "Couldn't save your choice", "The SD card could not be written."
+					}
 				}
 			case catRouteCacheRefresh:
 				switch cacheRefreshScreen.HandleInput(event) {

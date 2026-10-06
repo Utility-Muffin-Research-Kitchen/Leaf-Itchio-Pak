@@ -13,6 +13,8 @@ const (
 	SignInChecking
 	SignInDone
 	SignInError
+	// SignInWarning: the physical-access warning before the first sign-in.
+	SignInWarning
 )
 
 type SignInIntent uint8
@@ -22,6 +24,7 @@ const (
 	SignInIntentCancel
 	SignInIntentRetry
 	SignInIntentBack
+	SignInIntentAccept
 )
 
 // SignInModel is the QR sign-in screen. It never holds the key or the
@@ -55,6 +58,13 @@ func (m *SignInModel) Handle(event InputEvent) SignInIntent {
 	}
 	back := event.Button == ButtonB || event.Button == ButtonQuit
 	switch m.State {
+	case SignInWarning:
+		if event.Button == ButtonA {
+			return SignInIntentAccept
+		}
+		if back {
+			return SignInIntentBack
+		}
 	case SignInStarting, SignInWaiting:
 		if back {
 			return SignInIntentCancel

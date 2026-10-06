@@ -211,6 +211,11 @@ HTTP 200 with the required fields, a 600-second expiry and a 5-second poll
 interval. No returned codes or credentials were logged. Phone approval and
 the live token exchange still need a full device sign-in check.
 
+Every way into sign-in (Settings, or A on a paid game's detail page) opens
+the same screen, which shows the physical-access warning first until it is
+accepted (`CatSignInFlow.Open`; the acceptance is stored as
+`api_key_physical_warning_accepted` in `config.json`).
+
 1. `POST https://api.itch.io/oauth/device` with `client_id`,
    `scope=profile:me profile:owned game:view:uploads`, `code_challenge`
    (S256 of a random 32-byte verifier) and `code_challenge_method=S256`.

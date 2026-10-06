@@ -44,6 +44,8 @@ func (screen *SignInScreen) HandleInput(event InputEvent) appui.SignInIntent {
 
 func (screen *SignInScreen) footer() []FooterHint {
 	switch screen.model.State {
+	case appui.SignInWarning:
+		return []FooterHint{{Button: ButtonA, Label: "Continue", IsConfirm: true}, {Button: ButtonB, Label: "Back"}}
 	case appui.SignInStarting, appui.SignInWaiting:
 		if screen.model.State == appui.SignInWaiting && screen.model.QRFailed {
 			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Cancel"}}
@@ -68,6 +70,13 @@ func (screen *SignInScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	model := screen.model
 	switch model.State {
+	case appui.SignInWarning:
+		err = screen.ui.DrawScrollingBody(body, "Before you sign in", []string{
+			"Signing in stores an itch.io key in App Data on the SD card.",
+			"FAT32 cannot protect it from someone with physical access to the card.",
+			"The key is redacted from logs and never shown on screen.",
+			"You can sign out in Settings, and delete the key on itch.io.",
+		}, 0)
 	case appui.SignInStarting:
 		err = screen.ui.DrawState(body, StateLoading, "Getting a sign-in code", "Contacting itch.io…")
 	case appui.SignInWaiting:

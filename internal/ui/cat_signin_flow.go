@@ -59,8 +59,31 @@ type CatSignInFlow struct {
 func NewCatSignInFlow(client *itchio.Client, account *Account, wake func()) (*CatSignInFlow, *appui.SignInModel) {
 	flow := &CatSignInFlow{client: client, account: account, wake: wake, updates: make(chan signInUpdate, 8)}
 	model := appui.NewSignInModel()
-	flow.Start(model)
+	flow.Open(model)
 	return flow, model
+}
+
+// Open begins a sign-in on model. Every way into sign-in comes through
+// here, so the physical-access warning is shown first until you accept it.
+func (flow *CatSignInFlow) Open(model *appui.SignInModel) {
+	if !flow.account.cfg.CredentialWarningAccepted {
+		flow.Cancel()
+		*model = appui.SignInModel{State: appui.SignInWarning}
+		return
+	}
+	flow.Start(model)
+}
+
+// AcceptWarning records that you accepted the warning, then starts.
+func (flow *CatSignInFlow) AcceptWarning(model *appui.SignInModel) error {
+	cfg := flow.account.cfg
+	cfg.CredentialWarningAccepted = true
+	if err := cfg.Save(flow.account.cfgPath); err != nil {
+		cfg.CredentialWarningAccepted = false
+		return fmt.Errorf("save the accepted warning: %w", err)
+	}
+	flow.Start(model)
+	return nil
 }
 
 // Start requests a new code, abandoning any earlier attempt.

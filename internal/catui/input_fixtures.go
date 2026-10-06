@@ -266,12 +266,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		model := appui.NewSettingsModel(title)
 		model.SetRows(subtitle, rows)
 		if config.Screen == "settings-confirm" {
-			model.SetConfirm("Sign in with itch.io?", []string{
-				"Signing in stores an itch.io key in App Data on the SD card.",
-				"FAT32 cannot protect it from someone with physical access to the card.",
-				"The key is redacted from logs and never shown on screen.",
-				"You can sign out here, and delete the key on itch.io.",
-			})
+			// The sign-in warning moved to the sign-in screen (signin-warning).
+			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)
 		if screenErr != nil {
@@ -289,7 +285,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
-	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "detail-signin":
+	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin":
 		model := &appui.SignInModel{
 			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
 			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
@@ -303,6 +299,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
 		case "signin-checking":
 			model.State = appui.SignInChecking
+		case "signin-warning":
+			model.State = appui.SignInWarning
 		case "signin-qr-failed":
 			// Too long for any QR code, so drawing it fails for real.
 			model.QRURL = "https://itch.io/user/oauth/device?code=" + strings.Repeat("x", 5000)

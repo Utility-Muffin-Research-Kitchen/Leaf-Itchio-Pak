@@ -33,7 +33,6 @@ type catSettingsConfirm uint8
 
 const (
 	catSettingsConfirmNone catSettingsConfirm = iota
-	catSettingsConfirmSignInWarning
 	catSettingsConfirmSignOut
 	catSettingsConfirmResetDestinations
 )
@@ -121,16 +120,7 @@ func (flow *CatSettingsFlow) Activate(model *appui.SettingsModel) (CatSettingsAc
 			flow.startAPIValidation(model, flow.cfg.Credential())
 			return CatSettingsNone, nil
 		}
-		if !flow.cfg.CredentialWarningAccepted {
-			flow.pending = catSettingsConfirmSignInWarning
-			model.SetConfirm("Sign in with itch.io?", []string{
-				"Signing in stores an itch.io key in App Data on the SD card.",
-				"FAT32 cannot protect it from someone with physical access to the card.",
-				"The key is redacted from logs and never shown on screen.",
-				"You can sign out here, and delete the key on itch.io.",
-			})
-			return CatSettingsNone, nil
-		}
+		// The sign-in screen shows the physical-access warning first.
 		return CatSettingsSignIn, nil
 	case appui.SettingsSignOut:
 		flow.pending = catSettingsConfirmSignOut
@@ -182,14 +172,6 @@ func (flow *CatSettingsFlow) Confirm(model *appui.SettingsModel) (CatSettingsAct
 	pending := flow.pending
 	flow.pending = catSettingsConfirmNone
 	switch pending {
-	case catSettingsConfirmSignInWarning:
-		flow.cfg.CredentialWarningAccepted = true
-		if err := flow.cfg.Save(flow.cfgPath); err != nil {
-			flow.cfg.CredentialWarningAccepted = false
-			return CatSettingsNone, err
-		}
-		flow.Refresh(model)
-		return CatSettingsSignIn, nil
 	case catSettingsConfirmSignOut:
 		flow.apiGeneration.Add(1)
 		flow.validating.Store(false)

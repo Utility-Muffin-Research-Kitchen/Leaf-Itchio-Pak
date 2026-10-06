@@ -102,31 +102,21 @@ func TestCatSettingsToggleROMSelection(t *testing.T) {
 	}
 }
 
-func TestCatSettingsWarnBeforeFirstSignIn(t *testing.T) {
+// R21-2: Settings opens sign-in directly; the sign-in screen shows the
+// physical-access warning, so every entry point shares it.
+func TestCatSettingsOpensSignInForTheWarning(t *testing.T) {
 	cfg, err := settings.Load(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	flow, model, cfgPath, _ := settingsFixture(t, cfg, nil)
+	flow, model, _, _ := settingsFixture(t, cfg, nil)
 	if row := settingRow(t, model, appui.SettingsAccount); row.Value != "Not signed in" {
 		t.Fatalf("account row = %+v", row)
 	}
 	selectSettingsKey(t, model, appui.SettingsAccount)
 	action, err := flow.Activate(model)
-	if err != nil || action != CatSettingsNone || model.State != appui.SettingsConfirm {
-		t.Fatalf("warning activation = action %v state %v err %v", action, model.State, err)
-	}
-	action, err = flow.Confirm(model)
-	if err != nil || action != CatSettingsSignIn || !cfg.CredentialWarningAccepted {
-		t.Fatalf("warning confirm = action %v accepted=%v err=%v", action, cfg.CredentialWarningAccepted, err)
-	}
-	loaded, err := settings.Load(cfgPath)
-	if err != nil || !loaded.CredentialWarningAccepted {
-		t.Fatalf("persisted warning = %v err=%v", loaded.CredentialWarningAccepted, err)
-	}
-	selectSettingsKey(t, model, appui.SettingsAccount)
-	if action, _ := flow.Activate(model); action != CatSettingsSignIn {
-		t.Fatalf("second activation = %v, want sign-in without another warning", action)
+	if err != nil || action != CatSettingsSignIn || model.State == appui.SettingsConfirm {
+		t.Fatalf("activation = action %v state %v err %v; want the sign-in screen", action, model.State, err)
 	}
 }
 

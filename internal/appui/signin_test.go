@@ -49,3 +49,12 @@ func TestSignInModelRetriesWhenTheQRCodeFails(t *testing.T) {
 		t.Fatal("B must still cancel")
 	}
 }
+
+// R21-2: the warning screen continues with A and leaves with B.
+func TestSignInModelWarning(t *testing.T) {
+	model := &SignInModel{State: SignInWarning}
+	if model.Handle(InputEvent{Button: ButtonA, Pressed: true}) != SignInIntentAccept ||
+		model.Handle(InputEvent{Button: ButtonB, Pressed: true}) != SignInIntentBack {
+		t.Fatal("A must accept the warning and B leave")
+	}
+}

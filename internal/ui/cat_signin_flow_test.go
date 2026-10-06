@@ -29,6 +29,7 @@ type signInSite struct {
 	pollStatus    atomic.Value // string
 	profileStatus int
 	polls         atomic.Int32
+	starts        atomic.Int32
 	// tokenGate, when set, holds the token exchange until it is closed;
 	// tokenReached signals that the exchange arrived.
 	tokenGate    chan struct{}
@@ -60,6 +61,7 @@ func newSignInSite(t *testing.T) *signInSite {
 	site.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/device":
+			site.starts.Add(1)
 			if site.deviceStatus != http.StatusOK {
 				w.WriteHeader(site.deviceStatus)
 				return
@@ -117,6 +119,7 @@ func startSignIn(t *testing.T, site *signInSite, cfg *settings.Config) *signInFi
 	if err := itchio.SaveOwnedCache(f.ownedPath, []string{"https://dev.itch.io/previous-account"}); err != nil {
 		t.Fatal(err)
 	}
+	cfg.CredentialWarningAccepted = true // TestSignInWarnsBeforeTheFirstSignIn covers the warning
 	account := NewAccount(cfg, f.cfgPath, f.ownedPath, itchio.NewClientWithBase(site.srv.URL))
 	account.SetOwnedChanged(func(owned []itchio.OwnedGame) { f.owned = append(f.owned, owned) })
 	f.flow, f.model = NewCatSignInFlow(itchio.NewClientWithBase(site.srv.URL), account, nil)
@@ -370,5 +373,43 @@ func TestLeavingTheAccountCheckFinishesItInTheBackground(t *testing.T) {
 	}
 	if urls, _ := itchio.LoadOwnedCache(f.ownedPath); len(urls) != 1 || urls[0] != "https://dev.itch.io/leafbound" {
 		t.Fatalf("owned cache = %v", urls)
+	}
+}
+
+// R21-2: every way into sign-in (Settings, or A on a paid game) shows the
+// physical-access warning first, and only once it is accepted.
+func TestSignInWarnsBeforeTheFirstSignIn(t *testing.T) {
+	site := newSignInSite(t)
+	dir := t.TempDir()
+	cfg := &settings.Config{}
+	cfgPath := filepath.Join(dir, "config.json")
+	account := NewAccount(cfg, cfgPath, filepath.Join(dir, "owned_cache.json"), itchio.NewClientWithBase(site.srv.URL))
+	t.Cleanup(func() { logger.RemoveSecret(tokenSecretLabel) })
+	flow, model := NewCatSignInFlow(itchio.NewClientWithBase(site.srv.URL), account, nil)
+	t.Cleanup(flow.Cancel)
+	if model.State != appui.SignInWarning {
+		t.Fatalf("state = %v, want the physical-access warning", model.State)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if site.starts.Load() != 0 {
+		t.Fatal("sign-in started before the warning was accepted")
+	}
+	if err := flow.AcceptWarning(model); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err := settings.Load(cfgPath); err != nil || !loaded.CredentialWarningAccepted {
+		t.Fatalf("accepted warning not saved: %+v, %v", loaded, err)
+	}
+	f := &signInFixture{cfg: cfg, flow: flow, model: model}
+	f.syncUntil(t, settled)
+	if site.starts.Load() != 1 || !cfg.SignedIn() {
+		t.Fatalf("after accepting: %d code request(s), signed in %v", site.starts.Load(), cfg.SignedIn())
+	}
+
+	// Signing in again later skips the warning.
+	again := &appui.SignInModel{}
+	flow.Open(again)
+	if again.State != appui.SignInStarting {
+		t.Fatalf("second sign-in state = %v, want no second warning", again.State)
 	}
 }
