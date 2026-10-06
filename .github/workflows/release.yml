@@ -67,7 +67,9 @@ jobs:
 
       - name: Run tests
         working-directory: Leaf-Itchio-Pak
-        run: make test-race
+        run: |
+          make test-race
+          make test-native
 
       - name: Build exact MLP1 package
         working-directory: Leaf-Itchio-Pak

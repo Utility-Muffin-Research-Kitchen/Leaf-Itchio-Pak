@@ -42,3 +42,9 @@ jobs:
       - name: Test
         working-directory: Leaf-Itchio-Pak
         run: make test-race
+
+      # The download flows, workers and UI controllers build only without the
+      # headless tag, so the headless suite above does not cover them.
+      - name: Native tests
+        working-directory: Leaf-Itchio-Pak
+        run: make test-native
