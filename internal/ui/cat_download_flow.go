@@ -156,8 +156,9 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 // It falls back to the web flow at most once, when the API fails or lists
 // nothing, so the two endpoints are never tried in a loop. A rate limit or
 // cancellation is final: trying the other endpoint would ignore it. When the
-// API refused access and the web flow fails too, the access error is the one
-// reported.
+// API refused access and the web flow found no download link either, the
+// access error is the one reported; any other web failure, such as being
+// offline, is reported as is.
 func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.APIKey, flow.detail.GameID, "")
 	switch {
@@ -180,7 +181,7 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 		logger.Info("cat download: API lists no uploads for free game_id=%s, using the web flow", flow.detail.GameID)
 	}
 	update := flow.fetchWeb()
-	if update.err != nil && errors.Is(err, itchio.ErrNoAccess) {
+	if errors.Is(update.err, itchio.ErrNoWebDownload) && errors.Is(err, itchio.ErrNoAccess) {
 		update.err = err
 	}
 	return update

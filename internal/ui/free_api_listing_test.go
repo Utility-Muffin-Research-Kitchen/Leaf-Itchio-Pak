@@ -23,6 +23,7 @@ type freeGameSite struct {
 	srv      *httptest.Server
 	api      http.HandlerFunc
 	webPaid  bool
+	webDown  bool // the game page answers HTTP 503
 	apiHits  atomic.Int32
 	webHits  atomic.Int32
 	keyInURL atomic.Bool
@@ -45,6 +46,10 @@ func newFreeGameSite(t *testing.T, api http.HandlerFunc) *freeGameSite {
 			site.api(w, r)
 		case "/game":
 			site.webHits.Add(1)
+			if site.webDown {
+				http.Error(w, "", http.StatusServiceUnavailable)
+				return
+			}
 			fmt.Fprint(w, `<html><head><meta name="csrf_token" value="CSRF"/></head></html>`)
 		case "/game/download_url":
 			url := site.srv.URL + "/dl/KEY"
@@ -149,5 +154,20 @@ func TestFreeGameReportsTheAPIAccessErrorWhenTheWebFlowAlsoFails(t *testing.T) {
 	}
 	if site.apiHits.Load() != 1 || site.webHits.Load() != 1 {
 		t.Fatalf("api %d web %d, want one attempt each", site.apiHits.Load(), site.webHits.Load())
+	}
+}
+
+// The access error replaces the web flow's error only when the web flow
+// found no download link (a paid page or one that needs a login). A web step
+// that fails for another reason, such as being offline, is reported as is.
+func TestFreeGameKeepsTheWebErrorWhenTheWebStepFailsOtherwise(t *testing.T) {
+	site := newFreeGameSite(t, func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "", http.StatusForbidden) })
+	site.webDown = true
+	update := site.discover(t, sessionTestKey)
+	if update.err == nil || errors.Is(update.err, itchio.ErrNoAccess) {
+		t.Fatalf("err = %v, want the web flow's own error", update.err)
+	}
+	if !strings.Contains(update.err.Error(), "HTTP 503") {
+		t.Fatalf("err = %v, want the game page failure", update.err)
 	}
 }

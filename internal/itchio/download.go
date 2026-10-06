@@ -127,7 +127,7 @@ func (c *Client) FetchWebUploadsContext(ctx context.Context, gameURL string) ([]
 		return nil, fmt.Errorf("parse download_url response: %w", err)
 	}
 	if dlResult.URL == "" {
-		return nil, fmt.Errorf("download_url returned empty url (game may be paid or require login)")
+		return nil, ErrNoWebDownload
 	}
 	// The signed URL contains a download key — do not log it.
 	logger.Debug("uploads: signed download URL received")

@@ -24,6 +24,10 @@ var ErrUploadGone = errors.New("This file is no longer on itch.io.")
 // is not owned, or the key does not grant access. Its text is safe for the UI.
 var ErrNoAccess = errors.New("Game not owned or API key does not grant access to this game's downloads")
 
+// ErrNoWebDownload is returned by the anonymous web flow when itch.io offers
+// no download link: the game is paid or needs a signed-in account.
+var ErrNoWebDownload = errors.New("download_url returned empty url (game may be paid or require login)")
+
 // ErrGameRemoved is returned when the game page responds with HTTP 404 or 410.
 var ErrGameRemoved = errors.New("game removed (HTTP 404/410)")
 

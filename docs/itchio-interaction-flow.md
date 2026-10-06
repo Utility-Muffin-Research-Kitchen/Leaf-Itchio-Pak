@@ -73,8 +73,10 @@ ID (see the paid flow below). That skips this web flow and its
 `download_url` POST. `CatDownloadFlow.fetchFree` falls back to the web flow
 at most once, when the API fails or lists nothing. A rate limit or
 cancellation is final and never tries the other endpoint. When the API
-refused access and the web flow fails too, the access error (`ErrNoAccess`)
-is reported. Signed-out users always use the web flow below.
+refused access and the web flow finds no download link either
+(`ErrNoWebDownload`), the access error (`ErrNoAccess`) is reported; any other
+web failure, such as being offline, is reported as is. Signed-out users
+always use the web flow below.
 
 There are six steps. The same `*Client` (and its cookie jar) is used
 throughout, so cookies set in early steps are available in later ones.
