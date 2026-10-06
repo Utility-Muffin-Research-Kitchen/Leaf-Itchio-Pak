@@ -230,6 +230,11 @@ the live token exchange still need a full device sign-in check.
    `access_token` is an itch.io API key that does not expire and has no
    refresh token.
 
+Errors are reported by cause: 400 `invalid_grant` is an expired code, any
+other 400 or a 404 on these three endpoints is `ErrSignInUnavailable` (sign-in
+is set up wrong, such as an invalid scope), and 429 on the code request or the
+exchange is `ErrRateLimited`. Only network failures read "Can't reach itch.io".
+
 `Account` stores the key in `config.json` (0600 where the filesystem allows),
 registers it for log redaction as `[TOKEN]`, and resets account-derived state:
 the client's key generation and bundle-size cache, the live owned list, and

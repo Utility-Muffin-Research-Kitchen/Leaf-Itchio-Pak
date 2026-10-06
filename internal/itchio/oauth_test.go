@@ -304,3 +304,51 @@ func TestDeviceLoginKeepsItsSecretsOutOfLogsAndErrors(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// R21-9: answers that mean sign-in is set up wrong, or that itch.io is busy,
+// are reported as such, not as "Can't reach itch.io".
+func TestSignInErrorsAreReportedByCause(t *testing.T) {
+	rejected := func(status int, code string) func(http.ResponseWriter) {
+		return func(w http.ResponseWriter) { writeJSON(w, status, map[string]any{"errors": []string{code}}) }
+	}
+	busy := func(w http.ResponseWriter) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}
+	for name, test := range map[string]struct {
+		start func(http.ResponseWriter)
+		poll  func(http.ResponseWriter)
+		token func(http.ResponseWriter)
+		want  error
+	}{
+		"start: invalid scope":          {start: rejected(http.StatusBadRequest, "invalid_scope"), want: ErrSignInUnavailable},
+		"poll: unknown endpoint":        {poll: func(w http.ResponseWriter) { http.NotFound(w, nil) }, want: ErrSignInUnavailable},
+		"poll: invalid client":          {poll: rejected(http.StatusBadRequest, "invalid_client"), want: ErrSignInUnavailable},
+		"exchange: rate limited":        {token: busy, want: ErrRateLimited},
+		"exchange: invalid request":     {token: rejected(http.StatusBadRequest, "invalid_request"), want: ErrSignInUnavailable},
+		"exchange: unknown endpoint":    {token: func(w http.ResponseWriter) { http.NotFound(w, nil) }, want: ErrSignInUnavailable},
+		"exchange: spent approval code": {token: rejected(http.StatusBadRequest, "invalid_grant"), want: ErrSignInExpired},
+	} {
+		f := newFakeOAuth(t)
+		if test.start != nil {
+			answer := test.start
+			f.start = func(w http.ResponseWriter, _ url.Values) { answer(w) }
+		}
+		f.polls = []func(http.ResponseWriter){pollStatus("approved", map[string]any{"code": "c"})}
+		if test.poll != nil {
+			f.polls = []func(http.ResponseWriter){test.poll}
+		}
+		if test.token != nil {
+			answer := test.token
+			f.token = func(w http.ResponseWriter, _ url.Values) { answer(w) }
+		}
+		login, err := f.client().BeginDeviceLogin(context.Background())
+		if err == nil {
+			login.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+			_, err = login.Wait(context.Background())
+		}
+		if !errors.Is(err, test.want) {
+			t.Errorf("%s: err = %v, want %v", name, err, test.want)
+		}
+	}
+}

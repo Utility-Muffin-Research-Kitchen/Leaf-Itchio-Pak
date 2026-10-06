@@ -109,8 +109,10 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 	switch {
 	case err != nil:
 		return nil, err
-	case status == http.StatusNotFound:
-		logger.Warn("oauth: QR sign-in is unavailable for client %s", OAuthClientID)
+	case status == http.StatusNotFound || status == http.StatusBadRequest:
+		// 404: the client is not approved for the device grant. 400: the
+		// request itself is refused, such as an invalid scope.
+		logger.Warn("oauth: QR sign-in is unavailable for client %s (HTTP %d)", OAuthClientID, status)
 		return nil, ErrSignInUnavailable
 	case status == http.StatusTooManyRequests:
 		return nil, fmt.Errorf("start sign-in: %w", ErrRateLimited)
@@ -193,6 +195,9 @@ func (l *DeviceLogin) poll(ctx context.Context) (code string, approved bool, err
 		return "", false, nil
 	case status == http.StatusBadRequest && slices.Contains(resp.Errors, "invalid_grant"):
 		return "", false, ErrSignInExpired
+	case status == http.StatusBadRequest || status == http.StatusNotFound:
+		logger.Warn("oauth: itch.io refused the sign-in check (HTTP %d)", status)
+		return "", false, ErrSignInUnavailable
 	case status != http.StatusOK:
 		return "", false, fmt.Errorf("check sign-in: HTTP %d", status)
 	}
@@ -238,6 +243,11 @@ func (l *DeviceLogin) exchange(ctx context.Context, code string) (string, error)
 		return "", err
 	case status == http.StatusBadRequest && slices.Contains(resp.Errors, "invalid_grant"):
 		return "", ErrSignInExpired
+	case status == http.StatusTooManyRequests:
+		return "", fmt.Errorf("finish sign-in: %w", ErrRateLimited)
+	case status == http.StatusBadRequest || status == http.StatusNotFound:
+		logger.Warn("oauth: itch.io refused the key exchange (HTTP %d)", status)
+		return "", ErrSignInUnavailable
 	case status != http.StatusOK || resp.AccessToken == "":
 		return "", fmt.Errorf("finish sign-in: HTTP %d", status)
 	}
