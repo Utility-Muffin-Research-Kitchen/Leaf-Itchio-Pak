@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -109,22 +108,17 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 	}
 	s.inhibitBlocked.Store(false)
 
-	// Reserve every destination before any file is written, so no rename in
-	// this batch can replace another file the batch wrote. Files whose
-	// unified names would meet keep their original names.
-	names := &roms.NameReservations{}
-	dests := make([]string, len(s.downloads))
-	for i, dl := range s.downloads {
-		if !names.Claim(dl.DestPath) {
-			s.err = fmt.Errorf("two files in this download would be saved as %s", filepath.Base(dl.DestPath))
-			atomic.StoreInt32(&s.state, int32(multiDLError))
-			return
-		}
-		dests[i] = dl.DestPath
+	// Choose every destination before any file is written, so nothing in
+	// this batch replaces another game's file or another file of the batch.
+	targets, planErr := planInstallTargets(s.inv, s.cfg, s.game, s.downloads)
+	if planErr != nil {
+		s.err = planErr
+		atomic.StoreInt32(&s.state, int32(multiDLError))
+		return
 	}
-	keepOriginal := roms.UnifiedCollisions(dests, s.game.Title)
 
 	for i, dl := range s.downloads {
+		dl.DestPath = targets[i].download
 		atomic.StoreInt32(&s.currentIdx, int32(i))
 		atomic.StoreInt64(&s.dlProgress, 0)
 		atomic.StoreInt64(&s.dlTotal, 0)
@@ -165,32 +159,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 
 		logger.Info("multi-download: [%d/%d] complete %s", i+1, len(s.downloads), dl.Upload.Filename)
 
-		finalDest := dl.DestPath
-		unifiedName := false
-		if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(dl.Upload.Filename) && keepOriginal[i] {
-			logger.Info("unified-naming: keeping %q; another file in this download needs the same name", filepath.Base(dl.DestPath))
-		} else if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(dl.Upload.Filename) {
-			entry, entryExists := s.inv.Lookup(s.game.URL)
-			disabled := entryExists && entry.UnifiedNamingDisabled
-			if !disabled {
-				newDest, didRename := roms.ResolveUnifiedDest(dl.DestPath, s.game.Title, true)
-				if didRename && names.Holds(newDest) {
-					logger.Info("unified-naming: keeping %q; %q belongs to this download", filepath.Base(dl.DestPath), filepath.Base(newDest))
-				} else if didRename {
-					if renameErr := os.Rename(dl.DestPath, newDest); renameErr != nil {
-						logger.Warn("unified-naming: rename failed: %v", renameErr)
-					} else {
-						logger.Info("unified-naming: renamed %q → %q", filepath.Base(dl.DestPath), filepath.Base(newDest))
-						names.Release(dl.DestPath)
-						names.Claim(newDest)
-						finalDest = newDest
-						unifiedName = true
-					}
-				} else {
-					unifiedName = true
-				}
-			}
-		}
+		finalDest, unifiedName := applyInstallTarget(targets[i])
 
 		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest

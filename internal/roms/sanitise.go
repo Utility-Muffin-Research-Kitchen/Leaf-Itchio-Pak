@@ -98,6 +98,15 @@ func existingCaseFoldPath(dir, base string) (string, bool) {
 	return "", false
 }
 
+// ExistingFAT32Path reports whether a file FAT32 would treat as path exists,
+// and returns its real path. Matching ignores letter case on every host.
+func ExistingFAT32Path(path string) (string, bool) {
+	return existingCaseFoldPath(filepath.Dir(path), filepath.Base(path))
+}
+
+// SameFAT32Path reports whether FAT32 stores a and b as one file.
+func SameFAT32Path(a, b string) bool { return sameFAT32Path(a, b) }
+
 // isNumberedSlot reports whether base matches the pattern "stem (N)ext" for
 // some non-empty digit sequence N. Used to detect that a file was deliberately
 // placed in a collision slot and should not be moved to the primary name.

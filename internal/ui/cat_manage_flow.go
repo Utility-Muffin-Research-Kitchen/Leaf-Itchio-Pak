@@ -13,6 +13,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
@@ -220,8 +221,16 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 	defer lease.Release()
 
 	deleted := make([]inventory.DownloadedFile, 0, len(files))
+	var kept []inventory.DownloadedFile
 	var deleteErr error
 	for _, file := range files {
+		if other := flow.otherOwner(file); other != "" {
+			// Another game records the same file. Drop only this game's
+			// record so the other game keeps working.
+			logger.Warn("manage: keeping %s; %s also records it", filepath.Base(file.DestPath), other)
+			kept = append(kept, file)
+			continue
+		}
 		if err := os.Remove(file.DestPath); err != nil && !os.IsNotExist(err) {
 			deleteErr = fmt.Errorf("delete %s: %w", filepath.Base(file.DestPath), err)
 			break
@@ -232,10 +241,10 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 		flow.removeOwnedArtwork(file, deleted)
 		flow.pruneManagedDir(file)
 	}
-	for _, file := range deleted {
+	for _, file := range append(deleted, kept...) {
 		flow.inv.RemoveFile(flow.gameURL, file.DestPath)
 	}
-	if len(deleted) > 0 {
+	if len(deleted)+len(kept) > 0 {
 		if err := flow.inv.Save(flow.inventoryPath); err != nil && deleteErr == nil {
 			deleteErr = fmt.Errorf("save inventory after deletion: %w", err)
 		}
@@ -247,7 +256,11 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 		model.SetError(deleteErr.Error())
 		return !stillPresent, deleteErr
 	}
-	model.SetResult(fmt.Sprintf("Deleted %d managed file(s).", len(deleted)))
+	result := fmt.Sprintf("Deleted %d managed file(s).", len(deleted))
+	if len(kept) > 0 {
+		result += fmt.Sprintf(" Kept %d that another game uses.", len(kept))
+	}
+	model.SetResult(result)
 	for _, file := range deleted {
 		if managedContentKind(file) == inventory.ContentKindROM {
 			flow.libraryScanPending = true
@@ -263,6 +276,23 @@ func (flow *CatManageFlow) TakeLibraryScanRequest() bool {
 	pending := flow.libraryScanPending
 	flow.libraryScanPending = false
 	return pending
+}
+
+// otherOwner returns another game that records the same file, or "".
+func (flow *CatManageFlow) otherOwner(file inventory.DownloadedFile) string {
+	identity := roms.PathIdentity{SourceID: file.SourceID, RelativePath: file.RelativePath}
+	if identity.SourceID == "" || identity.RelativePath == "" {
+		var ok bool
+		if identity, ok = roms.DescribeDestination(file.DestPath); !ok {
+			return ""
+		}
+	}
+	for _, owner := range flow.inv.OwnerOf(identity.SourceID, identity.RelativePath) {
+		if owner.GameURL != flow.gameURL {
+			return owner.GameURL
+		}
+	}
+	return ""
 }
 
 func (flow *CatManageFlow) indicesByKind(kind string) []int {

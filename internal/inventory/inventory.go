@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +81,24 @@ type DownloadedFile struct {
 	UnifiedName   bool      `json:"unified_name,omitempty"`
 	FileType      string    `json:"file_type,omitempty"`
 	SourceArchive string    `json:"source_archive,omitempty"`
+}
+
+// UploadName is the itch.io upload a file was installed from: the archive
+// for an extracted file, otherwise the downloaded upload itself.
+func (f DownloadedFile) UploadName() string {
+	if f.SourceArchive != "" {
+		return f.SourceArchive
+	}
+	if f.OriginalUpload != "" {
+		return f.OriginalUpload
+	}
+	return f.Filename
+}
+
+// FileOwner is one inventory record of a file on a content source.
+type FileOwner struct {
+	GameURL string
+	File    DownloadedFile
 }
 
 type UpstreamFile struct {
@@ -169,7 +189,87 @@ func Load(path string) (*Inventory, error) {
 		inv.Entries = make(map[string]*Entry)
 	}
 	logger.Debug("inventory: loaded %d entries from %s", len(inv.Entries), path)
+	inv.warnSharedPaths()
 	return &inv, nil
+}
+
+// fileIdentity returns the source and source-relative path of a recorded
+// file, keyed the way FAT32 compares names.
+func fileIdentity(file DownloadedFile) (string, string, bool) {
+	sourceID, rel := file.SourceID, file.RelativePath
+	if sourceID == "" || rel == "" {
+		identity, ok := roms.DescribeDestination(file.DestPath)
+		if !ok {
+			return "", "", false
+		}
+		sourceID, rel = identity.SourceID, identity.RelativePath
+	}
+	return sourceID, strings.ToLower(path.Clean(filepath.ToSlash(rel))), true
+}
+
+// OwnerOf returns every inventory record of the file at relativePath on
+// sourceID. Names are compared case-insensitively, as FAT32 does. More than
+// one owner means two records share the file; downloads never create that,
+// but inventories written before the check could.
+func (inv *Inventory) OwnerOf(sourceID, relativePath string) []FileOwner {
+	want := strings.ToLower(path.Clean(filepath.ToSlash(relativePath)))
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	var owners []FileOwner
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			if source, rel, ok := fileIdentity(file); ok && source == sourceID && rel == want {
+				owners = append(owners, FileOwner{GameURL: gameURL, File: file})
+			}
+		}
+	}
+	sort.Slice(owners, func(i, j int) bool { return owners[i].GameURL < owners[j].GameURL })
+	return owners
+}
+
+// warnSharedPaths reports files that more than one game records. It changes
+// nothing: deleting either game keeps the file (see Manage), and the user
+// decides what to remove.
+func (inv *Inventory) warnSharedPaths() {
+	games := make(map[string][]string)
+	shown := make(map[string]string)
+	var keys []string
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			source, rel, ok := fileIdentity(file)
+			if !ok {
+				continue
+			}
+			key := source + ":" + rel
+			if len(games[key]) == 0 {
+				keys = append(keys, key)
+				shown[key] = source + ":" + filepath.ToSlash(file.RelativePath)
+				if file.RelativePath == "" {
+					shown[key] = key
+				}
+			}
+			if !containsString(games[key], gameURL) {
+				games[key] = append(games[key], gameURL)
+			}
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if owners := games[key]; len(owners) > 1 {
+			sort.Strings(owners)
+			logger.Warn("inventory: %s is recorded by %d games (%s); deleting one keeps the file",
+				shown[key], len(owners), strings.Join(owners, ", "))
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes the inventory to path atomically (write to .tmp then rename).
