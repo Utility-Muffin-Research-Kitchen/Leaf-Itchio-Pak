@@ -83,14 +83,15 @@ func TestUpdateAPIUsesMetadataForPaidSameNameReplacement(t *testing.T) {
 }
 
 func TestUpdateFallbackPreservesKnownFilesAndRemovalSemantics(t *testing.T) {
-	status, pageStatus, body := http.StatusForbidden, http.StatusOK, "<html>Purchase required</html>"
+	const notOwned, owned = `{"owned_keys":{}}`, `{"owned_keys":[{"id":123,"game_id":42,"purchase_id":456}],"per_page":100}`
+	status, pageStatus, body, keys := http.StatusForbidden, http.StatusOK, "<html>Purchase required</html>", notOwned
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("update check made %s", r.Method)
 		}
 		switch r.URL.Path {
 		case "/profile/owned-keys":
-			fmt.Fprint(w, `{"owned_keys":{}}`)
+			fmt.Fprint(w, keys)
 		case "/games/42/uploads":
 			w.WriteHeader(status)
 			fmt.Fprint(w, `{"uploads":[]}`)
@@ -117,11 +118,19 @@ func TestUpdateFallbackPreservesKnownFilesAndRemovalSemantics(t *testing.T) {
 	if inv.IsRemoved(url) || len(entry.KnownUpstreamFiles) != 1 || entry.UpstreamSource != SourceAPI {
 		t.Fatalf("hidden public files were treated as authoritative: %+v", entry)
 	}
+	// Without a download key, an empty list may only mean you cannot access
+	// a paid game, such as one that started charging after a free install.
 	status = http.StatusOK
+	svc.runCheck()
+	if inv.IsRemoved(url) {
+		t.Fatal("empty API list without access marked removed")
+	}
+	keys = owned
 	svc.runCheck()
 	if !inv.IsRemoved(url) {
 		t.Fatal("complete empty API list did not mark removed")
 	}
+	keys = notOwned
 	status, body = http.StatusForbidden, `<div class="upload"><strong class="name">replacement.gb</strong></div>`
 	svc.runCheck()
 	if inv.IsRemoved(url) {
@@ -250,5 +259,35 @@ func TestUpdateDiscardsListingFetchedBeforeInstallCompletes(t *testing.T) {
 	}
 	if len(svc.triggerCh) != 1 {
 		t.Fatal("fresh metadata check was not queued")
+	}
+}
+
+func TestEmptyListForGameInstalledFreeIsCheckedOnThePublicPage(t *testing.T) {
+	// The inventory still says free when the developer starts charging, so
+	// a key-less empty list cannot prove the game was removed.
+	pageRequests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			fmt.Fprint(w, `{"owned_keys":{}}`)
+		case "/games/42/uploads":
+			fmt.Fprint(w, `{"uploads":[]}`)
+		case "/game":
+			pageRequests++
+			fmt.Fprint(w, `<div class="buy_row">Buy</div>`)
+		default:
+			t.Errorf("unexpected update request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	url := srv.URL + "/game"
+	inv, path := updateTestInventory(t, url)
+	inv.Entries[url].IsFree = true
+	client := itchio.NewClientWithBase(srv.URL)
+	client.SetAuthToken("TOKEN")
+	NewUpdateService(inv, path, client, nil).runCheck()
+	if inv.IsRemoved(url) || pageRequests != 1 {
+		t.Fatalf("removed=%v after %d public page checks, want kept after one", inv.IsRemoved(url), pageRequests)
 	}
 }

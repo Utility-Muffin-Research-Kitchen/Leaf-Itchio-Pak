@@ -362,14 +362,21 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamR
 				files = append(files, UpstreamFile{Filename: upload.Filename, DisplayName: upload.DisplayName,
 					UploadID: upload.UploadID, Fingerprint: upload.Fingerprint()})
 			}
-			// A complete API list with no downloadable files confirms removal.
-			// A renamed/replaced upload with other files present does not.
-			return upstreamResult{source: SourceAPI, files: files, removed: len(files) == 0}, nil
-		}
-		if !errors.Is(err, itchio.ErrNoAccess) && !isGameRemoved(err) {
+			if len(files) > 0 || key != "" {
+				// A complete list you can access with no downloadable files
+				// confirms removal; a replaced upload with others present
+				// does not.
+				return upstreamResult{source: SourceAPI, files: files, removed: len(files) == 0}, nil
+			}
+			// Without a download key, an empty list may only mean you cannot
+			// access a paid game, including one that started charging after
+			// a free install, so the inventory's free flag cannot vouch for it.
+			logger.Debug("update-svc: empty upload list without a download key, checking public page")
+		} else if !errors.Is(err, itchio.ErrNoAccess) && !isGameRemoved(err) {
 			return upstreamResult{}, err
+		} else {
+			logger.Debug("update-svc: API access unavailable, checking public page: %v", err)
 		}
-		logger.Debug("update-svc: API access unavailable, checking public page: %v", err)
 	}
 	names, err := s.client.FetchPageUploadNames(gameURL)
 	if err != nil {
