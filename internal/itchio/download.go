@@ -429,6 +429,7 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 		return fmt.Errorf("create download temp: %w", err)
 	}
 	tmpPath := tmp.Name()
+	logger.Info("stream: writing %s", tmpPath)
 	committed := false
 	defer func() {
 		_ = tmp.Close()

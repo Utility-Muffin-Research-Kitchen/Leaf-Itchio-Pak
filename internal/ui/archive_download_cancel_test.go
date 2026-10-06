@@ -212,3 +212,56 @@ func captureLogs(t *testing.T) *logCapture {
 	})
 	return capture
 }
+
+// Every way a run can fail reaches the log at warning level with its cause,
+// not only the screen.
+func TestArchiveDownloadFailuresAreLoggedWithCause(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cdn   http.HandlerFunc
+		plan  func(*ZIPPlan)
+		cause string
+	}{
+		{
+			name:  "transfer",
+			cdn:   func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
+			cause: "file download status 500",
+		},
+		{
+			name:  "preflight",
+			cdn:   func(w http.ResponseWriter, r *http.Request) { t.Error("a failed preflight still downloaded") },
+			plan:  func(plan *ZIPPlan) { plan.DownloadROMs = false },
+			cause: "no selected output files",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArchiveTransfer(t, tc.cdn)
+			if tc.plan != nil {
+				tc.plan(&f.plan)
+			}
+			logs := captureLogs(t)
+			worker := f.start()
+			waitFor(t, func() bool { return worker.loadState() != zipDLDownloading })
+			if state := worker.loadState(); state != zipDLError {
+				t.Fatalf("state = %v, want an error", state)
+			}
+			waitFor(t, func() bool { return hasLogLine(logs.String(), "[WARN]", "zip-download", tc.cause) })
+		})
+	}
+}
+
+func hasLogLine(logs string, parts ...string) bool {
+	for _, line := range strings.Split(logs, "\n") {
+		found := true
+		for _, part := range parts {
+			if !strings.Contains(line, part) {
+				found = false
+				break
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}

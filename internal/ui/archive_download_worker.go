@@ -85,6 +85,7 @@ func NewArchiveDownloadWorker(
 }
 
 func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
+	defer s.logFailure()
 	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
 	if guardErr != nil {
 		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
@@ -312,6 +313,14 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	}
 	logger.Info("zip-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
+}
+
+// logFailure logs why a run ended in the error state. Every failure exit
+// then reaches the log with its cause, not only the screen.
+func (s *ArchiveDownloadWorker) logFailure() {
+	if s.loadState() == zipDLError && s.err != nil {
+		logger.Warn("zip-download: %s failed: %v", s.plan.Upload.Filename, s.err)
+	}
 }
 
 // run7z handles extraction for 7z archives using the same plan logic as run().
