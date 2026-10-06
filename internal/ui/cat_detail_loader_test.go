@@ -26,7 +26,7 @@ func TestDetailMetadataChangesPricingWithoutChangingInventoryIdentity(t *testing
 			game := itchio.Game{URL: "https://author.itch.io/old", IsFree: tc.feedFree}
 			loader := &CatDetailLoader{game: game, updates: make(chan catDetailResult, 1)}
 			loader.updates <- catDetailResult{detail: &itchio.GameDetail{Data: &itchio.GameData{
-				ID: 42, URL: "https://author.itch.io/new", Price: tc.price, SuggestedPrice: tc.suggestion,
+				ID: 42, Price: tc.price, SuggestedPrice: tc.suggestion,
 			}}}
 			model := appui.NewDetailModel(appui.DetailGame{URL: game.URL, IsFree: tc.feedFree, Downloaded: true,
 				CanDownload: tc.feedFree, NeedsSignIn: !tc.feedFree})

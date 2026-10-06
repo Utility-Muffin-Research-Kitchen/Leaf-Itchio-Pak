@@ -123,9 +123,9 @@ func (c *Client) FetchGameDetailContext(ctx context.Context, gameURL string) (*G
 	if err == nil {
 		detail.Data = data
 		detail.GameID = strconv.FormatInt(data.ID, 10)
-		if data.Tags != nil {
-			detail.PageTags = data.Tags
-		}
+		// Content warnings read these tags, so keep every tag either source
+		// lists.
+		detail.PageTags = unionTags(detail.PageTags, data.Tags)
 		if data.Screenshots != nil {
 			detail.ScreenshotURLs = data.Screenshots
 		}
@@ -135,6 +135,23 @@ func (c *Client) FetchGameDetailContext(ctx context.Context, gameURL string) (*G
 		logger.Debug("game: public metadata unavailable; retaining page fields")
 	}
 	return detail, nil
+}
+
+// unionTags keeps the first spelling of each tag, ignoring case and spaces.
+func unionTags(lists ...[]string) []string {
+	var tags []string
+	seen := make(map[string]bool)
+	for _, list := range lists {
+		for _, tag := range list {
+			key := strings.ToLower(strings.TrimSpace(tag))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			tags = append(tags, strings.TrimSpace(tag))
+		}
+	}
+	return tags
 }
 
 func (c *Client) fetchGamePage(ctx context.Context, gameURL string) (*GameDetail, error) {

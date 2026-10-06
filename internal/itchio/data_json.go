@@ -30,10 +30,6 @@ type GameData struct {
 	Screenshots    []string  `json:"screenshots"`
 	Tags           []string  `json:"tags"`
 	CoverImage     string    `json:"cover_image"`
-	URL            string    `json:"-"`
-	Links          struct {
-		Self string `json:"self"`
-	} `json:"links"`
 }
 
 type GameSale struct {
@@ -107,11 +103,6 @@ func (c *Client) FetchGameDataContext(ctx context.Context, gameURL string) (*Gam
 		return nil, fmt.Errorf("invalid game metadata response")
 	}
 	c.rememberPrice(gameURL, data)
-	data.URL = gameURL
-	if canonical, err := url.Parse(data.Links.Self); err == nil && canonical.Host != "" && canonical.User == nil &&
-		(canonical.Scheme == "https" || canonical.Scheme == "http") && canonical.RawQuery == "" && canonical.Fragment == "" {
-		data.URL = canonical.String()
-	}
 	return &data, nil
 }
 

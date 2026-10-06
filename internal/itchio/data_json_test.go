@@ -51,7 +51,7 @@ func TestGameDataRedirectAndDetailFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.GameID != "42" || detail.Data == nil || detail.Data.URL != "https://author.itch.io/new" ||
+	if detail.GameID != "42" || detail.Data == nil ||
 		detail.Data.Price != "€2,50" || detail.Data.OriginalPrice != "€5,00" || detail.Data.Sale.Rate != 50 {
 		t.Fatalf("metadata = %#v", detail)
 	}
@@ -113,5 +113,24 @@ func TestGameDataCancellationAndBrowserOnly(t *testing.T) {
 	cancel()
 	if _, err := client.FetchGameDataContext(ctx, srv.URL); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
+	}
+}
+
+func TestDetailTagsAreTheUnionOfPageAndMetadataTags(t *testing.T) {
+	// Content warnings read these tags, so neither source may drop one.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/data.json") {
+			fmt.Fprint(w, `{"id":42,"tags":["Horror","Puzzle"]}`)
+			return
+		}
+		fmt.Fprint(w, `<a href="https://itch.io/games/tag-gore">Gore</a><a href="https://itch.io/games/tag-horror">Horror</a>`)
+	}))
+	defer srv.Close()
+	detail, err := NewClient().FetchGameDetail(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(detail.PageTags, ","); got != "gore,horror,Puzzle" {
+		t.Fatalf("tags = %q, want gore,horror,Puzzle", got)
 	}
 }
