@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -370,6 +371,39 @@ func (g *idleGuard) pause() {
 	g.timer.Stop()
 }
 
+// stalled reports whether a download request or body read failed because the
+// connection went quiet: the idle guard fired, or a transport timeout fired
+// first (the h1 response-header timeout, or the h2 ping that ends in "client
+// connection lost"). Caller cancellation is never a stall.
+func stalled(ctx context.Context, err error) bool {
+	if context.Cause(ctx) == (downloadIdleTimeout{}) {
+		return true
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(err.Error(), "http2: client connection lost")
+}
+
+// stallError logs the cause of a stall and returns the message you see. The
+// request URL, which may be signed, stays out of the log.
+func stallError(ctx context.Context, downloaded int64, err error) error {
+	cause := fmt.Sprintf("no data for %s", streamIdleTimeout)
+	if context.Cause(ctx) != (downloadIdleTimeout{}) {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		cause = err.Error()
+	}
+	logger.Warn("stream: stalled after %d bytes: %s", downloaded, cause)
+	return downloadIdleTimeout{}
+}
+
 func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, progress func(int64, int64)) error {
 	lease, guardErr := leaf.BeginOperation(ctx, "HTTP body write", false)
 	if guardErr != nil {
@@ -397,8 +431,8 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	}
 	resp, err := dlClient.Do(req)
 	if err != nil {
-		if cause := context.Cause(ctx); cause == (downloadIdleTimeout{}) {
-			return cause
+		if stalled(ctx, err) {
+			return stallError(ctx, 0, err)
 		}
 		return safeRequestError("fetch file", err)
 	}
@@ -461,8 +495,8 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 			break
 		}
 		if err != nil {
-			if cause := context.Cause(ctx); cause == (downloadIdleTimeout{}) {
-				return cause
+			if stalled(ctx, err) {
+				return stallError(ctx, downloaded, err)
 			}
 			logger.Error("stream: read error after %d bytes: %v", downloaded, err)
 			return fmt.Errorf("read stream: %w", err)
