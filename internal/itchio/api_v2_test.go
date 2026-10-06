@@ -570,3 +570,26 @@ func TestFetchOwnedKeysKeepsCountsFromACappedScan(t *testing.T) {
 		t.Fatalf("full-scan pages = %d, want one capped scan of 20", got)
 	}
 }
+
+// Download on a game you do not own gets an empty filtered answer. That is
+// not a scan of an empty library, so the cached bundle sizes stay.
+func TestUnownedGameKeepsCachedBundleSizes(t *testing.T) {
+	owned := &ownedAPI{filter: true, keys: ownedLibrary()}
+	srv := httptest.NewServer(owned.handler(t))
+	defer srv.Close()
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
+	if _, _, err := client.ValidateAPIKey(v2Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.FetchOwnedKeys(v2Key, "99"); err == nil {
+		t.Fatal("an unowned game returned keys")
+	}
+	before := owned.fullScans.Load()
+	keys, err := client.FetchOwnedKeys(v2Key, "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bundleSizes(keys); got[2] != 3 || owned.fullScans.Load() != before {
+		t.Fatalf("bundle sizes = %v after %d new scan page(s); want the cached 3 and no scan", got, owned.fullScans.Load()-before)
+	}
+}

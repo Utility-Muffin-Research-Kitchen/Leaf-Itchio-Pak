@@ -246,7 +246,9 @@ func (c *Client) FetchOwnedKeysContext(ctx context.Context, apiKey, gameID strin
 	switch {
 	case !serverFiltered:
 		counts = purchaseGameCounts(keys)
-		if complete {
+		// An empty answer is what a filtering server sends for a game you
+		// do not own; it says nothing about the rest of the library.
+		if complete && len(keys) > 0 {
 			c.storePurchaseCounts(generation, counts)
 		}
 	case len(keys) > 1:
