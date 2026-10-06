@@ -73,6 +73,9 @@ func (account *Account) Validated(user string, owned []itchio.OwnedGame) error {
 			return fmt.Errorf("save account name: %w", err)
 		}
 	}
+	if owned == nil {
+		owned = []itchio.OwnedGame{} // known: this account owns nothing
+	}
 	urls := make([]string, 0, len(owned))
 	for _, game := range owned {
 		urls = append(urls, game.URL)

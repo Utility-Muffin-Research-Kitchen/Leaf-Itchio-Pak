@@ -3,6 +3,7 @@ package itchio_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -226,6 +227,10 @@ func TestFetchOwnedKeys_NotOwned(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "doesn't own this game") {
 		t.Errorf("error should say the account doesn't own the game, got: %v", err)
+	}
+	// R21-3: the message is shown on screen; the game ID belongs in the log.
+	if !errors.Is(err, itchio.ErrNotOwned) || strings.Contains(err.Error(), "1234") {
+		t.Errorf("error = %v, want ErrNotOwned without the game ID", err)
 	}
 }
 

@@ -36,6 +36,7 @@ capture signin-qr-failed 960 720 1 2
 capture signin-checking 960 720 1 2
 capture signin-warning 960 720 1 2
 capture detail-signin 960 720 1 0
+capture detail-not-owned 960 720 1 2
 capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0
 capture detail 960 720 1 0

@@ -44,6 +44,11 @@ animated GIF, and screenshots. A begins the available download flow. X opens
 Manage when the game has installed files. Start opens Settings and B returns to
 the main list.
 
+On a paid game, A opens sign-in while you're signed out. Signed in, a paid game
+your account doesn't own says **Not owned** under the QR code and has no
+download; scan the code to buy it on itch.io. The page follows your account,
+so signing in or out from Settings updates it right away.
+
 A tag-based content warning must be acknowledged before flagged detail content
 is shown. Warning categories can be changed in Settings; they do not delete or
 silently remove catalogue entries.

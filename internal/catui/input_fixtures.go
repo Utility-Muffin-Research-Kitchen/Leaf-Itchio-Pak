@@ -285,7 +285,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
-	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin":
+	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
 		model := &appui.SignInModel{
 			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
 			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
@@ -305,10 +305,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 			// Too long for any QR code, so drawing it fails for real.
 			model.QRURL = "https://itch.io/user/oauth/device?code=" + strings.Repeat("x", 5000)
 		}
-		if config.Screen == "detail-signin" {
+		if config.Screen == "detail-signin" || config.Screen == "detail-not-owned" {
+			// detail-not-owned: signed in, but the account does not own it.
 			detail := appui.NewDetailModel(appui.DetailGame{
 				Title: "Leafbound Deluxe", Author: "leafdev", URL: "https://leafdev.itch.io/leafbound-deluxe",
-				Platform: "GBA", Price: 4.99, NeedsSignIn: true,
+				Platform: "GBA", Price: 4.99, NeedsSignIn: config.Screen == "detail-signin",
 			})
 			detail.SetReady(`<p>A paid Game Boy Advance release. Sign in with itch.io to download it once you own it.</p>`,
 				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, false)

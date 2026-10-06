@@ -363,9 +363,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		detailModel = appui.NewDetailModel(appui.DetailGame{
 			Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
 			Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
-			CanDownload: game.IsFree || cfg.SignedIn(),
-			NeedsSignIn: !game.IsFree && !cfg.SignedIn(),
 		})
+		list.ApplyDetailAccess(&detailModel.Game)
 		var screenErr error
 		detailScreen, screenErr = catui.NewDetailScreen(ctx, detailModel, imageCache)
 		if screenErr != nil {
@@ -419,8 +418,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		case catRouteSettings:
 			settingsFlow.Refresh(settingsModel)
 		case catRouteDetail:
-			detailModel.Game.CanDownload = activeGame.IsFree || cfg.SignedIn()
-			detailModel.Game.NeedsSignIn = !activeGame.IsFree && !cfg.SignedIn()
+			list.ApplyDetailAccess(&detailModel.Game)
 		}
 	}
 	// signOutRejected signs out after itch.io rejected the stored key.
@@ -743,6 +741,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			imageCache.BeginFrame()
 			return filterScreen.Draw()
 		case catRouteDetail:
+			// The action follows the current account: signing in or out
+			// anywhere, or the owned list arriving, updates an open page.
+			list.ApplyDetailAccess(&detailModel.Game)
 			return detailScreen.Draw()
 		case catRouteDownloadSelect:
 			return downloadSelectScreen.Draw()

@@ -274,6 +274,14 @@ Typed API keys are gone: `settings.Load` removes a stored `api_key`, sets
 
 ## Paid game download (signed in)
 
+The detail page's action follows the current account on every frame
+(`CatalogController.ApplyDetailAccess`): signed out, a paid game offers sign-in;
+signed in, it offers Download when the owned set lists it, or while that set is
+not known yet (right after a sign-in, or when the check could not run), in which
+case the purchase lookup below decides. A paid game the account does not own
+offers no Download and says **Not owned**. The not-owned error
+(`ErrNotOwned`) never shows the game ID; it is only logged.
+
 **Source:** `download_auth.go`, `roms/install_session.go`
 
 For paid games the user already owns, every request goes to itch.io API v2 on

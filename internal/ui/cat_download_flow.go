@@ -127,7 +127,7 @@ func (flow *CatDownloadFlow) discover() {
 			} else if len(keys) == 1 {
 				update = flow.fetchForKey(keys[0])
 			} else {
-				update.err = fmt.Errorf("game is not owned by the configured itch.io account")
+				update.err = itchio.ErrNotOwned
 			}
 		} else if flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
 			update = flow.fetchFree()

@@ -24,6 +24,10 @@ var ErrUploadGone = errors.New("This file is no longer on itch.io.")
 // signed-in account does not own the game. Its text is safe for the UI.
 var ErrNoAccess = errors.New("your itch.io account doesn't have access to this game's downloads")
 
+// ErrNotOwned is returned when the signed-in account has no purchase of a
+// paid game. Its text is safe for the UI; the game ID is only logged.
+var ErrNotOwned = errors.New("your itch.io account doesn't own this game")
+
 // ErrDownloadRefused is returned when itch.io refuses to resolve an upload
 // with HTTP 401 or 403. Its text is safe for the UI.
 var ErrDownloadRefused = errors.New("your itch.io account doesn't have access to this download")

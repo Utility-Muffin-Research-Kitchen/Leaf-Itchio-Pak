@@ -84,12 +84,13 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		client: client, cfg: cfg, cfgPath: cfgPath, cachePath: cachePath,
 		inv: inv, inventoryPath: inventoryPath, updateSvc: updateSvc,
 		pageUpdateCh: make(chan pageResult, 1), cacheUpdateCh: make(chan []itchio.Game, 1),
-		ownedUpdateCh: make(chan map[string]bool, 1), ownedURLs: make(map[string]bool),
+		ownedUpdateCh:  make(chan map[string]bool, 1),
 		ownedCachePath: ownedCachePath, sortMode: itchio.SortMode(cfg.SortMode),
 		platformFilter: cfg.PlatformFilter,
 	}
 
-	if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && len(urls) > 0 {
+	if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && urls != nil {
+		controller.ownedURLs = make(map[string]bool, len(urls))
 		for _, url := range urls {
 			controller.ownedURLs[url] = true
 		}
@@ -199,11 +200,17 @@ func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
 
 // ReplaceOwnedGames updates the live catalogue's credential-derived state.
 // It does not persist: CatSettingsFlow owns the matching cache transaction.
+// nil clears the owned set and marks it unknown (after a sign-in or sign-out
+// and until a check of the new account finishes); an empty slice is an
+// account that owns nothing.
 func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame) {
 	controller.ownedMu.Lock()
 	controller.ownedGeneration.Add(1)
 	controller.ownedMu.Unlock()
-	ownedURLs := make(map[string]bool, len(owned))
+	var ownedURLs map[string]bool
+	if owned != nil {
+		ownedURLs = make(map[string]bool, len(owned))
+	}
 	for _, game := range owned {
 		ownedURLs[game.URL] = true
 	}
@@ -213,6 +220,26 @@ func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame)
 	}
 	controller.ownedUpdateCh <- ownedURLs
 	controller.wakeUI()
+}
+
+// Owned reports whether url is in the current account's owned set.
+func (controller *CatalogController) Owned(url string) bool { return controller.ownedURLs[url] }
+
+// ownedKnown reports whether the owned set belongs to the current sign-in:
+// loaded from its cache or from a check. It is not known right after a
+// sign-in, or when the check could not run.
+func (controller *CatalogController) ownedKnown() bool { return controller.ownedURLs != nil }
+
+// ApplyDetailAccess sets the detail page's action from the current sign-in
+// and owned set, so signing in or out anywhere, or an owned list that arrives
+// while the page is open, updates it. A paid game downloads when you own it,
+// or while the owned set is unknown (the purchase lookup then decides). A
+// paid game you do not own offers no Download (DetailGame.NotOwned).
+func (controller *CatalogController) ApplyDetailAccess(game *appui.DetailGame) {
+	signedIn := controller.cfg.SignedIn()
+	game.Owned = controller.Owned(game.URL)
+	game.NeedsSignIn = !game.IsFree && !signedIn
+	game.CanDownload = game.IsFree || signedIn && (game.Owned || !controller.ownedKnown())
 }
 
 func (controller *CatalogController) loadPage(page int, query string) {

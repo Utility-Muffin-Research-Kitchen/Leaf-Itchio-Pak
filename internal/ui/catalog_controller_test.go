@@ -154,3 +154,54 @@ func TestCatalogControllerDiscardsValidationFromAReplacedKey(t *testing.T) {
 		t.Fatal("current validation was discarded")
 	}
 }
+
+// R21-3: the detail page's action follows the current account: signing in
+// or out anywhere, or the owned list arriving, updates an open page. A paid
+// game you do not own offers no Download.
+func TestDetailAccessFollowsTheAccount(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &settings.Config{}
+	controller := &CatalogController{
+		cfg: cfg, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		ownedUpdateCh: make(chan map[string]bool, 1),
+	}
+	account := NewAccount(cfg, filepath.Join(dir, "config.json"), filepath.Join(dir, "owned_cache.json"), itchio.NewClientWithBase("https://example.invalid"))
+	account.SetOwnedChanged(controller.ReplaceOwnedGames)
+	paid := appui.DetailGame{Title: "Paid", URL: "https://dev.itch.io/paid"}
+	free := appui.DetailGame{Title: "Free", URL: "https://dev.itch.io/free", IsFree: true}
+	check := func(step string, want appui.DetailGame) {
+		t.Helper()
+		controller.consumeUpdates()
+		got := paid
+		controller.ApplyDetailAccess(&got)
+		if got.CanDownload != want.CanDownload || got.NeedsSignIn != want.NeedsSignIn || got.Owned != want.Owned {
+			t.Fatalf("%s: paid game = download %v sign-in %v owned %v; want %v %v %v", step,
+				got.CanDownload, got.NeedsSignIn, got.Owned, want.CanDownload, want.NeedsSignIn, want.Owned)
+		}
+		gotFree := free
+		controller.ApplyDetailAccess(&gotFree)
+		if !gotFree.CanDownload || gotFree.NeedsSignIn {
+			t.Fatalf("%s: a free game must always download", step)
+		}
+	}
+
+	check("signed out", appui.DetailGame{NeedsSignIn: true})
+	if err := account.Store("new-key"); err != nil {
+		t.Fatal(err)
+	}
+	// The owned list is not known until the account check finishes: the
+	// purchase lookup decides, so Download stays.
+	check("signed in, owned list loading", appui.DetailGame{CanDownload: true})
+	if err := account.Validated("tester", []itchio.OwnedGame{{URL: "https://dev.itch.io/other"}}); err != nil {
+		t.Fatal(err)
+	}
+	check("signed in, not owned", appui.DetailGame{})
+	if err := account.Validated("tester", []itchio.OwnedGame{{URL: paid.URL}}); err != nil {
+		t.Fatal(err)
+	}
+	check("signed in, owned", appui.DetailGame{CanDownload: true, Owned: true})
+	if err := account.SignOut(); err != nil {
+		t.Fatal(err)
+	}
+	check("signed out again", appui.DetailGame{NeedsSignIn: true})
+}

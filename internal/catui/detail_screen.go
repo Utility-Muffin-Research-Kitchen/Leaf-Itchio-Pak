@@ -172,7 +172,11 @@ func (screen *DetailScreen) drawReady(content Box) error {
 		}
 	}
 	y := qrRect.Y + qrRect.H + screen.ctx.Scale(5)
-	if _, err := screen.ctx.DrawText(FontTiny, "Scan to open on itch.io", panel.X, y,
+	caption := "Scan to open on itch.io"
+	if screen.model.Game.NotOwned() && !screen.model.BrowserOnly {
+		caption = "Not owned. Scan to buy."
+	}
+	if _, err := screen.ctx.DrawText(FontTiny, caption, panel.X, y,
 		screen.ctx.ThemeColor(RoleHint), panel.W, true); err != nil {
 		return err
 	}

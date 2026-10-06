@@ -272,7 +272,8 @@ func (c *Client) FetchOwnedKeysContext(ctx context.Context, apiKey, gameID strin
 		})
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("your itch.io account doesn't own this game (game_id=%s)", gameID)
+		logger.Info("auth: no purchase of game_id=%s in the owned keys", gameID)
+		return nil, ErrNotOwned
 	}
 	logger.Debug("auth: found %d owned key(s) for game_id=%s (server-filtered=%v)", len(matches), gameID, serverFiltered)
 	return matches, nil
