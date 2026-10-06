@@ -390,21 +390,30 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	}
 	openSignIn := func(back catRoute) error {
 		signInReturn = back
-		signInFlow, signInModel = ui.NewCatSignInFlow(client, account, func() { _ = ctx.Wake() })
+		if signInFlow != nil {
+			// An earlier sign-in is still saving its key in the background:
+			// reuse its flow so nothing it delivers is lost.
+			signInModel = appui.NewSignInModel()
+			signInFlow.Start(signInModel)
+		} else {
+			signInFlow, signInModel = ui.NewCatSignInFlow(client, account, func() { _ = ctx.Wake() })
+		}
 		var screenErr error
 		signInScreen, screenErr = catui.NewSignInScreen(ctx, signInModel)
 		if screenErr != nil {
 			signInFlow.Cancel()
-			signInFlow, signInModel = nil, nil
+			signInModel = nil
 			return screenErr
 		}
 		route = catRouteSignIn
 		return nil
 	}
+	// closeSignIn leaves the sign-in screen. The flow stays until it is idle:
+	// a key itch.io already issued is still saved, then checked.
 	closeSignIn := func() {
 		signInFlow.Cancel()
 		signInScreen.Close()
-		signInFlow, signInModel, signInScreen = nil, nil, nil
+		signInModel, signInScreen = nil, nil
 		route = signInReturn
 		switch route {
 		case catRouteSettings:
@@ -826,8 +835,20 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
-		if signInFlow != nil && signInFlow.Sync(signInModel) {
-			redraw = true
+		if signInFlow != nil {
+			signedIn := cfg.SignedIn()
+			if signInFlow.Sync(signInModel) {
+				redraw = true
+			}
+			if signInModel == nil {
+				if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
+					settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
+					redraw = true
+				}
+				if signInFlow.Idle() {
+					signInFlow = nil
+				}
+			}
 		}
 		if list.TakeSignInRejected() {
 			signOutRejected()
@@ -1217,8 +1238,20 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
-		if signInFlow != nil && signInFlow.Sync(signInModel) {
-			redraw = true
+		if signInFlow != nil {
+			signedIn := cfg.SignedIn()
+			if signInFlow.Sync(signInModel) {
+				redraw = true
+			}
+			if signInModel == nil {
+				if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
+					settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
+					redraw = true
+				}
+				if signInFlow.Idle() {
+					signInFlow = nil
+				}
+			}
 		}
 		if list.TakeSignInRejected() {
 			signOutRejected()

@@ -146,6 +146,16 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 // It returns ErrSignInDenied or ErrSignInExpired for those outcomes and the
 // context's error when cancelled. No request outlives the code.
 func (l *DeviceLogin) Wait(ctx context.Context) (string, error) {
+	code, err := l.WaitForApproval(ctx)
+	if err != nil {
+		return "", err
+	}
+	return l.Exchange(ctx, code)
+}
+
+// WaitForApproval polls until the user decides and returns the single-use
+// approval code. Cancelling ctx stops it at once.
+func (l *DeviceLogin) WaitForApproval(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithDeadline(ctx, l.Expires)
 	defer cancel()
 	for {
@@ -158,8 +168,7 @@ func (l *DeviceLogin) Wait(ctx context.Context) (string, error) {
 			return "", l.outcome(ctx, err)
 		}
 		if approved {
-			key, err := l.exchange(ctx, code)
-			return key, l.outcome(ctx, err)
+			return code, nil
 		}
 		// Wait after each answer rather than on a fixed timer, in case
 		// itch.io turns the poll into a long poll.
@@ -167,6 +176,16 @@ func (l *DeviceLogin) Wait(ctx context.Context) (string, error) {
 			return "", l.outcome(ctx, err)
 		}
 	}
+}
+
+// Exchange trades the approval code for the key. itch.io issues the key
+// here and the app cannot revoke it, so callers let it finish rather than
+// cancel it; ctx should only bound how long it may take.
+func (l *DeviceLogin) Exchange(ctx context.Context, code string) (string, error) {
+	ctx, cancel := context.WithDeadline(ctx, l.Expires)
+	defer cancel()
+	key, err := l.exchange(ctx, code)
+	return key, l.outcome(ctx, err)
 }
 
 // outcome reports the code's own deadline as an expiry, and leaves the

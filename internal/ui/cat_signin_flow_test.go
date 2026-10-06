@@ -25,14 +25,26 @@ const signInKey = "signed-in-key-4b7e"
 type signInSite struct {
 	srv           *httptest.Server
 	deviceStatus  int
-	pollStatus    string
+	pollStatus    atomic.Value // string
 	profileStatus int
 	polls         atomic.Int32
+	// tokenGate, when set, holds the token exchange until it is closed;
+	// tokenReached signals that the exchange arrived.
+	tokenGate    chan struct{}
+	tokenReached chan struct{}
+	tokens       atomic.Int32
+	// profileGate, when set, holds the account check until it is closed.
+	profileGate    chan struct{}
+	profileReached chan struct{}
 }
+
+func (site *signInSite) setPoll(status string) { site.pollStatus.Store(status) }
 
 func newSignInSite(t *testing.T) *signInSite {
 	t.Helper()
-	site := &signInSite{deviceStatus: http.StatusOK, pollStatus: "approved", profileStatus: http.StatusOK}
+	site := &signInSite{deviceStatus: http.StatusOK, profileStatus: http.StatusOK,
+		tokenReached: make(chan struct{}, 4), profileReached: make(chan struct{}, 4)}
+	site.setPoll("approved")
 	site.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/device":
@@ -44,10 +56,19 @@ func newSignInSite(t *testing.T) *signInSite {
 				`"verification_uri_complete":"https://itch.io/user/oauth/device?code=verification-fixture","expires_in":600,"interval":1}`)
 		case "/oauth/device/poll":
 			site.polls.Add(1)
-			fmt.Fprintf(w, `{"status":%q,"code":"approval"}`, site.pollStatus)
+			fmt.Fprintf(w, `{"status":%q,"code":"approval"}`, site.pollStatus.Load().(string))
 		case "/oauth/token":
+			site.tokenReached <- struct{}{}
+			if site.tokenGate != nil {
+				<-site.tokenGate
+			}
+			site.tokens.Add(1)
 			fmt.Fprintf(w, `{"access_token":%q,"token_type":"bearer"}`, signInKey)
 		case "/profile":
+			site.profileReached <- struct{}{}
+			if site.profileGate != nil {
+				<-site.profileGate
+			}
 			if r.Header.Get("Authorization") != "Bearer "+signInKey {
 				t.Errorf("profile authorization = %q", r.Header.Get("Authorization"))
 			}
@@ -130,7 +151,7 @@ func TestSignInStoresTheKeyAndLoadsTheAccount(t *testing.T) {
 
 func TestSignInShowsTheCodeAndCancelChangesNothing(t *testing.T) {
 	site := newSignInSite(t)
-	site.pollStatus = "pending"
+	site.setPoll("pending")
 	f := startSignIn(t, site, &settings.Config{})
 	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInWaiting })
 	if f.model.UserCode != "ABCD-1234" || f.model.QRURL != "https://itch.io/user/oauth/device?code=verification-fixture" || f.model.Remaining(time.Now()) <= 0 {
@@ -156,8 +177,8 @@ func TestSignInOutcomes(t *testing.T) {
 		heading   string
 	}{
 		"unavailable":  {func(s *signInSite) { s.deviceStatus = http.StatusNotFound }, "Sign-in is unavailable"},
-		"declined":     {func(s *signInSite) { s.pollStatus = "denied" }, "Sign-in was declined"},
-		"expired":      {func(s *signInSite) { s.pollStatus = "expired" }, "The code expired"},
+		"declined":     {func(s *signInSite) { s.setPoll("denied") }, "Sign-in was declined"},
+		"expired":      {func(s *signInSite) { s.setPoll("expired") }, "The code expired"},
 		"key rejected": {func(s *signInSite) { s.profileStatus = http.StatusUnauthorized }, "itch.io didn't accept the sign-in"},
 	} {
 		site := newSignInSite(t)
@@ -186,10 +207,10 @@ func TestSignInKeepsTheKeyWhenTheAccountCheckIsOffline(t *testing.T) {
 
 func TestSignInRetryStartsAFreshCode(t *testing.T) {
 	site := newSignInSite(t)
-	site.pollStatus = "expired"
+	site.setPoll("expired")
 	f := startSignIn(t, site, &settings.Config{})
 	f.syncUntil(t, settled)
-	site.pollStatus = "approved"
+	site.setPoll("approved")
 	f.flow.Start(f.model)
 	f.syncUntil(t, settled)
 	if f.model.State != appui.SignInDone || !f.cfg.SignedIn() {
@@ -208,5 +229,64 @@ func TestCatalogStartupRejectionIgnoresAReplacedKey(t *testing.T) {
 	controller.rejectSignInIfCurrent(controller.ownedGeneration.Load())
 	if !controller.TakeSignInRejected() || controller.TakeSignInRejected() {
 		t.Fatal("a current rejection must be reported exactly once")
+	}
+}
+
+func waitSignal(t *testing.T, signal chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// syncDetached keeps applying results after the screen closed, as the app
+// does, until the flow has nothing left to deliver.
+func (f *signInFixture) syncDetached(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !f.flow.Idle() {
+		if time.Now().After(deadline) {
+			t.Fatal("the flow never settled")
+		}
+		f.flow.Sync(nil)
+		time.Sleep(2 * time.Millisecond)
+	}
+	f.flow.Sync(nil)
+}
+
+// R21-8: itch.io already issued the key when B lands between the exchange
+// and the next Sync. The key is saved anyway: the app cannot revoke it.
+func TestSignInSavesAKeyIssuedJustBeforeYouCancel(t *testing.T) {
+	site := newSignInSite(t)
+	f := startSignIn(t, site, &settings.Config{})
+	waitSignal(t, site.tokenReached, "the token exchange")
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.flow.updates) < 2 { // the code, then the key
+		if time.Now().After(deadline) {
+			t.Fatal("the key never arrived")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	f.flow.Cancel()
+	f.syncDetached(t)
+	if f.cfg.Credential() != signInKey || f.cfg.AuthUser != "tester" {
+		t.Fatalf("config = %+v, want the issued key saved and checked", f.cfg)
+	}
+}
+
+// R21-8: B during the exchange does not abort it, so a key itch.io is
+// issuing is never lost.
+func TestSignInFinishesTheKeyExchangeAfterYouCancel(t *testing.T) {
+	site := newSignInSite(t)
+	site.tokenGate = make(chan struct{})
+	f := startSignIn(t, site, &settings.Config{})
+	waitSignal(t, site.tokenReached, "the token exchange")
+	f.flow.Cancel()
+	close(site.tokenGate)
+	f.syncDetached(t)
+	if site.tokens.Load() != 1 || f.cfg.Credential() != signInKey {
+		t.Fatalf("exchanges answered %d, config = %+v; want the key saved", site.tokens.Load(), f.cfg)
 	}
 }

@@ -231,7 +231,11 @@ the live token exchange still need a full device sign-in check.
    `code_verifier`, `redirect_uri=urn:itchio:poll`, `client_id` and
    `device_info` ("MINILOONG Pocket 1, Leaf-Itchio-Pak <version>"). The
    `access_token` is an itch.io API key that does not expire and has no
-   refresh token.
+   refresh token. itch.io issues it in this request and the app cannot
+   revoke it, so B no longer stops the exchange once approval arrived (it is
+   bounded to 30 seconds instead), and a key that arrives after you left the
+   screen is still saved and checked: the app keeps the flow until it is
+   idle.
 
 Errors are reported by cause: 400 `invalid_grant` is an expired code, any
 other 400 or a 404 on these three endpoints is `ErrSignInUnavailable` (sign-in

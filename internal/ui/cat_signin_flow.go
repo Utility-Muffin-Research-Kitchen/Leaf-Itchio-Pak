@@ -6,27 +6,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
+// exchangeTimeout bounds the key exchange, which a cancel does not stop.
+const exchangeTimeout = 30 * time.Second
+
 type signInUpdate struct {
-	attempt   uint64
-	login     *itchio.DeviceLogin
-	token     string
-	checked   bool
-	user      string
-	owned     []itchio.OwnedGame
-	err       error
-	cancelled bool
+	attempt uint64
+	login   *itchio.DeviceLogin
+	token   string // a key itch.io issued
+	checked bool   // the account check of key finished
+	key     string
+	user    string
+	owned   []itchio.OwnedGame
+	err     error
 }
 
 // CatSignInFlow runs one QR sign-in: it gets a code, waits for approval on
 // the user's phone, stores the key through Account, and loads the account's
 // owned games. Network work runs on goroutines; Sync applies the results on
 // the UI goroutine, which owns the config.
+//
+// A key itch.io issued is always saved, even when you cancelled or left the
+// screen meanwhile: the app cannot revoke it. So the app keeps calling Sync,
+// with a nil model once the screen is closed, until Idle.
 type CatSignInFlow struct {
 	client  *itchio.Client
 	account *Account
@@ -35,10 +44,12 @@ type CatSignInFlow struct {
 	updates chan signInUpdate
 	attempt uint64
 	cancel  context.CancelFunc
+	// work counts goroutines that have not delivered their result yet.
+	work atomic.Int32
 }
 
 func NewCatSignInFlow(client *itchio.Client, account *Account, wake func()) (*CatSignInFlow, *appui.SignInModel) {
-	flow := &CatSignInFlow{client: client, account: account, wake: wake, updates: make(chan signInUpdate, 4)}
+	flow := &CatSignInFlow{client: client, account: account, wake: wake, updates: make(chan signInUpdate, 8)}
 	model := appui.NewSignInModel()
 	flow.Start(model)
 	return flow, model
@@ -52,24 +63,42 @@ func (flow *CatSignInFlow) Start(model *appui.SignInModel) {
 	ctx, cancel := context.WithCancel(context.Background())
 	flow.cancel = cancel
 	attempt := flow.attempt
+	flow.work.Add(1)
 	go func() {
+		defer flow.work.Add(-1)
 		login, err := flow.client.BeginDeviceLogin(ctx)
-		flow.publish(signInUpdate{attempt: attempt, login: login, err: err, cancelled: ctx.Err() != nil})
+		flow.publish(signInUpdate{attempt: attempt, login: login, err: err})
 		if err != nil {
 			return
 		}
-		token, err := login.Wait(ctx)
-		flow.publish(signInUpdate{attempt: attempt, token: token, err: err, cancelled: ctx.Err() != nil})
+		code, err := login.WaitForApproval(ctx)
+		if err != nil {
+			flow.publish(signInUpdate{attempt: attempt, err: err})
+			return
+		}
+		// itch.io issues the key in this exchange. Cancelling it would
+		// leave a key on the account that the app never saw.
+		exchangeCtx, done := context.WithTimeout(context.WithoutCancel(ctx), exchangeTimeout)
+		token, err := login.Exchange(exchangeCtx, code)
+		done()
+		flow.publish(signInUpdate{attempt: attempt, token: token, err: err})
 	}()
 }
 
-// Cancel stops waiting; late results of the abandoned attempt are ignored.
+// Cancel stops asking for or waiting on a code. Late results of the
+// abandoned attempt are ignored, except a key, which Sync still saves.
 func (flow *CatSignInFlow) Cancel() {
 	if flow.cancel != nil {
 		flow.cancel()
 		flow.cancel = nil
 	}
 	flow.attempt++
+}
+
+// Idle reports whether nothing is left to deliver, so the app can drop a
+// flow whose screen is closed.
+func (flow *CatSignInFlow) Idle() bool {
+	return flow.work.Load() == 0 && len(flow.updates) == 0
 }
 
 func (flow *CatSignInFlow) publish(update signInUpdate) {
@@ -84,55 +113,81 @@ func SignInBusy(model *appui.SignInModel) bool {
 	return model != nil && model.State != appui.SignInDone && model.State != appui.SignInError
 }
 
-// Sync applies finished work to model and reports whether anything changed.
+// Sync applies finished work and reports whether model changed. model is
+// nil once the screen is closed; keys and account checks are still applied.
 func (flow *CatSignInFlow) Sync(model *appui.SignInModel) bool {
 	changed := false
 	for {
 		select {
 		case update := <-flow.updates:
-			if update.attempt != flow.attempt || update.cancelled {
-				continue
+			if flow.apply(model, update) {
+				changed = true
 			}
-			flow.apply(model, update)
-			changed = true
 		default:
 			return changed
 		}
 	}
 }
 
-func (flow *CatSignInFlow) apply(model *appui.SignInModel, update signInUpdate) {
+// apply handles one result. Only the current attempt updates a shown model;
+// a key or an account check is applied whatever the attempt.
+func (flow *CatSignInFlow) apply(model *appui.SignInModel, update signInUpdate) bool {
+	if update.attempt != flow.attempt {
+		model = nil
+	}
 	switch {
+	case update.token != "":
+		flow.store(model, update)
 	case update.checked:
 		flow.finish(model, update)
+	case model == nil:
+		return false
 	case update.err != nil:
 		flow.fail(model, update.err)
 	case update.login != nil:
 		model.State = appui.SignInWaiting
 		model.UserCode, model.QRURL = update.login.UserCode, update.login.QRURL
 		model.Expires = update.login.Expires
-	case update.token != "":
-		if err := flow.account.Store(update.token); err != nil {
-			logger.Error("sign-in: %v", err)
+	}
+	return model != nil
+}
+
+// store saves a key itch.io issued and starts the account check.
+func (flow *CatSignInFlow) store(model *appui.SignInModel, update signInUpdate) {
+	if err := flow.account.Store(update.token); err != nil {
+		logger.Error("sign-in: %v", err)
+		if model != nil {
 			model.State, model.Heading, model.CanRetry = appui.SignInError, "Couldn't save the sign-in", true
 			model.Detail = "The SD card could not be written. Press A to try again."
-			return
 		}
-		model.State = appui.SignInChecking
-		attempt, token := update.attempt, update.token
-		go func() {
-			user, owned, err := flow.client.ValidateAPIKey(token)
-			flow.publish(signInUpdate{attempt: attempt, checked: true, user: user, owned: owned, err: err})
-		}()
+		return
 	}
+	if model != nil {
+		model.State = appui.SignInChecking
+	}
+	attempt, key := update.attempt, update.token
+	flow.work.Add(1)
+	go func() {
+		defer flow.work.Add(-1)
+		user, owned, err := flow.client.ValidateAPIKey(key)
+		flow.publish(signInUpdate{attempt: attempt, checked: true, key: key, user: user, owned: owned, err: err})
+	}()
 }
 
 // finish records the account after approval. A network failure here keeps
-// the sign-in; the owned games load at the next start.
+// the sign-in; the owned games load at the next start. A check of a key that
+// is no longer the stored one (you signed out or in again) changes nothing.
 func (flow *CatSignInFlow) finish(model *appui.SignInModel, update signInUpdate) {
+	current := update.key == flow.account.cfg.Credential()
+	if !current {
+		logger.Debug("sign-in: discarded the account check of a replaced key")
+	}
+	if model == nil {
+		model = &appui.SignInModel{} // record the outcome without a screen
+	}
 	model.State = appui.SignInDone
 	switch {
-	case errors.Is(update.err, itchio.ErrSignInRejected):
+	case current && errors.Is(update.err, itchio.ErrSignInRejected):
 		if err := flow.account.SignOut(); err != nil {
 			logger.Error("sign-in: %v", err)
 		}
@@ -143,8 +198,10 @@ func (flow *CatSignInFlow) finish(model *appui.SignInModel, update signInUpdate)
 		model.Heading = "Signed in to itch.io"
 		model.Detail = "Your owned games will load the next time you're online."
 	default:
-		if err := flow.account.Validated(update.user, update.owned); err != nil {
-			logger.Error("sign-in: %v", err)
+		if current {
+			if err := flow.account.Validated(update.user, update.owned); err != nil {
+				logger.Error("sign-in: %v", err)
+			}
 		}
 		model.Heading = "Signed in to itch.io"
 		if update.user != "" {
