@@ -231,3 +231,34 @@ func TestNewDesktopOrWebUploadDoesNotBadge(t *testing.T) {
 		t.Fatalf("pending = %+v, want only the new Game Boy Color upload", pending)
 	}
 }
+
+func TestWeakFingerprintChangesNeedEvidence(t *testing.T) {
+	const t1, t2 = "upd:2026-10-01T10:00:00Z", "upd:2026-10-02T10:00:00Z"
+	for _, tc := range []struct {
+		name      string
+		installed string
+		checks    []string
+		want      bool
+	}{
+		{"metadata-only edit", t1 + "/4", []string{t1 + "/4", t2 + "/4"}, false},
+		{"metadata-only edit before the first check", t1 + "/4", []string{t2 + "/4"}, false},
+		{"checksum appears", t1 + "/4", []string{t1 + "/4", "md5:a"}, false},
+		{"checksum appears before the first check", t1 + "/4", []string{"md5:a"}, false},
+		{"checksum replaces a build", "build:1", []string{"build:1", "md5:a"}, false},
+		{"size changes", t1 + "/4", []string{t1 + "/4", t2 + "/8"}, true},
+		{"build appears", t1 + "/4", []string{t1 + "/4", "build:5"}, true},
+		{"checksum changes after it appeared", t1 + "/4", []string{t1 + "/4", "md5:a", "md5:b"}, true},
+		{"build changes", "build:1", []string{"build:1", "build:2"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+			inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "cart.gb", UploadID: "1", UploadFingerprint: tc.installed, DestPath: "/leaf/Roms/GB/cart.gb"})
+			for _, fingerprint := range tc.checks {
+				inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1", Fingerprint: fingerprint}})
+			}
+			if got := inv.HasPendingUpdates("game"); got != tc.want {
+				t.Fatalf("pending = %v, want %v (%+v)", got, tc.want, inv.PendingUpdateFiles("game"))
+			}
+		})
+	}
+}

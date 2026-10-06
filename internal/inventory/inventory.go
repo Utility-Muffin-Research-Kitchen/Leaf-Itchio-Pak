@@ -571,6 +571,40 @@ func fileMatchesUpload(file DownloadedFile, upload UpstreamFile) bool {
 	return false
 }
 
+// fingerprintChanged compares the fingerprints of two listings of one upload.
+// conclusive is false when they cannot be compared: one is missing, or only
+// the form changed, as when itch.io lists an md5 for an upload first seen
+// with a timestamp. A timestamp also moves on metadata-only edits, so two
+// timestamp fingerprints differ only when the size differs; a build ID
+// appearing where there was none means a pushed build.
+func fingerprintChanged(old, current string) (changed, conclusive bool) {
+	if old == "" || current == "" {
+		return false, false
+	}
+	if old == current {
+		return false, true
+	}
+	oldForm, oldValue, _ := strings.Cut(old, ":")
+	currentForm, currentValue, _ := strings.Cut(current, ":")
+	switch {
+	case oldForm == "upd" && currentForm == "upd":
+		return timestampFingerprintSize(oldValue) != timestampFingerprintSize(currentValue), true
+	case oldForm == currentForm:
+		return true, true
+	case oldForm == "upd" && currentForm == "build":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func timestampFingerprintSize(value string) string {
+	if index := strings.LastIndexByte(value, '/'); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
 // HasPendingUpdates reports new uploads and known uploads whose content changed.
 func (inv *Inventory) HasPendingUpdates(gameURL string) bool {
 	return len(inv.PendingUpdateFiles(gameURL)) > 0
@@ -763,7 +797,7 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 			}
 			if file.Fingerprint == "" {
 				file.Fingerprint = prior.Fingerprint
-			} else if !baseline && prior.Fingerprint != "" && prior.Fingerprint != file.Fingerprint {
+			} else if changed, _ := fingerprintChanged(prior.Fingerprint, file.Fingerprint); !baseline && changed {
 				file.Changed, file.SeenAt = true, now
 			}
 			if file.UploadID != "" && prior.UploadID != "" && file.UploadID != prior.UploadID {
@@ -787,9 +821,9 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 					continue
 				}
 				anyInstalled = true
-				if installed.UploadFingerprint != file.Fingerprint {
+				if changed, conclusive := fingerprintChanged(installed.UploadFingerprint, file.Fingerprint); changed || !conclusive {
 					allCurrent = false
-					hasOlderVersion = hasOlderVersion || installed.UploadFingerprint != ""
+					hasOlderVersion = hasOlderVersion || changed
 				}
 			}
 			if anyInstalled && allCurrent {
