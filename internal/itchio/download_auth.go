@@ -170,6 +170,14 @@ func purchaseGameCounts(keys []rawOwnedKey) map[int64]int {
 // storePurchaseCounts caches counts from a complete library scan, unless the
 // key changed after the scan started.
 func (c *Client) storePurchaseCounts(generation uint64, counts map[int64]int) {
+	c.storeCounts(generation, counts, false)
+}
+
+// storeCounts caches counts unless the key changed after the scan started.
+// partial marks counts from a scan stopped at the page cap. A library that
+// large cannot be read whole, so those counts are used as they are, a missing
+// purchase counting as one game, instead of rescanning on every download.
+func (c *Client) storeCounts(generation uint64, counts map[int64]int, partial bool) {
 	c.ownedMu.Lock()
 	defer c.ownedMu.Unlock()
 	if generation != c.keyGeneration.Load() {
@@ -177,15 +185,19 @@ func (c *Client) storePurchaseCounts(generation uint64, counts map[int64]int) {
 		return
 	}
 	c.purchaseCounts = counts
+	c.purchaseCountsPartial = partial
 }
 
 // cachedPurchaseCounts returns the cached counts when they cover every
-// purchase in keys, else nil.
+// purchase in keys, or come from a capped scan; else nil.
 func (c *Client) cachedPurchaseCounts(keys []rawOwnedKey) map[int64]int {
 	c.ownedMu.Lock()
 	defer c.ownedMu.Unlock()
 	if c.purchaseCounts == nil {
 		return nil
+	}
+	if c.purchaseCountsPartial {
+		return c.purchaseCounts
 	}
 	for _, key := range keys {
 		if _, ok := c.purchaseCounts[key.PurchaseID]; !ok {
@@ -199,9 +211,11 @@ func (c *Client) cachedPurchaseCounts(keys []rawOwnedKey) map[int64]int {
 // asking api.itch.io/profile/owned-keys with game_ids. The answer is filtered
 // here as well, so it works whether or not the server applies the filter.
 //
-// BundleSize needs the whole library: a server-filtered answer takes the
-// counts cached by the last complete scan under the current key (seeded by
-// ValidateAPIKey at startup), and scans the library once more on a miss.
+// BundleSize needs the whole library, and only labels a choice between
+// several purchases of the game. A server-filtered answer with more than one
+// key takes the counts cached under the current key (seeded by
+// ValidateAPIKey at startup) and scans the library once more on a miss. A
+// single key, or a failed scan, gets BundleSize 1.
 //
 // Returns a non-empty slice when the game is owned, or an error when it is
 // not owned / the API key is invalid.
@@ -235,17 +249,9 @@ func (c *Client) FetchOwnedKeysContext(ctx context.Context, apiKey, gameID strin
 		if complete {
 			c.storePurchaseCounts(generation, counts)
 		}
-	default:
-		if counts = c.cachedPurchaseCounts(keys); counts == nil {
-			logger.Debug("auth: no cached bundle sizes for this purchase, scanning the owned library")
-			library, libraryComplete, err := c.scanOwnedKeys(ctx, apiKey, nil)
-			if err != nil {
-				return nil, err
-			}
-			counts = purchaseGameCounts(library)
-			if libraryComplete {
-				c.storePurchaseCounts(generation, counts)
-			}
+	case len(keys) > 1:
+		if counts, err = c.libraryPurchaseCounts(ctx, generation, apiKey, keys); err != nil {
+			return nil, err
 		}
 	}
 
@@ -270,6 +276,28 @@ func (c *Client) FetchOwnedKeysContext(ctx context.Context, apiKey, gameID strin
 	}
 	logger.Debug("auth: found %d owned key(s) for game_id=%s (server-filtered=%v)", len(matches), gameID, serverFiltered)
 	return matches, nil
+}
+
+// libraryPurchaseCounts returns bundle sizes for keys from the cache, or from
+// one scan of the whole owned library. The sizes only label a choice between
+// purchases, so a failed scan costs the labels, not the download; only
+// cancellation is returned.
+func (c *Client) libraryPurchaseCounts(ctx context.Context, generation uint64, apiKey string, keys []rawOwnedKey) (map[int64]int, error) {
+	if counts := c.cachedPurchaseCounts(keys); counts != nil {
+		return counts, nil
+	}
+	logger.Debug("auth: no cached bundle sizes for this purchase, scanning the owned library")
+	library, complete, err := c.scanOwnedKeys(ctx, apiKey, nil)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		logger.Warn("auth: owned-library scan failed, listing purchases without bundle sizes: %v", err)
+		return nil, nil
+	}
+	counts := purchaseGameCounts(library)
+	c.storeCounts(generation, counts, !complete)
+	return counts, nil
 }
 
 // AnnotateBundleNames sets BundleName on bundle keys (BundleSize > 1) by

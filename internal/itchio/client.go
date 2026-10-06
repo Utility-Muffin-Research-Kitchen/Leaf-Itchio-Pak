@@ -257,6 +257,8 @@ type Client struct {
 	// key. nil until such a scan; never persisted.
 	ownedMu        sync.Mutex
 	purchaseCounts map[int64]int
+	// purchaseCountsPartial marks counts from a scan stopped at the page cap.
+	purchaseCountsPartial bool
 }
 
 func NewClient() *Client {

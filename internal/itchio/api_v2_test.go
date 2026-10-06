@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -310,10 +311,14 @@ func TestFetchUploadsHandlesEmptyCollectionShapes(t *testing.T) {
 type ownedAPI struct {
 	filter    bool
 	keys      []map[string]any
-	fullScans atomic.Int32
+	fullScans atomic.Int32 // unfiltered page requests
 	gameIDs   []string
 	onPage    func()
 	mu        sync.Mutex
+	// fullScanStatus, when set, answers every unfiltered page with it.
+	fullScanStatus int
+	// endless makes every unfiltered page full, so a scan stops at the cap.
+	endless bool
 }
 
 func (o *ownedAPI) handler(t *testing.T) http.Handler {
@@ -335,6 +340,11 @@ func (o *ownedAPI) handler(t *testing.T) http.Handler {
 			o.mu.Unlock()
 			if filter == "" {
 				o.fullScans.Add(1)
+				if o.fullScanStatus != 0 {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(o.fullScanStatus)
+					return
+				}
 			}
 			if o.onPage != nil {
 				o.onPage()
@@ -343,6 +353,16 @@ func (o *ownedAPI) handler(t *testing.T) http.Handler {
 			for _, key := range o.keys {
 				if !o.filter || filter == "" || fmt.Sprint(key["game_id"]) == filter {
 					page = append(page, key)
+				}
+			}
+			if o.endless && filter == "" {
+				pageNumber, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				if pageNumber > 1 {
+					page = nil
+				}
+				for index := len(page); index < 50; index++ {
+					id := 1000*pageNumber + index
+					page = append(page, map[string]any{"id": id, "game_id": id, "purchase_id": id})
 				}
 			}
 			if len(page) == 0 {
@@ -498,5 +518,55 @@ func TestTransportFailureLogsNoSessionUUID(t *testing.T) {
 		if strings.Contains(out, forbidden) || strings.Contains(err.Error(), forbidden) {
 			t.Errorf("%q leaked into the log or error:\n%s\nerror: %v", forbidden, out, err)
 		}
+	}
+}
+
+// BundleSize only tells several purchases of one game apart, so a game owned
+// once never needs the whole library.
+func TestFetchOwnedKeysSingleKeyNeedsNoLibraryScan(t *testing.T) {
+	owned := &ownedAPI{filter: true, keys: ownedLibrary()}
+	srv := httptest.NewServer(owned.handler(t))
+	defer srv.Close()
+	keys, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).FetchOwnedKeys(v2Key, "45")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || owned.fullScans.Load() != 0 {
+		t.Fatalf("keys = %d, full-scan pages = %d; want one key and no scan", len(keys), owned.fullScans.Load())
+	}
+}
+
+// A failed library scan costs the bundle labels, not the download.
+func TestFetchOwnedKeysSurvivesAFailedLibraryScan(t *testing.T) {
+	owned := &ownedAPI{filter: true, keys: ownedLibrary(), fullScanStatus: http.StatusTooManyRequests}
+	srv := httptest.NewServer(owned.handler(t))
+	defer srv.Close()
+	keys, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).FetchOwnedKeys(v2Key, "42")
+	if err != nil {
+		t.Fatalf("FetchOwnedKeys failed with the scan: %v", err)
+	}
+	if got := bundleSizes(keys); len(keys) != 2 || got[1] != 1 || got[2] != 1 || owned.fullScans.Load() == 0 {
+		t.Fatalf("bundle sizes = %v after %d scan page(s), want both 1 after a tried scan", got, owned.fullScans.Load())
+	}
+}
+
+// A library too large for the page cap is scanned once; its counts are kept
+// as partial instead of being rescanned on every paid download.
+func TestFetchOwnedKeysKeepsCountsFromACappedScan(t *testing.T) {
+	owned := &ownedAPI{filter: true, keys: ownedLibrary(), endless: true}
+	srv := httptest.NewServer(owned.handler(t))
+	defer srv.Close()
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
+	for range 2 {
+		keys, err := client.FetchOwnedKeys(v2Key, "42")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := bundleSizes(keys); got[1] != 1 || got[2] != 3 {
+			t.Fatalf("bundle sizes = %v", got)
+		}
+	}
+	if got := owned.fullScans.Load(); got != 20 {
+		t.Fatalf("full-scan pages = %d, want one capped scan of 20", got)
 	}
 }
