@@ -15,8 +15,9 @@ func TestSignInModelInput(t *testing.T) {
 			t.Errorf("state %v: B must cancel and A do nothing", state)
 		}
 	}
-	if checking := (&SignInModel{State: SignInChecking}); press(checking, ButtonB) != SignInIntentNone {
-		t.Error("the account check after approval must not be cancellable")
+	// R21-7: B leaves the account check, which finishes in the background.
+	if checking := (&SignInModel{State: SignInChecking}); press(checking, ButtonB) != SignInIntentBack || press(checking, ButtonA) != SignInIntentNone {
+		t.Error("B must leave the account check and A do nothing")
 	}
 	if done := (&SignInModel{State: SignInDone}); press(done, ButtonA) != SignInIntentBack || press(done, ButtonB) != SignInIntentBack {
 		t.Error("A and B leave a finished sign-in")

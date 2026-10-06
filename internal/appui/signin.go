@@ -46,8 +46,9 @@ func (m *SignInModel) Remaining(now time.Time) time.Duration {
 	return max(m.Expires.Sub(now), 0)
 }
 
-// Handle maps input to an intent. Nothing cancels the short account check
-// after approval, so the owned-game list is always saved.
+// Handle maps input to an intent. B on the account check after approval only
+// leaves the screen: the key is saved and the check finishes in the
+// background.
 func (m *SignInModel) Handle(event InputEvent) SignInIntent {
 	if !event.Pressed {
 		return SignInIntentNone
@@ -60,6 +61,10 @@ func (m *SignInModel) Handle(event InputEvent) SignInIntent {
 		}
 		if m.State == SignInWaiting && m.QRFailed && event.Button == ButtonA {
 			return SignInIntentRetry
+		}
+	case SignInChecking:
+		if back {
+			return SignInIntentBack
 		}
 	case SignInDone:
 		if back || event.Button == ButtonA {

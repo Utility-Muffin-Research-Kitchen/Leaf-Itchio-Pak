@@ -49,8 +49,6 @@ func (screen *SignInScreen) footer() []FooterHint {
 			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Cancel"}}
 		}
 		return []FooterHint{{Button: ButtonB, Label: "Cancel"}}
-	case appui.SignInChecking:
-		return nil
 	case appui.SignInError:
 		if screen.model.CanRetry {
 			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Back"}}
@@ -79,7 +77,7 @@ func (screen *SignInScreen) Draw() error {
 			err = screen.drawCode(frame)
 		}
 	case appui.SignInChecking:
-		err = screen.ui.DrawState(body, StateLoading, "Signed in", "Loading your owned games…")
+		err = screen.ui.DrawState(body, StateLoading, "Signed in", "Loading your owned games. You can go back meanwhile.")
 	case appui.SignInDone:
 		err = screen.ui.DrawState(body, StateEmpty, model.Heading, model.Detail)
 	default:

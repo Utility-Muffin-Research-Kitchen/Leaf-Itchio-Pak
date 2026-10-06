@@ -49,10 +49,16 @@ type OwnedGame struct {
 // Each owned game title and public game ID are logged at DEBUG level.
 // Download key IDs are never logged.
 func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGame, err error) {
+	return c.ValidateAPIKeyContext(context.Background(), apiKey)
+}
+
+// ValidateAPIKeyContext is ValidateAPIKey bounded by ctx, including the
+// owned-keys scan and any wait before a rate-limit retry.
+func (c *Client) ValidateAPIKeyContext(ctx context.Context, apiKey string) (username string, owned []OwnedGame, err error) {
 	generation := c.keyGeneration.Load()
 
 	// Step 1: verify key and fetch username.
-	req, err := http.NewRequest("GET", c.butler+"/profile", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.butler+"/profile", nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("build profile request: %w", err)
 	}
@@ -98,7 +104,10 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 
 	// Step 2: page through all owned-game keys. A failed page keeps the games
 	// found so far, as before, but only a complete scan seeds bundle sizes.
-	keys, complete, scanErr := c.scanOwnedKeys(context.Background(), apiKey, nil)
+	keys, complete, scanErr := c.scanOwnedKeys(ctx, apiKey, nil)
+	if ctx.Err() != nil {
+		return "", nil, safeRequestError("scan owned keys", ctx.Err())
+	}
 	if scanErr != nil {
 		logger.Warn("validate: owned-keys scan stopped early: %v", scanErr)
 	}

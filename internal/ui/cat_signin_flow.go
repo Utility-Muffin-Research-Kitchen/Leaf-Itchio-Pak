@@ -14,8 +14,13 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
-// exchangeTimeout bounds the key exchange, which a cancel does not stop.
-const exchangeTimeout = 30 * time.Second
+const (
+	// exchangeTimeout bounds the key exchange, which a cancel does not stop.
+	exchangeTimeout = 30 * time.Second
+	// checkTimeout bounds the account check, which may page through a large
+	// library and wait out rate limits, possibly after you left the screen.
+	checkTimeout = 2 * time.Minute
+)
 
 type signInUpdate struct {
 	attempt uint64
@@ -193,7 +198,9 @@ func (flow *CatSignInFlow) store(model *appui.SignInModel, update signInUpdate) 
 	flow.work.Add(1)
 	go func() {
 		defer flow.work.Add(-1)
-		user, owned, err := flow.client.ValidateAPIKey(key)
+		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		defer cancel()
+		user, owned, err := flow.client.ValidateAPIKeyContext(ctx, key)
 		flow.publish(signInUpdate{attempt: attempt, checked: true, key: key, user: user, owned: owned, err: err})
 	}()
 }

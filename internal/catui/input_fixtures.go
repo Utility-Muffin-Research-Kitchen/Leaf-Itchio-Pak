@@ -289,7 +289,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
-	case "signin", "signin-error", "signin-done", "signin-qr-failed", "detail-signin":
+	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "detail-signin":
 		model := &appui.SignInModel{
 			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
 			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
@@ -301,6 +301,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.Heading, model.Detail = "The code expired", "Press A for a new code."
 		case "signin-done":
 			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
+		case "signin-checking":
+			model.State = appui.SignInChecking
 		case "signin-qr-failed":
 			// Too long for any QR code, so drawing it fails for real.
 			model.QRURL = "https://itch.io/user/oauth/device?code=" + strings.Repeat("x", 5000)

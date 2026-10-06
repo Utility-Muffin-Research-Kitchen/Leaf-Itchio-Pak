@@ -33,6 +33,7 @@ capture signin 1280 800 0 5
 capture signin-error 960 720 1 0
 capture signin-done 960 720 1 0
 capture signin-qr-failed 960 720 1 2
+capture signin-checking 960 720 1 2
 capture detail-signin 960 720 1 0
 capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0

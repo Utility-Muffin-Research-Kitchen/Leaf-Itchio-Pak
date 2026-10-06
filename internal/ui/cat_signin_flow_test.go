@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +40,17 @@ type signInSite struct {
 }
 
 func (site *signInSite) setPoll(status string) { site.pollStatus.Store(status) }
+
+// gate returns a channel that holds a handler until release is called, and
+// releases it at cleanup too, so a failing test never blocks the server.
+func gate(t *testing.T) (chan struct{}, func()) {
+	t.Helper()
+	held := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(held) }) }
+	t.Cleanup(release)
+	return held, release
+}
 
 func newSignInSite(t *testing.T) *signInSite {
 	t.Helper()
@@ -282,11 +294,12 @@ func TestSignInSavesAKeyIssuedJustBeforeYouCancel(t *testing.T) {
 // issuing is never lost.
 func TestSignInFinishesTheKeyExchangeAfterYouCancel(t *testing.T) {
 	site := newSignInSite(t)
-	site.tokenGate = make(chan struct{})
+	var release func()
+	site.tokenGate, release = gate(t)
 	f := startSignIn(t, site, &settings.Config{})
 	waitSignal(t, site.tokenReached, "the token exchange")
 	f.flow.Cancel()
-	close(site.tokenGate)
+	release()
 	f.syncDetached(t)
 	if site.tokens.Load() != 1 || f.cfg.Credential() != signInKey {
 		t.Fatalf("exchanges answered %d, config = %+v; want the key saved", site.tokens.Load(), f.cfg)
@@ -321,18 +334,41 @@ func TestPowerCancelsASignInWaitingForApproval(t *testing.T) {
 // is saved. The account check after it does not.
 func TestPowerWaitsOnlyForTheKeyExchange(t *testing.T) {
 	site := newSignInSite(t)
-	site.tokenGate = make(chan struct{})
-	site.profileGate = make(chan struct{})
-	t.Cleanup(func() { close(site.profileGate) })
+	var releaseToken func()
+	site.tokenGate, releaseToken = gate(t)
+	site.profileGate, _ = gate(t)
 	f := startSignIn(t, site, &settings.Config{})
 	waitSignal(t, site.tokenReached, "the token exchange")
 	f.flow.Sync(f.model)
 	if f.flow.YieldToPower(f.model) || !f.flow.Busy() {
 		t.Fatal("the key exchange must finish before the power action")
 	}
-	close(site.tokenGate)
+	releaseToken()
 	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInChecking })
 	if f.flow.Busy() || f.flow.YieldToPower(f.model) || !f.cfg.SignedIn() {
 		t.Fatalf("after the key was saved: busy %v, signed in %v; the check must not hold power", f.flow.Busy(), f.cfg.SignedIn())
+	}
+}
+
+// R21-7: B on the account check leaves the screen; the check finishes in the
+// background and still records the account and its owned games.
+func TestLeavingTheAccountCheckFinishesItInTheBackground(t *testing.T) {
+	site := newSignInSite(t)
+	var release func()
+	site.profileGate, release = gate(t)
+	f := startSignIn(t, site, &settings.Config{})
+	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInChecking })
+	waitSignal(t, site.profileReached, "the account check")
+	if f.model.Handle(appui.InputEvent{Button: appui.ButtonB, Pressed: true}) != appui.SignInIntentBack {
+		t.Fatal("B must leave the account check")
+	}
+	f.flow.Cancel() // what closing the screen does
+	release()
+	f.syncDetached(t)
+	if f.cfg.Credential() != signInKey || f.cfg.AuthUser != "tester" {
+		t.Fatalf("config = %+v", f.cfg)
+	}
+	if urls, _ := itchio.LoadOwnedCache(f.ownedPath); len(urls) != 1 || urls[0] != "https://dev.itch.io/leafbound" {
+		t.Fatalf("owned cache = %v", urls)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -723,5 +724,33 @@ func TestProfileCheckRejectsTheSignInOnlyForAuthErrors(t *testing.T) {
 		if err == nil || errors.Is(err, itchio.ErrSignInRejected) != test.rejected {
 			t.Errorf("%s: err = %v, want rejected=%v", name, err, test.rejected)
 		}
+	}
+}
+
+// R21-7: the account check stops when its context ends.
+func TestValidateAPIKeyContextStopsWhenCancelled(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).ValidateAPIKeyContext(ctx, v2Key)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the account check ignored its context")
 	}
 }
