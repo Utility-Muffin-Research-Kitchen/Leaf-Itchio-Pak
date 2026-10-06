@@ -720,27 +720,3 @@ func TestFetchAllGames_LaterPageNotFoundEndsFeed(t *testing.T) {
 		t.Fatal("a missing first feed page was not reported")
 	}
 }
-
-// The transport owns 429 retries; the feed loop must not multiply them, and
-// the refresh fails with the typed error so the caller keeps its cache.
-func TestFetchAllGames_RateLimitFailsTypedWithoutFeedRetries(t *testing.T) {
-	var requests atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/games/tag-homebrew/tag-psx.xml" {
-			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
-			return
-		}
-		requests.Add(1)
-		w.Header().Set("Retry-After", "0")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-
-	_, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
-	if !errors.Is(err, itchio.ErrRateLimited) {
-		t.Fatalf("err = %v, want ErrRateLimited", err)
-	}
-	if got := requests.Load(); got != 4 {
-		t.Fatalf("rate-limited feed requests = %d, want 1 plus 3 transport retries", got)
-	}
-}

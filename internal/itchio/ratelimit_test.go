@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -375,5 +377,51 @@ func TestSafeRequestErrorKeepsRateLimitTypedAndURLFree(t *testing.T) {
 	safe := safeRequestError("fetch file", err)
 	if !errors.Is(safe, ErrRateLimited) || strings.Contains(safe.Error(), "secret") || strings.Contains(safe.Error(), "cdn.example") {
 		t.Fatalf("safe error = %q", safe)
+	}
+}
+
+// Retry-After: 0, or a date already past, still pauses for the base delay,
+// so the replays do not fire back to back.
+func TestRateLimitRetryAfterZeroOrPastStillWaits(t *testing.T) {
+	for _, form := range []string{"seconds", "date"} {
+		t.Run(form, func(t *testing.T) {
+			clock := newFakeClock()
+			value := "0"
+			if form == "date" {
+				value = clock.Now().Add(-time.Minute).Format(http.TimeFormat)
+			}
+			server := newScripted(map[string][]scripted{"itch.io": {{status: 429, retryAfter: value}, {status: 200}}})
+			limiter := newTestLimiter(server, clock)
+			if resp, err := do(t, limiter, context.Background(), http.MethodGet, "https://itch.io/games/a.xml"); err != nil || resp.StatusCode != 200 {
+				t.Fatalf("request = %v, %v", resp, err)
+			}
+			if got := clock.Slept(); len(got) != 1 || got[0] != rateLimitBaseDelay {
+				t.Fatalf("slept %v, want one %v pause before the replay", got, rateLimitBaseDelay)
+			}
+		})
+	}
+}
+
+// The transport owns 429 retries; the feed loop must not multiply them, and
+// the refresh fails with the typed error so the caller keeps its cache.
+func TestFetchAllGames_RateLimitFailsTypedWithoutFeedRetries(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/games/tag-homebrew/tag-psx.xml" {
+			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	_, err := newClockedClient(srv, newFakeClock()).FetchAllGames(context.Background(), nil)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("rate-limited feed requests = %d, want 1 plus 3 transport retries", got)
 	}
 }

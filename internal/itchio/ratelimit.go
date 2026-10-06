@@ -18,7 +18,8 @@ import (
 // showing why.
 const (
 	// rateLimitBaseDelay is the first cooldown after a 429 without a usable
-	// Retry-After; each further strike from the same host doubles it.
+	// Retry-After; each further strike from the same host doubles it. It is
+	// also the shortest pause a Retry-After can ask for.
 	rateLimitBaseDelay = 2 * time.Second
 	// rateLimitMaxDelay caps every single cooldown, whether computed or
 	// requested by the server, so a hostile header cannot stall the app.
@@ -161,7 +162,10 @@ func (t *rateLimitTransport) record429(host, retryAfter string) {
 
 	delay, fromServer := parseRetryAfter(retryAfter, now)
 	source := "Retry-After"
-	if !fromServer {
+	if fromServer {
+		// "0" or a past date would let every replay fire at once.
+		delay = max(delay, rateLimitBaseDelay)
+	} else {
 		delay = rateLimitMaxDelay
 		if shift := cooldown.strikes - 1; shift < 8 {
 			delay = min(rateLimitBaseDelay<<shift, rateLimitMaxDelay)

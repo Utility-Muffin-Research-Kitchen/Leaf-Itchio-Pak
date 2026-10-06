@@ -336,8 +336,8 @@ signed download page each issue their own token.
 - **HTTP 429 pauses one host, for every client.** `ratelimit.go` sits under the
   shared transport, so the metadata client and the streaming/range copies see
   the same per-host cooldown; `itch.io`, `api.itch.io`, and each CDN host cool
-  down independently. `Retry-After` (seconds or HTTP-date) is honored up to 60
-  seconds, otherwise the back-off doubles from 2 seconds to that cap. Only
+  down independently. `Retry-After` (seconds or HTTP-date) is honored between
+  2 and 60 seconds, otherwise the back-off doubles from 2 seconds to that cap. Only
   bodyless GET/HEAD requests are replayed, at most 3 times; POST handshakes
   wait out a cooldown but are never replayed. A request whose deadline ends
   inside a cooldown fails at once with `ErrRateLimited`. The feed loop does
