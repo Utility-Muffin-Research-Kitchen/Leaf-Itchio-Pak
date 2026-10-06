@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,7 +49,7 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 			logger.Error("cat detail: %v", result.err)
 			model.Tags = dedupeStrings(loader.game.Tags)
 			model.Images = dedupeStrings([]string{loader.game.CoverURL})
-			model.SetError("Go back and reopen this game to try again.")
+			model.SetError(unavailableDetail(result.err))
 			if itchio.IsAdvisoryTriggered(model.Tags, catFilterConfig(cfg)) {
 				model.State = appui.DetailWarning
 			}
@@ -63,6 +64,20 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		return true
 	default:
 		return false
+	}
+}
+
+// unavailableDetail says why the game page could not load and what to do.
+// Reopening never brings back a removed game, and retrying at once is what
+// the rate limiter exists to prevent.
+func unavailableDetail(err error) string {
+	switch {
+	case errors.Is(err, itchio.ErrGameRemoved):
+		return "This game was removed from itch.io."
+	case errors.Is(err, itchio.ErrRateLimited):
+		return "itch.io is limiting requests. Wait a minute, then reopen this game."
+	default:
+		return "Go back and reopen this game to try again."
 	}
 }
 

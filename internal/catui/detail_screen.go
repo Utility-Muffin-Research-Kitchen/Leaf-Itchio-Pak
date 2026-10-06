@@ -207,11 +207,7 @@ func (screen *DetailScreen) drawReady(content Box) error {
 	paragraphs := screen.model.Description
 	if screen.model.State == appui.DetailError {
 		heading = "Game page unavailable"
-		detail := "Downloads need the full game page. "
-		if screen.model.Game.Downloaded {
-			detail = "You can still manage your files. "
-		}
-		paragraphs = []string{detail + screen.model.ErrorDetail}
+		paragraphs = []string{unavailableText(screen.model.ErrorDetail, screen.model.Game.Downloaded)}
 	} else if len(paragraphs) == 0 {
 		paragraphs = []string{"No description was provided."}
 	}
@@ -228,4 +224,13 @@ func (screen *DetailScreen) drawReady(content Box) error {
 	}
 	screen.model.SetScrollBounds(maxInt(0, totalLines-visible))
 	return screen.ui.DrawScrollingBody(description, heading, paragraphs, screen.model.ScrollLine)
+}
+
+// unavailableText follows the reason the game page is unavailable with what
+// you can still do on this screen.
+func unavailableText(reason string, downloaded bool) string {
+	if downloaded {
+		return reason + " You can still manage your files."
+	}
+	return reason
 }
