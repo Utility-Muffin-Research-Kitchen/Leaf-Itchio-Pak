@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -72,14 +71,31 @@ func TestUploadMetadataMalformedCollectionIsNotAnEmptyList(t *testing.T) {
 	}
 }
 
-func TestMalformedUploadTimestampDoesNotExposeServerText(t *testing.T) {
-	const canary = "PRIVATE-upload-timestamp-983ab"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"uploads":[{"id":7,"filename":"cart.gb","updated_at":%q}]}`, canary)
-	}))
-	defer srv.Close()
-	_, err := NewClientWithBase(srv.URL).FetchUploadsForKey("TOKEN", "42", "")
-	if err == nil || strings.Contains(err.Error(), canary) {
-		t.Fatalf("unsafe malformed timestamp error: %v", err)
+func TestMalformedUploadTimestampStillLists(t *testing.T) {
+	// The upload list also drives signed-in downloads, so one bad timestamp
+	// must not hide every file. The timestamp is only a weak fingerprint.
+	for _, tc := range []struct {
+		name, value, fingerprint string
+	}{
+		{"garbage", `"garbage"`, ""},
+		{"number", `12345`, ""},
+		{"object", `{"at":"2026-10-01"}`, ""},
+		{"null", `null`, ""},
+		{"rfc3339", `"2026-10-01T10:15:20Z"`, "upd:2026-10-01T10:15:20Z/4"},
+		{"space separated", `"2026-10-01 10:15:20"`, "upd:2026-10-01T10:15:20Z/4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"uploads":[{"id":7,"filename":"cart.gb","size":4,"updated_at":%s},{"id":8,"filename":"two.gbc"}]}`, tc.value)
+			}))
+			defer srv.Close()
+			uploads, err := NewClientWithBase(srv.URL).FetchUploadsForKey("TOKEN", "42", "")
+			if err != nil {
+				t.Fatalf("listing failed: %v", err)
+			}
+			if len(uploads) != 2 || uploads[0].UploadID != "7" || uploads[0].Fingerprint() != tc.fingerprint {
+				t.Fatalf("uploads = %+v, want both with fingerprint %q", uploads, tc.fingerprint)
+			}
+		})
 	}
 }

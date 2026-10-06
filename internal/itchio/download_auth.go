@@ -387,7 +387,9 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 	}
 
 	// Only the fields used here are decoded. "traits" is unstable ({} when
-	// empty, an array otherwise), so it is read leniently.
+	// empty, an array otherwise), so it is read leniently, and updated_at is
+	// parsed leniently too: it is only a weak fingerprint, and this list also
+	// drives every signed-in download.
 	var items []struct {
 		ID          int64           `json:"id"`
 		Filename    string          `json:"filename"`
@@ -397,7 +399,7 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		Size        int64           `json:"size"`
 		MD5         string          `json:"md5_hash"`
 		BuildID     int64           `json:"build_id"`
-		UpdatedAt   time.Time       `json:"updated_at"`
+		UpdatedAt   json.RawMessage `json:"updated_at"`
 	}
 	if isJSONArray(envelope.Uploads) {
 		if err := json.Unmarshal(envelope.Uploads, &items); err != nil {
@@ -418,7 +420,7 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 	for _, u := range items {
 		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size,
 			DisplayName: u.DisplayName, Type: u.Type, Traits: decodeTraits(u.Traits),
-			MD5: u.MD5, BuildID: u.BuildID, UpdatedAt: u.UpdatedAt}
+			MD5: u.MD5, BuildID: u.BuildID, UpdatedAt: parseUploadTime(u.UpdatedAt)}
 		ext := strings.ToLower(roms.ROMExt(u.Filename))
 		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, upload)
@@ -441,6 +443,22 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 	logger.Debug("auth: %d known ROM(s), %d unknown-format from %d total uploads",
 		known, len(uploads)-known, len(items))
 	return uploads, nil
+}
+
+// parseUploadTime reads an upload timestamp, or returns the zero time when
+// the value is missing or in an unknown format.
+func parseUploadTime(raw json.RawMessage) time.Time {
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return time.Time{}
+	}
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 // createInstallSession opens a download session for one install
