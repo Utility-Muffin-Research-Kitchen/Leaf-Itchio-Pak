@@ -211,17 +211,13 @@ func (screen *DetailScreen) drawReady(content Box) error {
 	} else if len(paragraphs) == 0 {
 		paragraphs = []string{"No description was provided."}
 	}
-	lineHeight := screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(5)
 	totalLines := 0
 	for _, paragraph := range paragraphs {
 		totalLines += len(wrapText(paragraph, description.W, func(value string) int {
 			return screen.ctx.MeasureText(FontSmall, value)
 		})) + 1
 	}
-	visible := 1
-	if lineHeight > 0 {
-		visible = maxInt(1, description.H/lineHeight)
-	}
+	visible := screen.ui.ScrollingBodyRows(description, heading)
 	screen.model.SetScrollBounds(maxInt(0, totalLines-visible))
 	return screen.ui.DrawScrollingBody(description, heading, paragraphs, screen.model.ScrollLine)
 }

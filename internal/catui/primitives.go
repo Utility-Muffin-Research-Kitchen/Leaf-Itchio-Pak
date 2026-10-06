@@ -353,12 +353,16 @@ func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycle
 func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []string, offset int) error {
 	return ui.withClip(rect, func() error {
 		x, y := rect.X, rect.Y
-		if title != "" {
-			if _, err := ui.ctx.DrawFallbackText(FontLarge, title, x, y,
+		// A title wider than a narrow column wraps instead of being cut off.
+		for _, line := range ui.scrollingTitleLines(title, rect.W) {
+			if _, err := ui.ctx.DrawFallbackText(FontLarge, line, x, y,
 				ui.ctx.ThemeColor(RoleEmphasis), rect.W); err != nil {
 				return err
 			}
-			y += ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+			y += ui.ctx.FontHeight(FontLarge)
+		}
+		if title != "" {
+			y += ui.BasePadding / 2
 		}
 		lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
 		lines := make([]string, 0, len(paragraphs)*2)
@@ -382,6 +386,29 @@ func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []stri
 		}
 		return nil
 	})
+}
+
+func (ui *Composer) scrollingTitleLines(title string, width int) []string {
+	if title == "" {
+		return nil
+	}
+	return wrapText(title, width, func(value string) int {
+		return ui.ctx.MeasureFallbackText(FontLarge, value)
+	})
+}
+
+// ScrollingBodyRows is how many body lines DrawScrollingBody shows in rect
+// below title, which may wrap.
+func (ui *Composer) ScrollingBodyRows(rect Rect, title string) int {
+	used := 0
+	if lines := ui.scrollingTitleLines(title, rect.W); len(lines) > 0 {
+		used = len(lines)*ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+	}
+	lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
+	if lineHeight <= 0 {
+		return 1
+	}
+	return maxInt(1, (rect.H-used)/lineHeight)
 }
 
 func CenteredModalRect(bounds Rect, widthPercent, heightPercent, margin int) Rect {
