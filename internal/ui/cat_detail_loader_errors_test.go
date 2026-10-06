@@ -50,23 +50,37 @@ func TestUnavailableDetailExplainsRemovedAndRateLimitedGames(t *testing.T) {
 	}
 }
 
-func TestUnavailableDetailForAGoneGamePage(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusGone)
-	}))
-	defer srv.Close()
-	game := itchio.Game{Title: "Removed Game", URL: srv.URL + "/game"}
-	cfg := &settings.Config{}
-	done := make(chan struct{})
-	loader := NewCatDetailLoader(itchio.NewClientWithBase(srv.URL), cfg, game, func() { close(done) })
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("detail load did not finish")
-	}
-	model := appui.NewDetailModel(appui.DetailGame{Title: game.Title, URL: game.URL})
-	if !loader.Sync(model, cfg) || model.ErrorDetail != "This game was removed from itch.io." {
-		t.Fatalf("model = %+v, want the removed-game text", model)
+// The same texts come out of real HTTP answers: a gone page, and a 429 whose
+// cooldown outlasts the request.
+func TestUnavailableDetailFromHTTPAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   string
+	}{
+		{"gone", http.StatusGone, "This game was removed from itch.io."},
+		{"rate limited", http.StatusTooManyRequests, "itch.io is limiting requests. Wait a minute, then reopen this game."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			game := itchio.Game{Title: "Unavailable Game", URL: srv.URL + "/game"}
+			cfg := &settings.Config{}
+			done := make(chan struct{})
+			loader := NewCatDetailLoader(itchio.NewClientWithBase(srv.URL), cfg, game, func() { close(done) })
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("detail load did not finish")
+			}
+			model := appui.NewDetailModel(appui.DetailGame{Title: game.Title, URL: game.URL})
+			if !loader.Sync(model, cfg) || model.ErrorDetail != tc.want {
+				t.Fatalf("detail = %q, want %q", model.ErrorDetail, tc.want)
+			}
+		})
 	}
 }
 
