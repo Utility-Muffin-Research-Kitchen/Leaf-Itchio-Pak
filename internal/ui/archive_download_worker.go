@@ -251,6 +251,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("zip-download: save inventory: %v", err)
 		}
+		s.recordLeftOvers()
 		logger.Info("zip-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
@@ -315,6 +316,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		s.storeState(zipDLError)
 		return
 	}
+	s.recordLeftOvers()
 	logger.Info("zip-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
 }
@@ -348,6 +350,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 			s.storeState(zipDLError)
 			return
 		}
+		s.recordLeftOvers()
 		logger.Info("7z-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
@@ -408,6 +411,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		s.storeState(zipDLError)
 		return
 	}
+	s.recordLeftOvers()
 	logger.Info("7z-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
 }
@@ -877,10 +881,11 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		Filename:     s.musicRecordName(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
+		Filename:      s.musicRecordName(dest),
+		DestPath:      dest,
+		DownloadedAt:  now,
+		FileType:      inventory.FileTypeMusic,
+		SourceArchive: s.plan.Upload.Filename,
 	})
 	return dest, nil
 }
@@ -898,6 +903,53 @@ func (s *ArchiveDownloadWorker) ownMusicPath(dest string) (string, error) {
 		logger.Info("archive: %s belongs to another game; saving as %s", filepath.Base(dest), filepath.Base(path))
 	}
 	return path, err
+}
+
+// recordLeftOvers runs once this archive is installed. Every file the
+// inventory records from this archive, of the kinds this install wrote,
+// that the install did not write or keep is listed as left over from an
+// older version, for example a track an older version named differently.
+// Manage offers those files for deletion; nothing is deleted here.
+func (s *ArchiveDownloadWorker) recordLeftOvers() {
+	var kinds []string
+	if s.plan.DownloadROMs {
+		kinds = append(kinds, inventory.ContentKindROM)
+	}
+	if s.plan.DownloadMusic && s.plan.MusicDir != "" && !s.musicFailed {
+		s.adoptUnattributedMusic()
+		kinds = append(kinds, inventory.ContentKindMusic)
+	}
+	for _, kind := range kinds {
+		for _, file := range s.inv.MarkLeftOver(s.game.URL, s.plan.Upload.Filename, kind, s.extracted) {
+			logger.Info("archive: %s is left over from an older version of %s", filepath.Base(file.DestPath), s.plan.Upload.Filename)
+		}
+	}
+	if len(kinds) > 0 {
+		if err := s.inv.Save(s.invPath); err != nil {
+			logger.Warn("archive: save left-over files: %v", err)
+		}
+	}
+}
+
+// adoptUnattributedMusic attributes this game's tracks that older versions
+// recorded without their archive to this archive, when they sit in the
+// Music folder it installs to. Their archive is unknown otherwise, and the
+// game's soundtrack folder is the best evidence of where they came from.
+func (s *ArchiveDownloadWorker) adoptUnattributedMusic() {
+	entry, ok := s.inv.Lookup(s.game.URL)
+	if !ok {
+		return
+	}
+	for _, file := range entry.Files {
+		if managedContentKind(file) != inventory.ContentKindMusic || file.SourceArchive != "" {
+			continue
+		}
+		if _, err := leaf.RelativeWithin(s.plan.MusicDir, file.DestPath); err != nil {
+			continue
+		}
+		file.SourceArchive = s.plan.Upload.Filename
+		s.inv.UpdateFile(s.game.URL, file.DestPath, file)
+	}
 }
 
 // backfillSourceArchive patches SourceArchive into an existing inventory entry
@@ -1063,10 +1115,11 @@ func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now t
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		Filename:     s.musicRecordName(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
+		Filename:      s.musicRecordName(dest),
+		DestPath:      dest,
+		DownloadedAt:  now,
+		FileType:      inventory.FileTypeMusic,
+		SourceArchive: s.plan.Upload.Filename,
 	})
 	return dest, nil
 }

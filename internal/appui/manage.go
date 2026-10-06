@@ -17,6 +17,9 @@ const (
 	ManageItemDeleteMusic
 	ManageItemDeleteAll
 	ManageItemRename
+	// ManageItemDeleteLeftOver deletes files a reinstall left behind from
+	// an older version of the same upload.
+	ManageItemDeleteLeftOver
 )
 
 type ManageItem struct {

@@ -178,6 +178,13 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+When you download an archive again, files of its earlier version that the new
+install no longer uses stay on your card. For example, an older version of this
+app put every soundtrack track in one folder, and the new install keeps
+same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
+**OLD** and offers **Delete left-over files**. Nothing is deleted until you
+choose it.
+
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
