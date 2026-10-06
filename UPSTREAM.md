@@ -10,7 +10,7 @@ Leaf-Itchio-Pak is a hard fork of
 | Local fork-point tag | `upstream-v1.0.19` |
 | Fork established | 2026-07-09 |
 | Local repository | `Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak` |
-| Last upstream review | 2026-09-25, through `v1.0.25` (`123e01c`) |
+| Last upstream review | 2026-09-25, through `v1.0.25` (`123e01c`); adopted in stages, one review-record row per merged change |
 | Next review | 2026-12-25 |
 
 ## Review record
