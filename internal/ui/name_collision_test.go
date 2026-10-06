@@ -319,9 +319,9 @@ func TestArchiveMusicKeepsSameNamedTracksFromDifferentFolders(t *testing.T) {
 		if snapshot := worker.CatSnapshot(); snapshot.State != appui.DownloadProgressDone {
 			t.Fatalf("%s: archive = %+v", name, snapshot)
 		}
-		got := filesIn(t, musicDir(worker))
-		if len(got) != 2 || got["cd1 - 01 Theme.ogg"] != "CD1-THEME" || got["cd2 - 01 Theme.ogg"] != "CD2-THEME" {
-			t.Fatalf("%s: Music folder = %v, want both tracks named by their folders", name, got)
+		got := treeIn(t, musicDir(worker))
+		if len(got) != 2 || got["cd1/01 Theme.ogg"] != "CD1-THEME" || got["cd2/01 Theme.ogg"] != "CD2-THEME" {
+			t.Fatalf("%s: Music folder = %v, want both tracks in their folders", name, got)
 		}
 		entry, _ := worker.inv.Lookup(collisionGame.URL)
 		recorded := map[string]bool{}

@@ -713,7 +713,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	return finalDest, nil
 }
 
-// musicFileName is a track's file name in the flat Music folder.
+// musicFileName is a track's file name in the game's Music folder.
 func musicFileName(baseName string) string {
 	ext := filepath.Ext(baseName)
 	if safeName := roms.SanitiseFilename(strings.TrimSuffix(baseName, ext), ext); safeName != "" {
@@ -722,25 +722,40 @@ func musicFileName(baseName string) string {
 	return baseName
 }
 
-// planMusicNames names every soundtrack track this extraction will write.
-// The Music folder is flat, so tracks with one name in different archive
-// folders ("cd1/01 Theme.ogg", "cd2/01 Theme.ogg") would meet; each of them
-// gains the folder components that tell them apart ("cd1 - 01 Theme.ogg").
-// Deciding up front keeps the names independent of entry order. Tracks
-// that still meet, such as case-only duplicates in one folder, are caught
-// by the reservations when they are written.
+// musicFolder turns archive folder components into a safe subfolder path,
+// dropping empty, dot and parent components.
+func musicFolder(dirs []string) string {
+	var parts []string
+	for _, dir := range dirs {
+		part := roms.SanitiseFilename(dir, "")
+		if part == "" || strings.HasPrefix(part, ".") {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "/")
+}
+
+// planMusicNames places every soundtrack track this extraction will write,
+// as a slash-separated path inside the game's Music folder. Tracks go in by
+// name. When tracks in different archive folders share a name
+// ("cd1/01 Theme.ogg", "cd2/01 Theme.ogg"), every track of those folders
+// keeps its folder as a subfolder ("cd1/01 Theme.ogg", "cd1/02 Battle.ogg"),
+// so each disc stays together and Disco Boy, which sorts by full path,
+// plays it in order. Leading folders all of them share ("Soundtrack/") are
+// dropped. Deciding up front keeps the layout independent of entry order.
+// Tracks that still meet, such as case-only duplicates in one folder, are
+// caught by the reservations when they are written.
 func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 	s.musicNames = map[string]string{}
 	if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
 		return
 	}
 	type track struct {
-		entry string
-		dirs  []string
-		name  string
+		entry, dir, name string
 	}
-	groups := map[string][]*track{}
-	var order []string
+	var tracks []*track
+	byName := map[string][]*track{}
 	for _, entry := range entries {
 		name := strings.ReplaceAll(entry.name, "\\", "/")
 		baseName := path.Base(name)
@@ -751,47 +766,52 @@ func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 		if kind != roms.KindMusic {
 			continue
 		}
-		t := &track{entry: name, name: musicFileName(baseName)}
-		if dir := path.Dir(name); dir != "." {
-			t.dirs = strings.Split(dir, "/")
-		}
+		t := &track{entry: name, dir: path.Dir(name), name: musicFileName(baseName)}
+		tracks = append(tracks, t)
 		key := strings.ToLower(t.name)
-		if groups[key] == nil {
-			order = append(order, key)
-		}
-		groups[key] = append(groups[key], t)
+		byName[key] = append(byName[key], t)
 	}
-	for _, key := range order {
-		group := groups[key]
-		if len(group) > 1 {
-			// Drop the leading folders every track shares ("Soundtrack/").
-			shared := len(group[0].dirs)
-			for _, t := range group[1:] {
-				if len(t.dirs) < shared {
-					shared = len(t.dirs)
+	// Folders holding a track whose name a track in another folder has too.
+	colliding := map[string]bool{}
+	for _, group := range byName {
+		for _, t := range group[1:] {
+			if t.dir != group[0].dir {
+				for _, member := range group {
+					colliding[member.dir] = true
 				}
-				for index := 0; index < shared; index++ {
-					if !strings.EqualFold(t.dirs[index], group[0].dirs[index]) {
-						shared = index
-						break
-					}
-				}
-			}
-			for _, t := range group {
-				var parts []string
-				for _, dir := range t.dirs[shared:] {
-					if part := roms.SanitiseFilename(dir, ""); part != "" {
-						parts = append(parts, part)
-					}
-				}
-				if len(parts) > 0 {
-					t.name = strings.Join(parts, " - ") + " - " + t.name
-				}
+				break
 			}
 		}
-		for _, t := range group {
-			s.musicNames[t.entry] = t.name
+	}
+	var shared []string
+	first := true
+	for dir := range colliding {
+		var parts []string
+		if dir != "." {
+			parts = strings.Split(dir, "/")
 		}
+		if first {
+			shared, first = parts, false
+			continue
+		}
+		if len(parts) < len(shared) {
+			shared = shared[:len(parts)]
+		}
+		for index := range shared {
+			if !strings.EqualFold(parts[index], shared[index]) {
+				shared = shared[:index]
+				break
+			}
+		}
+	}
+	for _, t := range tracks {
+		rel := t.name
+		if colliding[t.dir] && t.dir != "." {
+			if folder := musicFolder(strings.Split(t.dir, "/")[len(shared):]); folder != "" {
+				rel = folder + "/" + t.name
+			}
+		}
+		s.musicNames[t.entry] = rel
 	}
 }
 
@@ -799,22 +819,35 @@ func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 // writing nothing, when another file of this archive already holds that
 // name, so a track is skipped rather than written over another.
 func (s *ArchiveDownloadWorker) musicDest(entryName, baseName string) (string, error) {
-	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
-		s.musicFailed = true
-		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
-	}
-	name, ok := s.musicNames[strings.ReplaceAll(entryName, "\\", "/")]
+	rel, ok := s.musicNames[strings.ReplaceAll(entryName, "\\", "/")]
 	if !ok {
-		name = musicFileName(baseName)
+		rel = musicFileName(baseName)
 	}
-	dest, err := s.ownMusicPath(archiveOutputPath(s.plan.MusicDir, name))
+	planned := archiveOutputPath(s.plan.MusicDir, filepath.FromSlash(rel))
+	if _, err := leaf.RelativeWithin(s.plan.MusicDir, planned); err != nil {
+		return "", fmt.Errorf("track %s escapes the Music folder", rel)
+	}
+	dest, err := s.ownMusicPath(planned)
 	if err != nil {
 		return "", err
 	}
 	if !s.names.Claim(dest) {
-		return "", fmt.Errorf("another file from this archive is already saved as %s", name)
+		return "", fmt.Errorf("another file from this archive is already saved as %s", rel)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		s.musicFailed = true
+		return "", fmt.Errorf("mkdirall music dir %s: %w", filepath.Dir(dest), err)
 	}
 	return dest, nil
+}
+
+// musicRecordName is the inventory name of a track: its path inside the
+// Music folder, so tracks of one name in different subfolders stay apart.
+func (s *ArchiveDownloadWorker) musicRecordName(dest string) string {
+	if rel, err := filepath.Rel(filepath.Clean(s.plan.MusicDir), dest); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.Base(dest)
 }
 
 // extractMusicFromOpener is like extractMusic but takes an opener func.
@@ -830,7 +863,7 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		Filename:     filepath.Base(dest),
+		Filename:     s.musicRecordName(dest),
 		DestPath:     dest,
 		DownloadedAt: now,
 		FileType:     inventory.FileTypeMusic,
@@ -1016,7 +1049,7 @@ func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now t
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		Filename:     filepath.Base(dest),
+		Filename:     s.musicRecordName(dest),
 		DestPath:     dest,
 		DownloadedAt: now,
 		FileType:     inventory.FileTypeMusic,

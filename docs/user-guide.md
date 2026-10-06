@@ -164,9 +164,11 @@ content in one transaction summary.
 
 A game's tracks go into one Music folder. When an archive holds tracks with the
 same name in different folders, such as `cd1/01 Theme.ogg` and
-`cd2/01 Theme.ogg`, each keeps its folder in the name (`cd1 - 01 Theme.ogg`)
-so both are installed. Tracks whose names differ only in letter case are the
-same file on your SD card, so the later one is skipped and noted in the log.
+`cd2/01 Theme.ogg`, every track of those folders keeps its folder as a
+subfolder (`cd1/01 Theme.ogg`, `cd1/02 Battle.ogg`, `cd2/01 Theme.ogg`), so
+both are installed and Disco Boy plays each disc in order. Tracks whose names
+differ only in letter case are the same file on your SD card, so the later one
+is skipped and listed on the **Download complete** screen.
 
 Disco Boy is optional. This pak neither installs nor launches it. Open or relaunch
 Disco Boy after installing music so its normal scan reads the selected Music
