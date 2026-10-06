@@ -421,6 +421,25 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			list.ApplyDetailAccess(&detailModel.Game)
 		}
 	}
+	// syncSignIn applies sign-in results and reports whether to redraw. A
+	// flow whose screen is closed is kept until idle, so a late key is saved.
+	syncSignIn := func() bool {
+		if signInFlow == nil {
+			return false
+		}
+		signedIn := cfg.SignedIn()
+		changed := signInFlow.Sync(signInModel)
+		if signInModel == nil {
+			if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
+				settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
+				changed = true
+			}
+			if signInFlow.Idle() {
+				signInFlow = nil
+			}
+		}
+		return changed
+	}
 	// signOutRejected signs out after itch.io rejected the stored key.
 	signOutRejected := func() {
 		if err := account.SignOutRejected(); err != nil {
@@ -843,20 +862,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
-		if signInFlow != nil {
-			signedIn := cfg.SignedIn()
-			if signInFlow.Sync(signInModel) {
-				redraw = true
-			}
-			if signInModel == nil {
-				if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
-					settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
-					redraw = true
-				}
-				if signInFlow.Idle() {
-					signInFlow = nil
-				}
-			}
+		if syncSignIn() {
+			redraw = true
 		}
 		if list.TakeSignInRejected() {
 			signOutRejected()
@@ -1258,20 +1265,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
-		if signInFlow != nil {
-			signedIn := cfg.SignedIn()
-			if signInFlow.Sync(signInModel) {
-				redraw = true
-			}
-			if signInModel == nil {
-				if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
-					settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
-					redraw = true
-				}
-				if signInFlow.Idle() {
-					signInFlow = nil
-				}
-			}
+		if syncSignIn() {
+			redraw = true
 		}
 		if list.TakeSignInRejected() {
 			signOutRejected()
