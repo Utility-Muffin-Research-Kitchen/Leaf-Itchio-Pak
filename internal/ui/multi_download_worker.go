@@ -183,6 +183,10 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			CoverURL: s.game.CoverURL,
 			IsFree:   s.game.IsFree,
 		}, file)
+		s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
+			UploadID: dl.Upload.UploadID, Filename: dl.Upload.Filename,
+			Fingerprint: dl.Upload.UploadFingerprint, Written: []string{finalDest},
+		})
 		if saveErr := s.inv.Save(s.invPath); saveErr != nil {
 			logger.Warn("inventory: save failed: %v", saveErr)
 		} else {

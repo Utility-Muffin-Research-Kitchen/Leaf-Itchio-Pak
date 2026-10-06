@@ -156,6 +156,10 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 					CoverURL: game.CoverURL,
 					IsFree:   game.IsFree,
 				}, file)
+				s.inv.CommitUploadInstall(game.URL, inventory.UploadInstall{
+					UploadID: upload.UploadID, Filename: upload.Filename,
+					Fingerprint: upload.UploadFingerprint, Written: []string{finalDest},
+				})
 				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
 					logger.Warn("inventory: save failed: %v", saveErr)
 				} else {

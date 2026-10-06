@@ -131,7 +131,10 @@ removed upstream games, and newly offered uploads without deleting local files.
 When signed in, it also detects files replaced under the same name, including
 paid games you own. A changed upload marks a game only when you installed that
 upload, so a new Windows or soundtrack build of a game you play as a ROM does
-not. These checks read metadata without starting a download.
+not. Installing the new version clears the mark. Files the new version no
+longer includes, such as renamed tracks, stay where they are: the app never
+deletes them on its own. These checks read metadata without starting a
+download.
 When signed out, it can find newly listed filenames on public pages, but cannot
 verify changed file contents or hidden paid downloads. Switching between these
 sources establishes a new baseline without marking every file as an update.

@@ -236,6 +236,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			s.storeState(zipDLError)
 			return
 		}
+		s.commitInstall()
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("zip-download: save inventory: %v", err)
 		}
@@ -286,6 +287,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		}
 	}
 
+	s.commitInstall()
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("zip-download: save inventory: %v", err)
 	}
@@ -320,6 +322,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
 		s.extractPico8_7z(r, now)
+		s.commitInstall()
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("7z-download: save inventory: %v", err)
 		}
@@ -373,6 +376,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		}
 	}
 
+	s.commitInstall()
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("7z-download: save inventory: %v", err)
 	}
@@ -384,6 +388,34 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	}
 	logger.Info("7z-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
+}
+
+// commitInstall acknowledges the upload once the archive is fully extracted.
+// A skipped entry means the install did not finish, so the update stays
+// pending and a retry can complete it.
+func (s *ArchiveDownloadWorker) commitInstall() {
+	if len(s.extracted) == 0 || len(s.skipped) > 0 {
+		return
+	}
+	s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
+		UploadID: s.plan.Upload.UploadID, Filename: s.plan.Upload.Filename,
+		Fingerprint: s.plan.Upload.UploadFingerprint,
+		Written:     append([]string(nil), s.extracted...), Replaces: s.replacesFile,
+	})
+}
+
+// replacesFile reports whether this plan would have rewritten an older file
+// of the same archive. Music is all or nothing; a ROM type with a picked
+// build replaces only the chosen file, so other builds of it are kept.
+func (s *ArchiveDownloadWorker) replacesFile(file inventory.DownloadedFile) bool {
+	if file.ContentKind == inventory.ContentKindMusic || file.FileType == inventory.FileTypeMusic {
+		return s.plan.DownloadMusic && s.plan.MusicDir != ""
+	}
+	if !s.plan.DownloadROMs {
+		return false
+	}
+	_, picked := s.plan.SelectedROMs[strings.ToLower(roms.ROMExt(file.DestPath))]
+	return !picked
 }
 
 func manifestFromZIP(files []*zip.File) roms.ZIPManifest {

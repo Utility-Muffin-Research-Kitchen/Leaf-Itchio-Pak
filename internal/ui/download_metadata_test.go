@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
@@ -100,5 +101,127 @@ func TestArchiveWorkerRetainsOriginalUploadForROMAndMusic(t *testing.T) {
 		if file.UploadID != "5" || file.UploadFingerprint != "build:9" || file.OriginalUpload != "release.zip" {
 			t.Fatalf("extracted upload identity = %+v", file)
 		}
+	}
+}
+
+func zipBytes(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var data bytes.Buffer
+	w := zip.NewWriter(&data)
+	for name, content := range files {
+		file, err := w.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.Write([]byte(content))
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return data.Bytes()
+}
+
+func zipManifest(t *testing.T, data []byte) roms.ZIPManifest {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := roms.ZIPManifest{}
+	for _, file := range reader.File {
+		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
+			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
+			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
+		})
+	}
+	return manifest
+}
+
+func TestArchiveReinstallAcknowledgesUploadWithRenamedMember(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	v1 := zipBytes(t, map[string]string{"cart.gb": "rom v1", "01 Theme.mp3": "theme"})
+	f := newInstallAPI(t, `{"uploads":[{"id":5,"filename":"release.zip","build_id":1}]}`, map[string][]byte{"5": v1})
+	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
+	if listing.err != nil {
+		t.Fatal(listing.err)
+	}
+	install := func(upload roms.Upload, data []byte) {
+		t.Helper()
+		plan := ZIPPlan{Upload: upload, Manifest: zipManifest(t, data), DownloadROMs: true, DownloadMusic: true,
+			ROMDirs: map[string]string{".gb": filepath.Join(primary, "Roms", "GB")}, MusicDir: filepath.Join(primary, "Music", "Leafbound")}
+		worker := NewArchiveDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, plan, flow.inv,
+			filepath.Join(t.TempDir(), "inventory.json"))
+		waitFor(t, func() bool { return worker.loadState() == zipDLDone || worker.loadState() == zipDLError })
+		if state := worker.CatSnapshot(); state.State != appui.DownloadProgressDone {
+			t.Fatalf("archive download failed: %+v", state)
+		}
+	}
+	install(listing.uploads[0], v1)
+	url := flow.game.URL
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "release.zip", UploadID: "5", Fingerprint: "build:1"}})
+	v2Listing := []inventory.UpstreamFile{{Filename: "release.zip", UploadID: "5", Fingerprint: "build:2"}}
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, v2Listing)
+	if !flow.inv.HasPendingUpdates(url) {
+		t.Fatal("version 2 was not detected")
+	}
+
+	v2 := zipBytes(t, map[string]string{"cart.gb": "rom v2", "01 Main Theme.mp3": "theme"})
+	f.files["5"] = v2
+	upload := listing.uploads[0]
+	upload.UploadFingerprint = "build:2"
+	install(upload, v2)
+	if flow.inv.HasPendingUpdates(url) {
+		t.Fatalf("update pending after reinstall: %+v", flow.inv.PendingUpdateFiles(url))
+	}
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, v2Listing)
+	if flow.inv.HasPendingUpdates(url) {
+		t.Fatalf("re-check raised the update again: %+v", flow.inv.PendingUpdateFiles(url))
+	}
+	entry, _ := flow.inv.Lookup(url)
+	oldTheme := filepath.Join(primary, "Music", "Leafbound", "01 Theme.mp3")
+	if len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != oldTheme {
+		t.Fatalf("left over files = %v, want [%s]", entry.LeftoverFiles, oldTheme)
+	}
+	if _, err := os.Stat(oldTheme); err != nil {
+		t.Fatalf("the old track was deleted: %v", err)
+	}
+}
+
+func TestDirectReinstallAcknowledgesUploadRenamedUnderSameID(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	f := newInstallAPI(t, `{"uploads":[{"id":7,"filename":"cart-v1.gb","build_id":1}]}`, map[string][]byte{"7": []byte("rom v1")})
+	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
+	if listing.err != nil {
+		t.Fatal(listing.err)
+	}
+	install := func(upload roms.Upload) {
+		t.Helper()
+		worker := NewDirectDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, upload,
+			filepath.Join(primary, "Roms", "GB", upload.Filename), flow.inv, filepath.Join(t.TempDir(), "inventory.json"))
+		waitFor(t, func() bool { return worker.loadState() != dlDownloading })
+		if worker.CatSnapshot().State != appui.DownloadProgressDone {
+			t.Fatalf("direct download failed: %+v", worker.CatSnapshot())
+		}
+	}
+	install(listing.uploads[0])
+	url := flow.game.URL
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart-v1.gb", UploadID: "7", Fingerprint: "build:1"}})
+	v2Listing := []inventory.UpstreamFile{{Filename: "cart-v2.gb", UploadID: "7", Fingerprint: "build:2"}}
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, v2Listing)
+	if !flow.inv.HasPendingUpdates(url) {
+		t.Fatal("version 2 was not detected")
+	}
+	f.files["7"] = []byte("rom v2")
+	upload := listing.uploads[0]
+	upload.Filename, upload.UploadFingerprint = "cart-v2.gb", "build:2"
+	install(upload)
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, v2Listing)
+	if flow.inv.HasPendingUpdates(url) {
+		t.Fatalf("update pending after reinstall and re-check: %+v", flow.inv.PendingUpdateFiles(url))
+	}
+	if entry, _ := flow.inv.Lookup(url); len(entry.LeftoverFiles) != 1 || filepath.Base(entry.LeftoverFiles[0]) != "cart-v1.gb" {
+		t.Fatalf("left over files = %v, want the version 1 ROM", entry.LeftoverFiles)
 	}
 }

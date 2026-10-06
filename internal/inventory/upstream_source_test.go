@@ -33,10 +33,12 @@ func TestUpstreamBaselinesAndPerUploadAcknowledgment(t *testing.T) {
 	// Completing an older in-flight download must not acknowledge a newer
 	// fingerprint observed by the background check.
 	inv.Add(url, inventory.Entry{}, inventory.DownloadedFile{Filename: "unified.gb", SourceArchive: "first.zip", UploadID: "1", UploadFingerprint: "build:1", DestPath: "/unified.gb"})
+	inv.CommitUploadInstall(url, inventory.UploadInstall{UploadID: "1", Filename: "first.zip", Fingerprint: "build:1", Written: []string{"/unified.gb"}})
 	if len(inv.PendingUpdateFiles(url)) != 2 {
 		t.Fatal("older download acknowledged a newer replacement")
 	}
 	inv.Add(url, inventory.Entry{}, inventory.DownloadedFile{Filename: "unified.gb", SourceArchive: "first.zip", UploadID: "1", UploadFingerprint: "build:2", DestPath: "/unified.gb"})
+	inv.CommitUploadInstall(url, inventory.UploadInstall{UploadID: "1", Filename: "first.zip", Fingerprint: "build:2", Written: []string{"/unified.gb"}})
 	if pending := inv.PendingUpdateFiles(url); len(pending) != 1 || pending[0].UploadID != "2" {
 		t.Fatalf("installing first archive cleared unrelated pending update: %+v", pending)
 	}
@@ -83,6 +85,7 @@ func TestUpstreamSourceSwitchAndReplacementIdentity(t *testing.T) {
 		t.Fatal("replaced upload ID was missed")
 	}
 	inv.Add(url, inventory.Entry{}, inventory.DownloadedFile{Filename: "renamed.gb", UploadID: "1", DestPath: "/cart.gb"})
+	inv.CommitUploadInstall(url, inventory.UploadInstall{UploadID: "1", Filename: "renamed.gb", Written: []string{"/cart.gb"}})
 	if !inv.HasPendingUpdates(url) {
 		t.Fatal("different ID with same filename acknowledged replacement")
 	}
@@ -91,6 +94,7 @@ func TestUpstreamSourceSwitchAndReplacementIdentity(t *testing.T) {
 		t.Fatal("signing out cleared a known replacement")
 	}
 	inv.Add(url, inventory.Entry{}, inventory.DownloadedFile{Filename: "local.gb", OriginalUpload: "Game Boy build", DestPath: "/cart.gb"})
+	inv.CommitUploadInstall(url, inventory.UploadInstall{Filename: "Game Boy build", Written: []string{"/cart.gb"}})
 	if inv.HasPendingUpdates(url) {
 		t.Fatal("legacy original-name install did not acknowledge matching upload")
 	}
@@ -140,7 +144,7 @@ func TestPublicSubsetCannotClearHiddenPendingUpdate(t *testing.T) {
 	}
 }
 
-func TestArchiveUpdateRequiresEveryTrackedMember(t *testing.T) {
+func TestArchiveUpdateIsAcknowledgedWhenTheInstallCommits(t *testing.T) {
 	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
 	for _, name := range []string{"one.gb", "two.gbc"} {
 		inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: name, DestPath: "/" + name, OriginalUpload: "bundle.zip", UploadID: "1", UploadFingerprint: "build:1"})
@@ -148,14 +152,50 @@ func TestArchiveUpdateRequiresEveryTrackedMember(t *testing.T) {
 	current := []inventory.UpstreamFile{{Filename: "bundle.zip", UploadID: "1", Fingerprint: "build:2"}}
 	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, current)
 	for i, name := range []string{"one.gb", "two.gbc"} {
+		// Members recorded while the extraction runs, or before it fails,
+		// leave the update pending.
 		inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: name, DestPath: "/" + name, OriginalUpload: "bundle.zip", UploadID: "1", UploadFingerprint: "build:2"})
-		if got, want := inv.HasPendingUpdates("game"), i == 0; got != want {
-			t.Fatalf("after member %s: pending=%v, want %v", name, got, want)
+		if !inv.HasPendingUpdates("game") {
+			t.Fatalf("member %s acknowledged an unfinished install", name)
 		}
-		inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, current)
-		if got, want := inv.HasPendingUpdates("game"), i == 0; got != want {
-			t.Fatalf("after recheck for member %s: pending=%v, want %v", name, got, want)
+		if i == 0 {
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, current)
+			if !inv.HasPendingUpdates("game") {
+				t.Fatal("recheck with one member still old acknowledged the update")
+			}
 		}
+	}
+	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "bundle.zip", Fingerprint: "build:2", Written: []string{"/one.gb", "/two.gbc"}})
+	if inv.HasPendingUpdates("game") {
+		t.Fatal("complete install did not acknowledge the update")
+	}
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, current)
+	if inv.HasPendingUpdates("game") {
+		t.Fatal("recheck after the complete install raised the update again")
+	}
+}
+
+func TestPartialArchiveInstallKeepsOtherBuildsOfTheSameVersion(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	add := func(name, fingerprint string) {
+		inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: name, DestPath: "/leaf/Roms/GBA/" + name,
+			OriginalUpload: "glory.zip", SourceArchive: "glory.zip", UploadID: "1", UploadFingerprint: fingerprint})
+	}
+	pickedOnly := func(file inventory.DownloadedFile) bool { return false }
+	add("plain.gba", "build:1")
+	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "glory.zip", Fingerprint: "build:1",
+		Written: []string{"/leaf/Roms/GBA/plain.gba"}, Replaces: pickedOnly})
+	add("ez.gba", "build:1")
+	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "glory.zip", Fingerprint: "build:1",
+		Written: []string{"/leaf/Roms/GBA/ez.gba"}, Replaces: pickedOnly})
+	if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 0 {
+		t.Fatalf("a second build picked from the same version left %v over", entry.LeftoverFiles)
+	}
+	add("ez.gba", "build:2")
+	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "glory.zip", Fingerprint: "build:2",
+		Written: []string{"/leaf/Roms/GBA/ez.gba"}, Replaces: pickedOnly})
+	if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != "/leaf/Roms/GBA/plain.gba" {
+		t.Fatalf("left over after a newer version = %v, want the older plain build", entry.LeftoverFiles)
 	}
 }
 
@@ -258,6 +298,96 @@ func TestWeakFingerprintChangesNeedEvidence(t *testing.T) {
 			}
 			if got := inv.HasPendingUpdates("game"); got != tc.want {
 				t.Fatalf("pending = %v, want %v (%+v)", got, tc.want, inv.PendingUpdateFiles("game"))
+			}
+		})
+	}
+}
+
+func TestReinstallClearsUpdateWhenFilesMoved(t *testing.T) {
+	music := func(name, fingerprint string) inventory.DownloadedFile {
+		return inventory.DownloadedFile{Filename: name, DestPath: "/leaf/Music/Game/" + name, OriginalUpload: "ost.zip",
+			UploadID: "5", UploadFingerprint: fingerprint, FileType: inventory.FileTypeMusic}
+	}
+	rom := func(name, fingerprint string) inventory.DownloadedFile {
+		return inventory.DownloadedFile{Filename: name, DestPath: "/leaf/Roms/GB/" + name, OriginalUpload: name,
+			UploadID: "7", UploadFingerprint: fingerprint}
+	}
+	for _, tc := range []struct {
+		name               string
+		before, after      []inventory.DownloadedFile
+		uploadBefore, last inventory.UpstreamFile
+		leftover           string
+	}{
+		{
+			name:         "archive member renamed in v2",
+			before:       []inventory.DownloadedFile{music("01 Theme.ogg", "build:1"), music("02 Boss.ogg", "build:1")},
+			after:        []inventory.DownloadedFile{music("01 Main Theme.ogg", "build:2"), music("02 Boss.ogg", "build:2")},
+			uploadBefore: inventory.UpstreamFile{Filename: "ost.zip", UploadID: "5", Fingerprint: "build:1"},
+			last:         inventory.UpstreamFile{Filename: "ost.zip", UploadID: "5", Fingerprint: "build:2"},
+			leftover:     "/leaf/Music/Game/01 Theme.ogg",
+		},
+		{
+			name:         "same upload ID re-uploaded under a new name",
+			before:       []inventory.DownloadedFile{rom("cart-v1.gb", "build:1")},
+			after:        []inventory.DownloadedFile{rom("cart-v2.gb", "build:2")},
+			uploadBefore: inventory.UpstreamFile{Filename: "cart-v1.gb", UploadID: "7", Fingerprint: "build:1"},
+			last:         inventory.UpstreamFile{Filename: "cart-v2.gb", UploadID: "7", Fingerprint: "build:2"},
+			leftover:     "/leaf/Roms/GB/cart-v1.gb",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+			install := func(files []inventory.DownloadedFile, upload inventory.UpstreamFile) {
+				var written []string
+				for _, file := range files {
+					inv.Add("game", inventory.Entry{}, file)
+					written = append(written, file.DestPath)
+				}
+				inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: upload.UploadID,
+					Filename: upload.Filename, Fingerprint: upload.Fingerprint, Written: written})
+			}
+			install(tc.before, tc.uploadBefore)
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{tc.uploadBefore})
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{tc.last})
+			if !inv.HasPendingUpdates("game") {
+				t.Fatal("new version was not detected")
+			}
+			for _, file := range tc.after {
+				inv.Add("game", inventory.Entry{}, file)
+			}
+			if !inv.HasPendingUpdates("game") {
+				t.Fatal("a file of an unfinished install acknowledged the update")
+			}
+			install(tc.after, tc.last)
+			if inv.HasPendingUpdates("game") {
+				t.Fatalf("update still pending after reinstall: %+v", inv.PendingUpdateFiles("game"))
+			}
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{tc.last})
+			if inv.HasPendingUpdates("game") {
+				t.Fatalf("re-check after reinstall raised the update again: %+v", inv.PendingUpdateFiles("game"))
+			}
+			entry, _ := inv.Lookup("game")
+			if len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != tc.leftover {
+				t.Fatalf("left over files = %v, want [%s]", entry.LeftoverFiles, tc.leftover)
+			}
+			if len(entry.Files) != len(tc.after)+1 {
+				t.Fatalf("files after reinstall = %+v, want the old file kept", entry.Files)
+			}
+			// Installing the same version again leaves nothing new behind,
+			// and a rewritten path is no longer left over.
+			install(tc.after, tc.last)
+			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 {
+				t.Fatalf("left over files after a same-version reinstall = %v", entry.LeftoverFiles)
+			}
+			install(tc.before, tc.last)
+			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] == tc.leftover {
+				t.Fatalf("left over files after rewriting the old path = %v", entry.LeftoverFiles)
+			}
+			// A removed file is no longer offered for cleanup.
+			entry, _ = inv.Lookup("game")
+			inv.RemoveFile("game", entry.LeftoverFiles[0])
+			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 0 {
+				t.Fatalf("left over files after removing it = %v", entry.LeftoverFiles)
 			}
 		})
 	}

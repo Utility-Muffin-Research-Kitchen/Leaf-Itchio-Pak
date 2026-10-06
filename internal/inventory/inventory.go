@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,6 +122,29 @@ type Entry struct {
 	GameRemovedAt         time.Time        `json:"game_removed_at,omitempty"`
 	RemovalDismissedAt    time.Time        `json:"removal_dismissed_at,omitempty"`
 	UnifiedNamingDisabled bool             `json:"unified_naming_disabled,omitempty"`
+	// AcknowledgedUploads maps an upload ID to the fingerprint of its last
+	// complete install ("" for a download without one). Update checks compare
+	// the listed version against it rather than against every file ever
+	// recorded for the upload.
+	AcknowledgedUploads map[string]string `json:"acknowledged_uploads,omitempty"`
+	// LeftoverFiles holds the DestPaths of files recorded for an upload that
+	// its latest complete reinstall did not write: left over from an older
+	// version. They stay on disk and in Files until you remove them.
+	LeftoverFiles []string `json:"leftover_files,omitempty"`
+}
+
+// UploadInstall describes one upload whose install finished.
+type UploadInstall struct {
+	UploadID    string
+	Filename    string // the upload's filename; matches records without an ID
+	Fingerprint string // "" for a download without version metadata
+	// Written lists every DestPath this install wrote or found identical.
+	Written []string
+	// Replaces reports whether this install would have rewritten an older
+	// file of the same upload had that file still been in it. A partial
+	// install, such as one build picked from an archive, returns false for
+	// files it did not choose. nil means the install replaces every file.
+	Replaces func(DownloadedFile) bool
 }
 
 type Inventory struct {
@@ -286,33 +310,91 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 	if !replaced {
 		existing.Files = append(existing.Files, file)
 	}
-	// Installing one upload resolves only that upload, and only after every
-	// tracked archive member is current (another extraction may have failed).
-	for i := range existing.KnownUpstreamFiles {
-		u := &existing.KnownUpstreamFiles[i]
-		if !fileMatchesUpload(file, *u) {
+	// Recording one file does not acknowledge an update: the install may
+	// still fail. CommitUploadInstall does once the whole upload is in.
+}
+
+// CommitUploadInstall acknowledges one upload after every file of its install
+// is recorded. It clears the upload's update unless a newer version was seen
+// while the download ran, and records files of the same upload that the
+// install did not write as left over from an older version. Those files are
+// never deleted here.
+func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall) {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	e, ok := inv.Entries[gameURL]
+	if !ok {
+		return
+	}
+	identity := UpstreamFile{Filename: install.Filename, UploadID: install.UploadID}
+	if install.UploadID != "" {
+		if e.AcknowledgedUploads == nil {
+			e.AcknowledgedUploads = make(map[string]string)
+		}
+		e.AcknowledgedUploads[install.UploadID] = install.Fingerprint
+	}
+	for index := range e.KnownUpstreamFiles {
+		upload := &e.KnownUpstreamFiles[index]
+		if !sameUpload(identity, *upload) {
 			continue
 		}
-		current := true
-		if u.Fingerprint != "" {
-			for _, installed := range existing.Files {
-				if fileMatchesUpload(installed, *u) && installed.UploadFingerprint != u.Fingerprint {
-					// Anonymous downloads have no API fingerprint. The row
-					// being committed, or another member installed after this
-					// change was seen, still acknowledges a current download.
-					if installed.UploadFingerprint == "" && (installed == file || installed.DownloadedAt.After(u.SeenAt)) {
-						continue
-					}
-					current = false
-					break
-				}
-			}
-		}
-		if current {
-			u.Changed, u.IsNew = false, false
+		// An install that started before a newer version was listed does
+		// not acknowledge that version.
+		if newer, conclusive := fingerprintChanged(install.Fingerprint, upload.Fingerprint); !(newer && conclusive) {
+			upload.Changed, upload.IsNew = false, false
 		}
 	}
 
+	written := make(map[string]bool, len(install.Written))
+	for _, path := range install.Written {
+		written[filepath.Clean(path)] = true
+	}
+	leftover := make([]string, 0, len(e.LeftoverFiles))
+	for _, path := range e.LeftoverFiles {
+		if !written[filepath.Clean(path)] {
+			leftover = append(leftover, path)
+		}
+	}
+	for _, file := range e.Files {
+		if file.DestPath == "" || written[filepath.Clean(file.DestPath)] || !fileMatchesUpload(file, identity) ||
+			slices.Contains(leftover, file.DestPath) {
+			continue
+		}
+		older, conclusive := fingerprintChanged(file.UploadFingerprint, install.Fingerprint)
+		if (older && conclusive) || install.Replaces == nil || install.Replaces(file) {
+			leftover = append(leftover, file.DestPath)
+		}
+	}
+	e.LeftoverFiles = nil
+	if len(leftover) > 0 {
+		e.LeftoverFiles = leftover
+	}
+}
+
+// sameUpload matches by upload ID when both sides have one, else by name.
+func sameUpload(a, b UpstreamFile) bool {
+	if a.UploadID != "" && b.UploadID != "" {
+		return a.UploadID == b.UploadID
+	}
+	return fileMatchesUpload(DownloadedFile{OriginalUpload: a.Filename}, b)
+}
+
+// pruneLeftoverFilesLocked drops left over paths that no longer have a file
+// record, after a removal or a clean-up of missing files.
+func pruneLeftoverFilesLocked(e *Entry) {
+	if len(e.LeftoverFiles) == 0 {
+		return
+	}
+	kept := e.LeftoverFiles[:0]
+	for _, path := range e.LeftoverFiles {
+		if slices.ContainsFunc(e.Files, func(file DownloadedFile) bool { return file.DestPath == path }) {
+			kept = append(kept, path)
+		}
+	}
+	e.LeftoverFiles = nil
+	if len(kept) > 0 {
+		e.LeftoverFiles = kept
+	}
 }
 
 // Remove deletes the entry for gameURL.
@@ -333,6 +415,8 @@ func (inv *Inventory) Lookup(gameURL string) (Entry, bool) {
 	snap := *e
 	snap.Files = append([]DownloadedFile(nil), e.Files...)
 	snap.KnownUpstreamFiles = cloneUpstreamFiles(e.KnownUpstreamFiles)
+	snap.AcknowledgedUploads = maps.Clone(e.AcknowledgedUploads)
+	snap.LeftoverFiles = slices.Clone(e.LeftoverFiles)
 	return snap, true
 }
 
@@ -386,6 +470,7 @@ func (inv *Inventory) RemoveFile(gameURL, destPath string) bool {
 		delete(inv.Entries, gameURL)
 		return true
 	}
+	pruneLeftoverFilesLocked(entry)
 	return false
 }
 
@@ -523,6 +608,7 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 		} else {
 			entry.Files = kept
 			entry.VerifiedAt = time.Now()
+			pruneLeftoverFilesLocked(entry)
 		}
 	}
 	inv.mu.Unlock()
@@ -812,12 +898,20 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 		} else if !baseline {
 			file.IsNew = true
 		}
-		// Captured installed fingerprints also prove changes before the first
-		// background baseline. A partially updated archive stays pending.
-		if file.Fingerprint != "" {
+		// The version of the last complete install also proves a change
+		// before the first background baseline, and clears one it installed.
+		if acknowledged, ok := e.AcknowledgedUploads[file.UploadID]; ok && file.UploadID != "" {
+			if changed, conclusive := fingerprintChanged(acknowledged, file.Fingerprint); conclusive && !changed {
+				file.IsNew, file.Changed = false, false
+			} else if conclusive && source == SourceAPI && !file.Changed {
+				file.Changed, file.SeenAt = true, now
+			}
+		} else if file.Fingerprint != "" {
+			// Inventories from before per-upload acknowledgement: every
+			// tracked file must carry the listed version.
 			anyInstalled, allCurrent, hasOlderVersion := false, true, false
 			for _, installed := range e.Files {
-				if !fileMatchesUpload(installed, *file) {
+				if !fileMatchesUpload(installed, *file) || slices.Contains(e.LeftoverFiles, installed.DestPath) {
 					continue
 				}
 				anyInstalled = true
@@ -911,6 +1005,9 @@ func (inv *Inventory) UpdateFile(gameURL, oldDestPath string, file DownloadedFil
 	for i, f := range e.Files {
 		if f.DestPath == oldDestPath {
 			e.Files[i] = file
+			if index := slices.Index(e.LeftoverFiles, oldDestPath); index >= 0 {
+				e.LeftoverFiles[index] = file.DestPath
+			}
 			return true
 		}
 	}
