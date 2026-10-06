@@ -22,6 +22,10 @@ type Upload struct {
 	URL         string // web resolver URL; empty for API uploads
 	UploadID    string // itch.io upload ID; recorded with each installed file
 	NeedsFormat bool   // true if the user must choose a supported format
+	// DesktopOrWeb marks a build for a computer, phone or browser, from the
+	// API listing's upload type and traits. Such a file is never chosen
+	// automatically and is listed last.
+	DesktopOrWeb bool
 	// Install is set for uploads listed through the itch.io API and is the
 	// only test for an API download: free API downloads have no purchase ID.
 	// nil means the anonymous web flow.

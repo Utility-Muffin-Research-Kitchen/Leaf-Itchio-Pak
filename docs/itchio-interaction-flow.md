@@ -272,8 +272,15 @@ GET https://api.itch.io/games/{GAME_ID}/uploads?download_key_id={KEY_ID}
 `download_key_id` is omitted for a free or name-your-own-price game. Uploads
 are classified through the same maintained format/archive rules as anonymous
 downloads, and `size` is kept on each `Upload`. `uploads` may be an array, `{}`,
-`null`, or absent; `errors` is reported generically. Unstable fields such as
-`traits` are not decoded.
+`null`, or absent; `errors` is reported generically. `type` and `traits` are
+read leniently (`traits` is `{}` when empty and an array otherwise; any other
+shape reads as none). `Upload.DesktopOrWebOnly` reports a build for a
+computer or phone (trait `p_windows`, `p_linux`, `p_osx` or `p_android`) or a
+browser game (type `html`, `flash`, `unity` or `java`). The file picker never
+chooses such an archive or unknown-format file automatically: while another
+file is on offer it waits behind a last **Show all files** row, and when only
+such builds remain you choose. A file with a ROM extension is never set
+aside.
 
 ### Step 3 — Begin an install
 

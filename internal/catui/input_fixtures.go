@@ -79,12 +79,17 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
-	case "download-select", "archive-contents":
+	case "download-select", "download-select-hidden", "archive-contents":
 		model := appui.NewDownloadSelectModel("Leafbound 葉")
 		if config.Screen == "archive-contents" {
 			model.SetChoices("Choose one .GBC ROM (1/1)", []appui.DownloadChoice{
 				{Title: "release/leafbound-v1.gbc", Badge: "GBC"},
 				{Title: "release/leafbound-v2.gbc", Badge: "GBC"},
+			})
+		} else if config.Screen == "download-select-hidden" {
+			model.SetChoices("Choose file to download", []appui.DownloadChoice{
+				{Title: "leafbound-ps1.zip", Badge: "ZIP"},
+				{Title: "Show all files", Detail: "2 more"},
 			})
 		} else {
 			model.SetChoices("Choose file and format", []appui.DownloadChoice{

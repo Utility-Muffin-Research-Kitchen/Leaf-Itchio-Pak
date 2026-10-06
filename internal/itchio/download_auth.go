@@ -388,12 +388,14 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		return nil, fmt.Errorf("itch.io rejected the upload list request")
 	}
 
-	// Only the fields used here are decoded. Unstable ones such as "traits"
-	// ({} when empty, an array otherwise) are ignored.
+	// Only the fields used here are decoded. "traits" is unstable ({} when
+	// empty, an array otherwise), so it is read leniently.
 	var items []struct {
-		ID       int64  `json:"id"`
-		Filename string `json:"filename"`
-		Size     int64  `json:"size"`
+		ID       int64           `json:"id"`
+		Filename string          `json:"filename"`
+		Size     int64           `json:"size"`
+		Type     string          `json:"type"`
+		Traits   json.RawMessage `json:"traits"`
 	}
 	if isJSONArray(envelope.Uploads) {
 		if err := json.Unmarshal(envelope.Uploads, &items); err != nil {
@@ -405,7 +407,8 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 
 	var uploads []Upload
 	for _, u := range items {
-		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size}
+		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size,
+			Type: u.Type, Traits: decodeTraits(u.Traits)}
 		ext := strings.ToLower(roms.ROMExt(u.Filename))
 		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, upload)

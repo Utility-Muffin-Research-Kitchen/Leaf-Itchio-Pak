@@ -3,6 +3,7 @@ package itchio
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,51 @@ type Upload struct {
 	UploadID    string // itch.io upload ID (from data-upload_id)
 	NeedsFormat bool   // true if extension is unknown and needs a manual format choice
 	Size        int64  // bytes; set for uploads listed through the API, 0 when unknown
+	// Type and Traits are set for uploads listed through the API and empty
+	// for the web flow: the upload's kind ("default", "html", "soundtrack",
+	// ...) and its flags, such as "p_windows" or "demo".
+	Type   string
+	Traits []string
+}
+
+// DesktopOrWebOnly reports whether an upload listed through the API is a
+// build for a computer or phone (trait p_windows, p_linux, p_osx or
+// p_android) or a game played in the browser (type html, flash, unity or
+// java). Neither runs on Leaf. It reads only Type and Traits, so it is false
+// for uploads listed through the web flow, which carry neither.
+func (u Upload) DesktopOrWebOnly() bool {
+	switch u.Type {
+	case "html", "flash", "unity", "java":
+		return true
+	}
+	for _, trait := range u.Traits {
+		switch trait {
+		case "p_windows", "p_linux", "p_osx", "p_android":
+			return true
+		}
+	}
+	return false
+}
+
+// decodeTraits reads an upload's traits: an array of names, or an object
+// (itch.io answers {} for none; a map of true flags is accepted too). Any
+// other shape reads as no traits, so a listing never fails over them.
+func decodeTraits(raw json.RawMessage) []string {
+	var names []string
+	if json.Unmarshal(raw, &names) == nil {
+		return names
+	}
+	var flags map[string]bool
+	if json.Unmarshal(raw, &flags) != nil {
+		return nil
+	}
+	for name, set := range flags {
+		if set {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 var (

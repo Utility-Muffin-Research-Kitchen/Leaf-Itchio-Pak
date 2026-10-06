@@ -77,6 +77,7 @@ type CatDownloadFlow struct {
 	mode    catDownloadMode
 	keys    []itchio.OwnedKey
 	uploads []roms.Upload
+	hidden  []roms.Upload // desktop and web builds behind "Show all files"
 	updates chan catDownloadUpdate
 	plan    *CatDownloadPlan
 
@@ -171,6 +172,7 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 			update.uploads = append(update.uploads, roms.Upload{
 				Filename: upload.Filename, UploadID: upload.UploadID,
 				NeedsFormat: upload.NeedsFormat, Install: install,
+				DesktopOrWeb: upload.DesktopOrWebOnly(),
 			})
 		}
 		return update
@@ -200,6 +202,7 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, UploadID: upload.UploadID,
 			NeedsFormat: upload.NeedsFormat, Install: install,
+			DesktopOrWeb: upload.DesktopOrWebOnly(),
 		})
 	}
 	return update
@@ -278,6 +281,12 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 	case catDownloadModeUploads:
 		if model.Cursor < len(flow.uploads) {
 			flow.plan = flow.planForUpload(flow.uploads[model.Cursor])
+		} else if len(flow.hidden) > 0 {
+			// "Show all files": list the set-aside builds last and move
+			// to the first of them.
+			first := len(flow.uploads)
+			flow.chooseUpload(model, append(append([]roms.Upload(nil), flow.uploads...), flow.hidden...), nil)
+			model.Cursor = first
 		}
 	case catDownloadModeFormats:
 		if model.Cursor >= len(flow.uploads) || model.Cursor >= len(model.Choices) {
@@ -320,7 +329,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		model.SetError("No downloadable files were found for this game.")
 		return
 	}
-	flow.uploads = uploads
+	flow.uploads, flow.hidden = uploads, nil
 	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {
 		// BIN is ambiguous: it is commonly a PlayStation companion track, but
 		// Mega Drive homebrew is also frequently published as a lone .bin.
@@ -341,13 +350,20 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 			known = append(known, upload)
 		}
 	}
+	// Desktop and web builds are never picked automatically. While another
+	// file is on offer they wait behind "Show all files"; when only they
+	// remain, you choose.
+	known, setAside := splitSetAside(known)
+	unknown = setAsideLast(unknown)
+	if len(setAside) > 0 {
+		logger.Debug("cat download: %d desktop or web build(s) set aside", len(setAside))
+	}
+	if len(known) == 0 && len(setAside) > 0 {
+		flow.chooseUpload(model, setAside, nil)
+		return
+	}
 	if flow.cfg.ROMSelection == "ask" && len(known) > 0 && !isPairedPSXUploadSet(known) {
-		flow.mode, flow.uploads = catDownloadModeUploads, known
-		choices := make([]appui.DownloadChoice, 0, len(known))
-		for _, upload := range known {
-			choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
-		}
-		model.SetChoices("Choose file to download", choices)
+		flow.chooseUpload(model, known, setAside)
 		return
 	}
 	if len(known) == 1 {
@@ -363,12 +379,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 			flow.plan = flow.planForUploads(known)
 			return
 		}
-		flow.mode, flow.uploads = catDownloadModeUploads, known
-		choices := make([]appui.DownloadChoice, 0, len(known))
-		for _, upload := range known {
-			choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
-		}
-		model.SetChoices("Choose file to download", choices)
+		flow.chooseUpload(model, known, setAside)
 		return
 	}
 	flow.mode, flow.uploads = catDownloadModeFormats, unknown
@@ -379,6 +390,46 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		})
 	}
 	model.SetChoices("Choose file and format", choices)
+}
+
+// chooseUpload lists uploads for you to pick from. hidden files wait behind
+// a last "Show all files" row.
+func (flow *CatDownloadFlow) chooseUpload(model *appui.DownloadSelectModel, uploads, hidden []roms.Upload) {
+	flow.mode, flow.uploads, flow.hidden = catDownloadModeUploads, uploads, hidden
+	choices := make([]appui.DownloadChoice, 0, len(uploads)+1)
+	for _, upload := range uploads {
+		choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
+	}
+	if len(hidden) > 0 {
+		choices = append(choices, appui.DownloadChoice{Title: "Show all files", Detail: fmt.Sprintf("%d more", len(hidden))})
+	}
+	model.SetChoices("Choose file to download", choices)
+}
+
+// setAside reports whether upload is a desktop or web build that is not a
+// ROM itself. A file with a ROM extension is kept even when its author
+// tagged it with a platform.
+func setAside(upload roms.Upload) bool {
+	return upload.DesktopOrWeb && (upload.NeedsFormat || isArchive(upload.Filename))
+}
+
+// splitSetAside separates set-aside builds from the other uploads, keeping
+// the listing order of each.
+func splitSetAside(uploads []roms.Upload) (kept, aside []roms.Upload) {
+	for _, upload := range uploads {
+		if setAside(upload) {
+			aside = append(aside, upload)
+		} else {
+			kept = append(kept, upload)
+		}
+	}
+	return kept, aside
+}
+
+// setAsideLast moves set-aside builds to the end, keeping the listing order.
+func setAsideLast(uploads []roms.Upload) []roms.Upload {
+	kept, aside := splitSetAside(uploads)
+	return append(kept, aside...)
 }
 
 func isPairedPSXUploadSet(uploads []roms.Upload) bool {
