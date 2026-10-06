@@ -107,6 +107,17 @@ func TestFinal429IsTypedOnEveryDownloadPath(t *testing.T) {
 	})
 }
 
+// The details page reports a lasting 429 as rate limiting too, so the
+// details screen can say so instead of showing "HTTP 429".
+func TestFetchGameDetailFinal429IsTyped(t *testing.T) {
+	srv, count := rateLimitedServer(t, "/game")
+	_, err := newClockedClient(srv, newFakeClock()).FetchGameDetail(srv.URL + "/game")
+	assertRateLimitedForScreen(t, err)
+	if count.Load() != 1+rateLimitMaxRetries {
+		t.Fatalf("detail page requests = %d, want 1 plus %d replays", count.Load(), rateLimitMaxRetries)
+	}
+}
+
 // A non-200 answer to the download_url POST is reported by status instead of
 // as a JSON decoding failure.
 func TestFetchUploadsChecksDownloadURLStatusBeforeDecoding(t *testing.T) {

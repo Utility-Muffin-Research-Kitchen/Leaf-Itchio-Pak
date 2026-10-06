@@ -60,6 +60,9 @@ func (c *Client) FetchGameDetail(gameURL string) (*GameDetail, error) {
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		return nil, fmt.Errorf("fetch game detail: %w", ErrGameRemoved)
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("game: detail page", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("game: detail page HTTP %d for %s", resp.StatusCode, gameURL)
 		return nil, fmt.Errorf("fetch game detail: HTTP %d", resp.StatusCode)
