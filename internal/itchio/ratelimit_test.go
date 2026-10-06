@@ -211,16 +211,54 @@ func TestRateLimitBackoffDoublesAndCaps(t *testing.T) {
 	}
 }
 
-func TestRateLimitJitterNeverExceedsTheCap(t *testing.T) {
+// recordWakes makes every cooldown wait record its wake time and give up, so
+// several waiters can be compared at one instant.
+func recordWakes(limiter *rateLimitTransport) *[]time.Time {
+	var wakes []time.Time
+	limiter.sleepUntil = func(_ context.Context, wake time.Time) error {
+		wakes = append(wakes, wake)
+		return context.Canceled
+	}
+	return &wakes
+}
+
+// Each waiter adds its own jitter after the shared cooldown, so requests
+// queued on one host do not all wake at the same instant.
+func TestRateLimitJitterIsPerWaiter(t *testing.T) {
+	clock := newFakeClock()
+	limiter := newTestLimiter(newScripted(nil), clock)
+	calls := 0
+	limiter.jitter = func(time.Duration) time.Duration {
+		calls++
+		return time.Duration(calls) * 100 * time.Millisecond
+	}
+	limiter.record429("itch.io", "")
+	until := limiter.hosts["itch.io"].notBefore
+	if delay := until.Sub(clock.Now()); delay != rateLimitBaseDelay {
+		t.Fatalf("shared cooldown = %v, want %v without jitter", delay, rateLimitBaseDelay)
+	}
+	wakes := recordWakes(limiter)
+	for range 2 {
+		limiter.waitTurn(context.Background(), "itch.io")
+	}
+	if len(*wakes) != 2 || !(*wakes)[0].After(until) || !(*wakes)[1].After((*wakes)[0]) {
+		t.Fatalf("wakes %v after a cooldown until %v; want two distinct times after it", *wakes, until)
+	}
+}
+
+func TestRateLimitJitterStaysWithinAFifthOfTheWait(t *testing.T) {
 	limiter := newRateLimitTransport(newScripted(nil))
 	now := time.Now()
 	limiter.now = func() time.Time { return now }
-	limiter.hosts["itch.io"] = &hostCooldown{strikes: 20}
+	limiter.record429("itch.io", "60")
+	until := limiter.hosts["itch.io"].notBefore
+	wakes := recordWakes(limiter)
 	for range 50 {
-		limiter.hosts["itch.io"].notBefore = time.Time{}
-		limiter.record429("itch.io", "")
-		if delay := limiter.hosts["itch.io"].notBefore.Sub(now); delay > rateLimitMaxDelay || delay < rateLimitMaxDelay/2 {
-			t.Fatalf("delay = %v, want within the cap", delay)
+		limiter.waitTurn(context.Background(), "itch.io")
+	}
+	for _, wake := range *wakes {
+		if wake.Before(until) || wake.Sub(until) > rateLimitMaxDelay/5 {
+			t.Fatalf("wake %v after the cooldown, want within a fifth of %v", wake.Sub(until), rateLimitMaxDelay)
 		}
 	}
 }

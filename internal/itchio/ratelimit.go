@@ -23,6 +23,7 @@ const (
 	rateLimitBaseDelay = 2 * time.Second
 	// rateLimitMaxDelay caps every single cooldown, whether computed or
 	// requested by the server, so a hostile header cannot stall the app.
+	// Each waiter adds its own jitter on top, up to a fifth of its wait.
 	rateLimitMaxDelay = 60 * time.Second
 	// rateLimitMaxRetries is how often the transport replays one bodyless
 	// GET/HEAD after a 429 before handing the 429 back to the caller.
@@ -68,7 +69,7 @@ func newRateLimitTransport(wrapped http.RoundTripper) *rateLimitTransport {
 			return waitForRetry(ctx, time.Until(wake))
 		},
 		jitter: func(d time.Duration) time.Duration {
-			// Up to +20% so parallel requests do not all return at once.
+			// Up to +20% of one waiter's wait.
 			return time.Duration(rand.Int64N(int64(d)/5 + 1))
 		},
 	}
@@ -104,10 +105,11 @@ func (t *rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 }
 
-// waitTurn blocks until host's cooldown has passed. It fails at once, without
-// sleeping, when the request's deadline or the refresh budget would run out
-// first. A cooldown extended by a concurrent 429 while this request slept is
-// waited out too.
+// waitTurn blocks until host's cooldown has passed, plus this waiter's own
+// jitter so requests queued on one host do not all wake at the same instant.
+// It fails at once, without sleeping, when the request's deadline or the
+// refresh budget would run out first. A cooldown extended by a concurrent 429
+// while this request slept is waited out too.
 func (t *rateLimitTransport) waitTurn(ctx context.Context, host string) error {
 	for {
 		t.mu.Lock()
@@ -121,16 +123,22 @@ func (t *rateLimitTransport) waitTurn(ctx context.Context, host string) error {
 		if !until.After(now) {
 			return nil
 		}
-		if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
-			logger.Warn("ratelimit: %s cooling down for %s, past this request's deadline; not sent", host, until.Sub(now).Round(time.Second))
-			return &RateLimitedError{Host: host}
+		wake := until.Add(t.jitter(until.Sub(now)))
+		if deadline, ok := ctx.Deadline(); ok {
+			if deadline.Before(until) {
+				logger.Warn("ratelimit: %s cooling down for %s, past this request's deadline; not sent", host, until.Sub(now).Round(time.Second))
+				return &RateLimitedError{Host: host}
+			}
+			if deadline.Before(wake) {
+				wake = until
+			}
 		}
 		if budget := cooldownBudgetFrom(ctx); budget != nil && !budget.charge(now, until) {
 			logger.Warn("ratelimit: %s cooldown exceeds the remaining refresh budget; not sent", host)
 			return &RateLimitedError{Host: host}
 		}
-		logger.Debug("ratelimit: waiting %s for %s cooldown", until.Sub(now).Round(time.Millisecond), host)
-		if err := t.sleepUntil(ctx, until); err != nil {
+		logger.Debug("ratelimit: waiting %s for %s cooldown", wake.Sub(now).Round(time.Millisecond), host)
+		if err := t.sleepUntil(ctx, wake); err != nil {
 			return err
 		}
 	}
@@ -170,7 +178,6 @@ func (t *rateLimitTransport) record429(host, retryAfter string) {
 		if shift := cooldown.strikes - 1; shift < 8 {
 			delay = min(rateLimitBaseDelay<<shift, rateLimitMaxDelay)
 		}
-		delay = min(delay+t.jitter(delay), rateLimitMaxDelay)
 		source = "backoff, strike " + strconv.Itoa(cooldown.strikes)
 	}
 	if until := now.Add(delay); until.After(cooldown.notBefore) {
