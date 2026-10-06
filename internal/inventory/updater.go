@@ -19,9 +19,18 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
+// automaticCheckInterval is how long a launch or an account change trusts an
+// entry's last check. Update Inventory checks every entry regardless.
+const automaticCheckInterval = 6 * time.Hour
+
+// backgroundRequestInterval spaces the requests of one check, so a scan of
+// a large inventory does not trip itch.io's rate limit, whose cooldown also
+// delays the requests you make in the foreground.
+var backgroundRequestInterval = time.Second
+
 // UpdateService checks each inventory entry for missing cover art, removed
-// games, and new upstream files. It runs once at startup and re-runs each time
-// TriggerNow is called.
+// games, and new upstream files. It runs once at startup, again for each
+// TriggerNow or CheckAllNow, and waits while a download runs.
 type UpdateService struct {
 	inv            *Inventory
 	inventoryPath  string
@@ -34,6 +43,35 @@ type UpdateService struct {
 	sources        leaf.SourceList
 	scanLibrary    func() (string, error)
 	artworkChanged bool
+
+	mu        sync.Mutex
+	queued    checkRequest // what the next run checks
+	downloads int          // downloads running; checks wait for zero
+
+	requestInterval time.Duration
+	lastRequest     time.Time // owned by the running check
+}
+
+// checkRequest selects the entries one run checks.
+type checkRequest struct {
+	all       bool            // Update Inventory: every entry
+	automatic bool            // launch or account change: entries not checked recently
+	games     map[string]bool // re-check these games after an install
+}
+
+func (request checkRequest) empty() bool {
+	return !request.all && !request.automatic && len(request.games) == 0
+}
+
+func (request *checkRequest) merge(other checkRequest) {
+	request.all = request.all || other.all
+	request.automatic = request.automatic || other.automatic
+	for game := range other.games {
+		if request.games == nil {
+			request.games = make(map[string]bool)
+		}
+		request.games[game] = true
+	}
 }
 
 func (s *UpdateService) SetSources(sources leaf.SourceList) {
@@ -51,40 +89,43 @@ func (s *UpdateService) SetLibraryScanRequester(request func() (string, error)) 
 // caller without importing SDL here.
 func NewUpdateService(inv *Inventory, inventoryPath string, client *itchio.Client, notify func()) *UpdateService {
 	return &UpdateService{
-		inv:           inv,
-		inventoryPath: inventoryPath,
-		client:        client,
-		notify:        notify,
-		triggerCh:     make(chan struct{}, 1),
-		stopCh:        make(chan struct{}),
+		inv:             inv,
+		inventoryPath:   inventoryPath,
+		client:          client,
+		notify:          notify,
+		triggerCh:       make(chan struct{}, 1),
+		stopCh:          make(chan struct{}),
+		requestInterval: backgroundRequestInterval,
 	}
 }
 
-// Start launches the background goroutine and runs the first check immediately.
-// onDone is called after the first check completes (for tests; may be nil).
+// Start launches the background goroutine and runs the launch check
+// immediately. onDone is called after each run (for tests; may be nil).
 func (s *UpdateService) Start(onDone func()) {
+	s.mu.Lock()
+	s.queued.merge(checkRequest{automatic: true})
+	s.mu.Unlock()
 	go func() {
-		s.running.Store(true)
-		s.runCheck()
-		s.running.Store(false)
-		if onDone != nil {
-			onDone()
+		run := func() {
+			request := s.takeRequest()
+			if request.empty() {
+				return
+			}
+			s.running.Store(true)
+			s.runCheck(request)
+			s.running.Store(false)
+			if onDone != nil {
+				onDone()
+			}
+			if s.notify != nil {
+				s.notify()
+			}
 		}
-		if s.notify != nil {
-			s.notify()
-		}
+		run()
 		for {
 			select {
 			case <-s.triggerCh:
-				s.running.Store(true)
-				s.runCheck()
-				s.running.Store(false)
-				if onDone != nil {
-					onDone()
-				}
-				if s.notify != nil {
-					s.notify()
-				}
+				run()
 			case <-s.stopCh:
 				return
 			}
@@ -92,19 +133,121 @@ func (s *UpdateService) Start(onDone func()) {
 	}()
 }
 
+func (s *UpdateService) takeRequest() checkRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request := s.queued
+	s.queued = checkRequest{}
+	return request
+}
+
+// request queues a check, which starts once no download is running.
+func (s *UpdateService) request(request checkRequest) {
+	s.mu.Lock()
+	s.queued.merge(request)
+	downloading := s.downloads > 0
+	s.mu.Unlock()
+	if !downloading {
+		s.signal()
+	}
+}
+
+func (s *UpdateService) signal() {
+	select {
+	case s.triggerCh <- struct{}{}:
+	default:
+		logger.Debug("update-svc: trigger ignored (check already queued)")
+	}
+}
+
+// DownloadStarted pauses background checks until the returned function is
+// called, once the download has finished, failed, or been cancelled. A check
+// queued meanwhile runs then. Calling the function again does nothing.
+func (s *UpdateService) DownloadStarted() (finished func()) {
+	s.mu.Lock()
+	s.downloads++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			s.downloads--
+			resume := s.downloads == 0 && !s.queued.empty()
+			s.mu.Unlock()
+			if resume {
+				s.signal()
+			}
+		})
+	}
+}
+
+// deferIfDownloading queues request for after the running downloads and
+// reports whether it did.
+func (s *UpdateService) deferIfDownloading(request checkRequest) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.downloads == 0 {
+		return false
+	}
+	s.queued.merge(request)
+	return true
+}
+
+// pace waits until the next background request may start. It reports false
+// when the service stops meanwhile.
+func (s *UpdateService) pace() bool {
+	if s.requestInterval > 0 && !s.lastRequest.IsZero() {
+		if wait := time.Until(s.lastRequest.Add(s.requestInterval)); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-s.stopCh:
+				timer.Stop()
+				return false
+			}
+		}
+	}
+	s.lastRequest = time.Now()
+	return true
+}
+
+// due reports whether request covers entry. An automatic check skips an
+// entry checked in the last six hours, unless signing in or out since then
+// made the other source available.
+func (request checkRequest) due(gameURL string, entry Entry, signedIn bool, now time.Time) bool {
+	if request.all || request.games[gameURL] {
+		return true
+	}
+	if !request.automatic {
+		return false
+	}
+	age := now.Sub(entry.UpdateCheckedAt)
+	if entry.UpdateCheckedAt.IsZero() || age < 0 || age >= automaticCheckInterval {
+		return true
+	}
+	if signedIn {
+		return entry.GameID != "" && entry.UpstreamSource != SourceAPI
+	}
+	return entry.UpstreamSource == SourceAPI
+}
+
 // Stop signals the goroutine to exit. Idempotent — safe to call multiple times.
 func (s *UpdateService) Stop() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 }
 
-// TriggerNow queues a re-check. Non-blocking; a pending check absorbs the signal.
+// TriggerNow queues an automatic check, as after an account change: entries
+// checked in the last six hours are skipped. Non-blocking.
 func (s *UpdateService) TriggerNow() {
-	select {
-	case s.triggerCh <- struct{}{}:
-		logger.Info("update-svc: manual check triggered")
-	default:
-		logger.Debug("update-svc: trigger ignored (check already queued)")
-	}
+	logger.Info("update-svc: automatic check queued")
+	s.request(checkRequest{automatic: true})
+}
+
+// CheckAllNow queues a check of every entry, for Update Inventory.
+// Non-blocking.
+func (s *UpdateService) CheckAllNow() {
+	logger.Info("update-svc: full check queued")
+	s.request(checkRequest{all: true})
 }
 
 // IsRunning reports whether runCheck is currently executing.
@@ -117,12 +260,18 @@ func (s *UpdateService) LatestCheckedAt() time.Time {
 	return s.inv.LatestCheckedAt()
 }
 
-func (s *UpdateService) runCheck() {
+func (s *UpdateService) runCheck(request checkRequest) {
+	if s.deferIfDownloading(request) {
+		logger.Info("update-svc: check waits for the running download")
+		return
+	}
 	s.artworkChanged = false
 	s.inv.VerifyAndCleanWithSources(s.inventoryPath, s.sources)
 
 	urls := s.inv.AllURLs()
 	token, generation := s.client.AuthSnapshot()
+	now := time.Now()
+	var dueURLs []string
 	gameIDs := make(map[string]string, len(urls))
 	canCheck := true
 	skipped := make(map[string]bool)
@@ -130,12 +279,19 @@ func (s *UpdateService) runCheck() {
 	for _, gameURL := range urls {
 		s.repairCoverArt(gameURL)
 		entry, ok := s.inv.Lookup(gameURL)
-		if !ok || token == "" {
+		if !ok || !request.due(gameURL, entry, token != "", now) {
+			continue
+		}
+		dueURLs = append(dueURLs, gameURL)
+		if token == "" {
 			continue
 		}
 		id := entry.GameID
 		if id == "" {
 			// A stable stored ID avoids fetching data.json on every launch.
+			if !s.pace() {
+				return
+			}
 			data, err := s.client.FetchGameData(gameURL)
 			if err != nil && !isGameRemoved(err) {
 				logger.Warn("update-svc: game metadata unavailable: %v", err)
@@ -164,6 +320,9 @@ func (s *UpdateService) runCheck() {
 	// download. Ownership keys are held only for this check and never saved.
 	var keys map[string]string
 	if canCheck && token != "" && len(ids) > 0 {
+		if !s.pace() {
+			return
+		}
 		var err error
 		keys, err = s.client.OwnedKeysForGames(token, ids)
 		if err != nil {
@@ -175,10 +334,16 @@ func (s *UpdateService) runCheck() {
 			}
 		}
 	}
-	logger.Info("update-svc: checking %d inventory entries (signed in: %v)", len(urls), token != "")
-	pending := make(map[string]upstreamResult, len(urls))
-	for _, gameURL := range urls {
+	logger.Info("update-svc: checking %d of %d inventory entries (signed in: %v)", len(dueURLs), len(urls), token != "")
+	pending := make(map[string]upstreamResult, len(dueURLs))
+	for index, gameURL := range dueURLs {
 		if !canCheck || s.client.AuthGeneration() != generation {
+			break
+		}
+		// A download that started meanwhile gets the connection; the rest
+		// of this check runs after it.
+		if s.deferIfDownloading(checkRequest{games: setOf(dueURLs[index:])}) {
+			logger.Info("update-svc: %d entries wait for the running download", len(dueURLs)-index)
 			break
 		}
 		if skipped[gameURL] {
@@ -193,6 +358,9 @@ func (s *UpdateService) runCheck() {
 			result.installed = entry.Files
 			pending[gameURL] = result
 		} else {
+			if errors.Is(err, errUpdateStopped) {
+				return
+			}
 			logger.Warn("update-svc: check failed for %s: %v", gameURL, err)
 			if errors.Is(err, itchio.ErrRateLimited) {
 				break
@@ -201,7 +369,7 @@ func (s *UpdateService) runCheck() {
 	}
 	// Discard results even after A -> B -> A account changes; comparing tokens
 	// alone would allow the first account's stale scan to publish.
-	staleInstall := false
+	staleInstall := make(map[string]bool)
 	applied := s.client.ApplyIfAuthGeneration(generation, func() {
 		s.inv.mu.Lock()
 		defer s.inv.mu.Unlock()
@@ -213,7 +381,7 @@ func (s *UpdateService) runCheck() {
 			// A foreground install can finish while this listing is in flight.
 			// Do not compare its newer version against an older server snapshot.
 			if !slices.Equal(entry.Files, result.installed) {
-				staleInstall = true
+				staleInstall[gameURL] = true
 				continue
 			}
 			if result.removed {
@@ -230,9 +398,13 @@ func (s *UpdateService) runCheck() {
 			}
 		}
 	})
-	if !applied || staleInstall {
-		logger.Debug("update-svc: check changed during a sign-in or install; scheduling fresh metadata")
-		s.TriggerNow()
+	if !applied {
+		logger.Debug("update-svc: account changed during the check; scheduling fresh metadata")
+		s.request(request)
+	} else if len(staleInstall) > 0 {
+		// Re-check only the installed games, once their install is done.
+		logger.Debug("update-svc: %d game(s) changed during an install; re-checking them", len(staleInstall))
+		s.request(checkRequest{games: staleInstall})
 	}
 	if err := s.inv.Save(s.inventoryPath); err != nil {
 		logger.Error("update-svc: save: %v", err)
@@ -336,6 +508,16 @@ func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.Artwork
 	return itchio.ArtworkResult{Path: expected, SHA256: actualHash, Created: true}, true
 }
 
+var errUpdateStopped = errors.New("update service stopped")
+
+func setOf(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
 // isGameRemoved reports whether err indicates a 404 or 410 HTTP response.
 func isGameRemoved(err error) bool {
 	return errors.Is(err, itchio.ErrGameRemoved)
@@ -352,6 +534,9 @@ type upstreamResult struct {
 // resolves a CDN URL, or starts the browser download_url handshake.
 func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamResult, error) {
 	if token != "" && gameID != "" {
+		if !s.pace() {
+			return upstreamResult{}, errUpdateStopped
+		}
 		uploads, err := s.client.FetchUploadsForKey(token, gameID, key)
 		if err == nil {
 			files := make([]UpstreamFile, 0, len(uploads))
@@ -377,6 +562,9 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamR
 		} else {
 			logger.Debug("update-svc: API access unavailable, checking public page: %v", err)
 		}
+	}
+	if !s.pace() {
+		return upstreamResult{}, errUpdateStopped
 	}
 	names, err := s.client.FetchPageUploadNames(gameURL)
 	if err != nil {

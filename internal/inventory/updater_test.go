@@ -47,6 +47,12 @@ func minimalPNG() []byte {
 	return buf.Bytes()
 }
 
+// laterLaunch makes the next launch happen more than six hours after the
+// last check, so its automatic check covers the entry again.
+func laterLaunch(inv *inventory.Inventory, gameURL string) {
+	inv.Entries[gameURL].UpdateCheckedAt = time.Now().Add(-7 * time.Hour)
+}
+
 func TestUpdateService_RepairsMissingCoverArt(t *testing.T) {
 	pngData := minimalPNG()
 
@@ -327,6 +333,7 @@ func TestUpdateService_DiffAddsNewFile(t *testing.T) {
 
 	// Developer publishes game-v2.gb.
 	filenames = append(filenames, "game-v2.gb")
+	laterLaunch(inv, srv.URL+"/game")
 
 	// Second check: game-v2.gb appears and is flagged as genuinely new.
 	done2 := make(chan struct{})
@@ -363,6 +370,7 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 		{Filename: "game.gb", UploadID: "100", SeenAt: time.Now().Add(-time.Hour)},
 		{Filename: "game-v2.gb", UploadID: "101", SeenAt: time.Now().Add(-time.Hour)},
 	})
+	laterLaunch(inv, srv.URL+"/game")
 	inv.Save(invPath)
 
 	client := itchio.NewClientWithBase(srv.URL)
@@ -483,6 +491,7 @@ func TestUpdateService_DismissedUpdateDoesNotReappearOnRestart(t *testing.T) {
 
 	// Developer publishes game-v2.gb.
 	filenames = append(filenames, "game-v2.gb")
+	laterLaunch(inv, gameURL)
 
 	// Second check: game-v2.gb detected as genuinely new.
 	done2 := make(chan struct{})
@@ -505,6 +514,7 @@ func TestUpdateService_DismissedUpdateDoesNotReappearOnRestart(t *testing.T) {
 
 	// Simulate app restart: reload inventory from disk, run third check.
 	inv3, _ := inventory.Load(invPath)
+	laterLaunch(inv3, gameURL)
 	done3 := make(chan struct{})
 	svc3 := inventory.NewUpdateService(inv3, invPath, client, nil)
 	svc3.Start(func() { close(done3) })

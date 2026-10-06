@@ -56,12 +56,12 @@ func TestUpdateAPIUsesMetadataForPaidSameNameReplacement(t *testing.T) {
 	client := itchio.NewClientWithBase(srv.URL)
 	client.SetAuthToken("TEST_TOKEN")
 	svc := NewUpdateService(inv, path, client, nil)
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if inv.HasPendingUpdates(url) {
 		t.Fatal("first API check invented an update")
 	}
 	build++
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if pending := inv.PendingUpdateFiles(url); len(pending) != 1 || pending[0].Fingerprint != "build:2" || !pending[0].Changed {
 		t.Fatalf("replacement detection = %+v", pending)
 	}
@@ -113,7 +113,7 @@ func TestUpdateFallbackPreservesKnownFilesAndRemovalSemantics(t *testing.T) {
 	client := itchio.NewClientWithBase(srv.URL)
 	client.SetAuthToken("TOKEN")
 	svc := NewUpdateService(inv, path, client, nil)
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	entry, _ := inv.Lookup(url)
 	if inv.IsRemoved(url) || len(entry.KnownUpstreamFiles) != 1 || entry.UpstreamSource != SourceAPI {
 		t.Fatalf("hidden public files were treated as authoritative: %+v", entry)
@@ -121,28 +121,28 @@ func TestUpdateFallbackPreservesKnownFilesAndRemovalSemantics(t *testing.T) {
 	// Without a download key, an empty list may only mean you cannot access
 	// a paid game, such as one that started charging after a free install.
 	status = http.StatusOK
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if inv.IsRemoved(url) {
 		t.Fatal("empty API list without access marked removed")
 	}
 	keys = owned
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if !inv.IsRemoved(url) {
 		t.Fatal("complete empty API list did not mark removed")
 	}
 	keys = notOwned
 	status, body = http.StatusForbidden, `<div class="upload"><strong class="name">replacement.gb</strong></div>`
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if inv.IsRemoved(url) {
 		t.Fatal("superseding upload did not clear removal")
 	}
 	pageStatus = http.StatusNotFound
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if !inv.IsRemoved(url) {
 		t.Fatal("public 404 did not mark removed")
 	}
 	pageStatus = http.StatusServiceUnavailable
-	svc.runCheck()
+	svc.runCheck(checkRequest{all: true})
 	if !inv.IsRemoved(url) {
 		t.Fatal("transient failure cleared removal")
 	}
@@ -171,7 +171,7 @@ func TestUpdateDiscardsResultsAfterAccountRoundTrip(t *testing.T) {
 	client.SetAuthToken("A")
 	svc := NewUpdateService(inv, path, client, nil)
 	done := make(chan struct{})
-	go func() { svc.runCheck(); close(done) }()
+	go func() { svc.runCheck(checkRequest{all: true}); close(done) }()
 	<-entered
 	client.SetAuthToken("B")
 	client.SetAuthToken("A")
@@ -206,7 +206,7 @@ func TestUpdateDoesNotBypassAPIFailures(t *testing.T) {
 				client := itchio.NewClientWithBase(srv.URL)
 				client.HTTPClient().Transport = http.DefaultTransport // deterministic status; transport retries have their own tests
 				client.SetAuthToken("A")
-				NewUpdateService(inv, path, client, nil).runCheck()
+				NewUpdateService(inv, path, client, nil).runCheck(checkRequest{all: true})
 				want := 1
 				if endpoint == "uploads" {
 					want = 2
@@ -245,7 +245,7 @@ func TestUpdateDiscardsListingFetchedBeforeInstallCompletes(t *testing.T) {
 	client.SetAuthToken("A")
 	svc := NewUpdateService(inv, path, client, nil)
 	done := make(chan struct{})
-	go func() { svc.runCheck(); close(done) }()
+	go func() { svc.runCheck(checkRequest{all: true}); close(done) }()
 	<-entered
 	entry, _ := inv.Lookup(url)
 	file := entry.Files[0]
@@ -259,6 +259,49 @@ func TestUpdateDiscardsListingFetchedBeforeInstallCompletes(t *testing.T) {
 	}
 	if len(svc.triggerCh) != 1 {
 		t.Fatal("fresh metadata check was not queued")
+	}
+	if request := svc.takeRequest(); request.all || request.automatic || len(request.games) != 1 || !request.games[url] {
+		t.Fatalf("queued re-check = %+v, want only the installed game", request)
+	}
+}
+
+func TestStaleInstallRecheckWaitsForTheDownload(t *testing.T) {
+	entered, resume := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			fmt.Fprint(w, `{"owned_keys":{}}`)
+		case "/games/42/uploads":
+			close(entered)
+			<-resume
+			fmt.Fprint(w, `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1}]}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	url := srv.URL + "/game"
+	inv, path := updateTestInventory(t, url)
+	client := itchio.NewClientWithBase(srv.URL)
+	client.SetAuthToken("A")
+	svc := NewUpdateService(inv, path, client, nil)
+	done := make(chan struct{})
+	go func() { svc.runCheck(checkRequest{all: true}); close(done) }()
+	<-entered
+	finished := svc.DownloadStarted()
+	entry, _ := inv.Lookup(url)
+	file := entry.Files[0]
+	file.UploadFingerprint = "build:2"
+	inv.Add(url, entry, file)
+	close(resume)
+	<-done
+	if len(svc.triggerCh) != 0 {
+		t.Fatal("re-check was queued while the install was still running")
+	}
+	finished()
+	if len(svc.triggerCh) != 1 {
+		t.Fatal("re-check was not queued after the install")
 	}
 }
 
@@ -286,7 +329,7 @@ func TestEmptyListForGameInstalledFreeIsCheckedOnThePublicPage(t *testing.T) {
 	inv.Entries[url].IsFree = true
 	client := itchio.NewClientWithBase(srv.URL)
 	client.SetAuthToken("TOKEN")
-	NewUpdateService(inv, path, client, nil).runCheck()
+	NewUpdateService(inv, path, client, nil).runCheck(checkRequest{all: true})
 	if inv.IsRemoved(url) || pageRequests != 1 {
 		t.Fatalf("removed=%v after %d public page checks, want kept after one", inv.IsRemoved(url), pageRequests)
 	}

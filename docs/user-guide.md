@@ -128,6 +128,8 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+The app also checks at launch and when you sign in or out, but then skips games
+it checked in the last six hours, and it waits while a download runs.
 When signed in, it also detects files replaced under the same name, including
 paid games you own. A changed upload marks a game only when you installed that
 upload, so a new Windows or soundtrack build of a game you play as a ROM does
