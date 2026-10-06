@@ -211,6 +211,9 @@ func (controller *CatalogController) consumeUpdates() {
 	case games := <-controller.cacheUpdateCh:
 		controller.cachedGames = games
 		controller.cacheReady = true
+		// The only error the list shows is the preview's, and the catalogue
+		// now replaces the preview.
+		controller.err = nil
 		controller.needsRebuild = false
 		controller.rebuildView()
 	default:
@@ -225,9 +228,13 @@ func (controller *CatalogController) consumeUpdates() {
 	case result := <-controller.pageUpdateCh:
 		controller.loading.Store(false)
 		controller.previewGames = result.games
-		controller.err = result.err
-		controller.rebuildView()
-		controller.cursor = 0
+		// A preview that returns after the catalogue is ready is not on
+		// screen, so its error and the cursor reset do not apply.
+		if !controller.cacheReady {
+			controller.err = result.err
+			controller.rebuildView()
+			controller.cursor = 0
+		}
 	default:
 	}
 	if controller.needsRebuild {

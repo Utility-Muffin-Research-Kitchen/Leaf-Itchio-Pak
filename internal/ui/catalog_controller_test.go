@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -259,5 +260,64 @@ func TestCatalogControllerKeepsPreviewUntilCacheHasGames(t *testing.T) {
 	if !controller.cacheReady || model.State != appui.ListReady || len(model.Items) != itchio.PerPage {
 		t.Fatalf("after the first feed merged: ready=%v state %v, %d items; want %d catalogue games",
 			controller.cacheReady, model.State, len(model.Items), itchio.PerPage)
+	}
+}
+
+// A preview page that returns after the catalogue is ready must neither
+// replace the list with its error nor move the selection.
+func TestCatalogControllerIgnoresLatePreviewOnceCatalogueIsReady(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: []itchio.Game{
+			{Title: "One", URL: "https://example.invalid/one"},
+			{Title: "Two", URL: "https://example.invalid/two"},
+			{Title: "Three", URL: "https://example.invalid/three"},
+		},
+		cacheReady: true, pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.rebuildView()
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	model.Cursor = 1
+	if _, ok := controller.CatSelected(model.Cursor); !ok {
+		t.Fatal("row 2 is not selectable")
+	}
+
+	late := []pageResult{
+		{err: errors.New("fetch feed: connection reset")},
+		{games: []itchio.Game{{Title: "Preview", URL: "https://example.invalid/preview"}}},
+	}
+	for _, result := range late {
+		controller.pageUpdateCh <- result
+		controller.SyncCatModel(model)
+		if model.State != appui.ListReady || len(model.Items) != 3 {
+			t.Fatalf("after a late preview (err=%v): state %v, %d items; want the 3 catalogue games",
+				result.err, model.State, len(model.Items))
+		}
+		if controller.cursor != 1 || model.Cursor != 1 {
+			t.Fatalf("after a late preview (err=%v): cursor controller=%d model=%d, want row 2",
+				result.err, controller.cursor, model.Cursor)
+		}
+	}
+}
+
+// A failed preview no longer matters once the catalogue has games to show.
+func TestCatalogControllerCatalogueReplacesPreviewError(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		pageUpdateCh: make(chan pageResult, 1), cacheUpdateCh: make(chan []itchio.Game, 1),
+		ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{err: errors.New("fetch feed: connection reset")}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListError {
+		t.Fatalf("failed preview state = %v, want the error screen", model.State)
+	}
+	controller.cacheUpdateCh <- []itchio.Game{{Title: "Catalogue", URL: "https://example.invalid/catalogue"}}
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 1 {
+		t.Fatalf("after the catalogue arrived: state %v, %d items; want the catalogue game",
+			model.State, len(model.Items))
 	}
 }
