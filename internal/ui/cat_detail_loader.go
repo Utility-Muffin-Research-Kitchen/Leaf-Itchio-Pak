@@ -59,20 +59,7 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 			if data.CoverImage != "" {
 				loader.game.CoverURL = data.CoverImage
 			}
-			switch data.Pricing() {
-			case itchio.PricingFree:
-				model.Game.PriceLabel = "Free"
-			case itchio.PricingNameYourOwnPrice:
-				model.Game.PriceLabel = "Free / name your price"
-				if data.SuggestedPrice != "" {
-					model.Game.PriceLabel = "Free / suggested " + data.SuggestedPrice
-				}
-			case itchio.PricingPaid:
-				model.Game.PriceLabel = data.Price
-				if data.OriginalPrice != "" && data.OriginalPrice != data.Price {
-					model.Game.PriceLabel += " (was " + data.OriginalPrice + ")"
-				}
-			}
+			model.Game.PriceLabel = detailPriceLabel(data)
 		}
 		images := dedupeStrings(append([]string{loader.game.CoverURL}, detail.ScreenshotURLs...))
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
@@ -82,6 +69,36 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 	default:
 		return false
 	}
+}
+
+// detailPriceLabel is the price shown on the detail page. Labels stay short:
+// the subtitle line also carries the author and platform. Ownership is not
+// part of it: DetailGame.PriceText shows "Owned" from the current account.
+func detailPriceLabel(data *itchio.GameData) string {
+	onSale := data.OriginalPrice != "" && data.OriginalPrice != data.Price
+	switch data.Pricing() {
+	case itchio.PricingPaid:
+		switch {
+		case onSale:
+			return data.Price + " (was " + data.OriginalPrice + ")"
+		case data.SuggestedPrice != "":
+			// A suggestion above a non-zero price means you pay at least it.
+			return data.Price + " or more"
+		}
+		return data.Price
+	case itchio.PricingNameYourOwnPrice:
+		switch {
+		case onSale:
+			return "Free (was " + data.OriginalPrice + ")"
+		case data.SuggestedPrice != "":
+			return "Free / suggested " + data.SuggestedPrice
+		}
+		return "Free / name your price"
+	}
+	if onSale {
+		return "Free (was " + data.OriginalPrice + ")"
+	}
+	return "Free"
 }
 
 // Detail returns the fully scraped detail after Sync publishes a ready model.

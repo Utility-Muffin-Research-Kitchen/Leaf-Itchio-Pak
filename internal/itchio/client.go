@@ -264,6 +264,10 @@ type Client struct {
 	purchaseCounts map[int64]int
 	// purchaseCountsPartial marks counts from a scan stopped at the page cap.
 	purchaseCountsPartial bool
+	// prices holds the price fields of every data.json fetched this session,
+	// by the requested game URL, for list badges.
+	pricesMu sync.Mutex
+	prices   map[string]GameData
 }
 
 func NewClient() *Client {

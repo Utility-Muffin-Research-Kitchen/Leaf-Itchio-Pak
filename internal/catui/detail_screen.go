@@ -113,16 +113,17 @@ func (screen *DetailScreen) subtitle() string {
 	if screen.model.Game.Platform != "" {
 		parts = append(parts, screen.model.Game.Platform)
 	}
+	price := screen.model.Game.PriceText()
 	switch {
 	case screen.model.Game.Downloaded:
 		parts = append(parts, "Downloaded")
-		if screen.model.Game.PriceLabel != "" {
-			parts = append(parts, screen.model.Game.PriceLabel)
+		if price != "" {
+			parts = append(parts, price)
 		}
 	case screen.model.BrowserOnly:
 		parts = append(parts, "Browser-only")
-	case screen.model.Game.PriceLabel != "":
-		parts = append(parts, screen.model.Game.PriceLabel)
+	case price != "":
+		parts = append(parts, price)
 	case screen.model.Game.IsFree:
 		parts = append(parts, "Free")
 	default:

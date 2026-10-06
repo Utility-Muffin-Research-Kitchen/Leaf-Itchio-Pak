@@ -146,8 +146,10 @@ are fetched again when needed.
 
 Game details use itch.io's current price and currency when available. A suggested
 contribution still allows a free download. Sale prices show the original amount
-alongside the current price. If that metadata cannot load, you still get the
-available game-page details.
+alongside the current price, a minimum price you may exceed shows as
+"$2.00 or more", and a paid game you own shows **Owned**. Once you open a game,
+the list shows that current price too. If that metadata cannot load, you still
+get the available game-page details.
 
 ## Sign in with itch.io
 

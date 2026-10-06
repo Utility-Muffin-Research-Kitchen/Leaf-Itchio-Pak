@@ -235,3 +235,42 @@ func TestUpgradeFromATypedKeyDropsItsOwnedCache(t *testing.T) {
 		t.Fatalf("the old key's owned cache is still on the card: %v", err)
 	}
 }
+
+func TestListPriceBadgeUsesFetchedGameData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/paid/data.json":
+			w.Write([]byte(`{"id":1,"price":"€4,99"}`))
+		case "/now-free/data.json":
+			w.Write([]byte(`{"id":2,"price":"$0.00"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := itchio.NewClient()
+	for _, path := range []string{"/paid", "/now-free"} {
+		if _, err := client.FetchGameData(srv.URL + path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller := &CatalogController{
+		client: client, cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: []itchio.Game{
+			{Title: "Paid", URL: srv.URL + "/paid", Price: 5},
+			{Title: "Now free", URL: srv.URL + "/now-free", Price: 3},
+			{Title: "Not opened", URL: srv.URL + "/other", Price: 2},
+		},
+		cacheReady: true, ownedURLs: make(map[string]bool),
+	}
+	controller.rebuildView()
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	badges := make(map[string]string)
+	for _, item := range model.Items {
+		badges[item.Title] = item.Badge
+	}
+	if badges["Paid"] != "€4,99" || badges["Now free"] != "Free" || badges["Not opened"] != "$2.00" {
+		t.Fatalf("badges = %v", badges)
+	}
+}

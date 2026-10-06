@@ -106,10 +106,31 @@ func (c *Client) FetchGameDataContext(ctx context.Context, gameURL string) (*Gam
 	if err := json.Unmarshal(body, &data); err != nil || data.ID <= 0 {
 		return nil, fmt.Errorf("invalid game metadata response")
 	}
+	c.rememberPrice(gameURL, data)
 	data.URL = gameURL
 	if canonical, err := url.Parse(data.Links.Self); err == nil && canonical.Host != "" && canonical.User == nil &&
 		(canonical.Scheme == "https" || canonical.Scheme == "http") && canonical.RawQuery == "" && canonical.Fragment == "" {
 		data.URL = canonical.String()
 	}
 	return &data, nil
+}
+
+func (c *Client) rememberPrice(gameURL string, data GameData) {
+	c.pricesMu.Lock()
+	defer c.pricesMu.Unlock()
+	if c.prices == nil {
+		c.prices = make(map[string]GameData)
+	}
+	c.prices[gameURL] = GameData{ID: data.ID, Price: data.Price, SuggestedPrice: data.SuggestedPrice,
+		OriginalPrice: data.OriginalPrice}
+}
+
+// CachedPrice returns the price fields of the last data.json fetched for
+// gameURL this session. They are current, unlike the catalogue feed's USD
+// price, but only exist for games whose details or updates were loaded.
+func (c *Client) CachedPrice(gameURL string) (GameData, bool) {
+	c.pricesMu.Lock()
+	defer c.pricesMu.Unlock()
+	data, ok := c.prices[gameURL]
+	return data, ok
 }

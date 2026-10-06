@@ -43,6 +43,10 @@ capture detail 960 720 1 0
 capture detail 1280 800 0 5
 capture detail-price 960 720 1 0
 capture detail-donation 960 720 1 0
+capture detail-price 960 720 1 2
+capture detail-owned 960 720 1 2
+capture detail-minimum 960 720 1 2
+capture detail-free-sale 960 720 1 2
 capture warning 960 720 1 0
 capture download-select 960 720 1 0
 capture download-select 1280 800 0 5

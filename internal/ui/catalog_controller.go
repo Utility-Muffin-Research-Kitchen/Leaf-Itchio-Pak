@@ -333,7 +333,7 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 	}
 	items := make([]appui.ListItem, 0, len(controller.viewGames))
 	for _, game := range controller.viewGames {
-		badge := "Free"
+		var badge string
 		switch {
 		case controller.inv.HasPendingUpdates(game.URL):
 			badge = "UP"
@@ -343,13 +343,30 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 			badge = "DL"
 		case controller.ownedURLs[game.URL]:
 			badge = "OWNED"
-		case !game.IsFree:
-			badge = "$" + strconv.FormatFloat(game.Price, 'f', 2, 64)
+		default:
+			badge = controller.priceBadge(game)
 		}
 		items = append(items, appui.ListItem{Title: game.Title, Author: game.Author,
 			CoverKey: game.CoverURL, Badge: badge, Tags: append([]string(nil), game.Tags...)})
 	}
 	model.SetItems(items)
+}
+
+// priceBadge prefers the current price from a data.json fetched this
+// session over the catalogue feed's cached USD price.
+func (controller *CatalogController) priceBadge(game itchio.Game) string {
+	if controller.client != nil {
+		if data, ok := controller.client.CachedPrice(game.URL); ok {
+			if data.Pricing() == itchio.PricingPaid {
+				return data.Price
+			}
+			return "Free"
+		}
+	}
+	if game.IsFree {
+		return "Free"
+	}
+	return "$" + strconv.FormatFloat(game.Price, 'f', 2, 64)
 }
 
 func (controller *CatalogController) CatSelected(index int) (itchio.Game, bool) {

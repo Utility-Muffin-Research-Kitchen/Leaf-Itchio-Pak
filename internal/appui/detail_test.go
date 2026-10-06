@@ -61,3 +61,19 @@ func TestDetailManageIntentRequiresDownloadedGame(t *testing.T) {
 		t.Fatalf("not-downloaded X intent = %v, want none", got)
 	}
 }
+
+func TestDetailPriceTextFollowsOwnership(t *testing.T) {
+	game := DetailGame{PriceLabel: "$5.00", Owned: true}
+	if got := game.PriceText(); got != "Owned" {
+		t.Fatalf("owned paid game = %q, want Owned", got)
+	}
+	// Signing out clears Owned at draw time; the price returns.
+	game.Owned = false
+	if got := game.PriceText(); got != "$5.00" {
+		t.Fatalf("after sign-out = %q, want the price", got)
+	}
+	free := DetailGame{PriceLabel: "Free / name your price", Owned: true, IsFree: true}
+	if got := free.PriceText(); got != "Free / name your price" {
+		t.Fatalf("owned free game = %q, want its free label", got)
+	}
+}

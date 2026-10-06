@@ -29,6 +29,16 @@ type DetailGame struct {
 	PriceLabel string
 }
 
+// PriceText is the price on the detail line: "Owned" for a paid game the
+// signed-in account owns, else the current price label. It follows the
+// account at draw time, as the page's action does.
+func (game DetailGame) PriceText() string {
+	if game.Owned && !game.IsFree {
+		return "Owned"
+	}
+	return game.PriceLabel
+}
+
 // NotOwned reports a paid game the signed-in account does not own: it has
 // no Download action, and the page points at the itch.io QR code instead.
 func (game DetailGame) NotOwned() bool {
