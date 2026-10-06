@@ -1011,39 +1011,13 @@ func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadClos
 	return ""
 }
 
-// classifyWithMagic calls ClassifyEntry on baseName; if the extension is
-// unrecognised (KindOther) it reads the first roms.DetectBufSize bytes via
-// open() and retries with magic-byte detection. Returns the resolved
-// FileKind and the (possibly extension-corrected) baseName.
-// This handles archive entries whose filename uses a generic extension such
-// as ".bin" for a Sega Genesis ROM — extension lookup fails but the ROM
-// header signature at 0x100 reliably identifies the format.
-func classifyWithMagic(baseName string, open func() (io.ReadCloser, error)) (roms.FileKind, string) {
-	kind := roms.ClassifyEntry(baseName)
-	if kind != roms.KindOther {
-		return kind, baseName
-	}
-	// Don't promote image files to ROMs via magic-byte detection: a .png
-	// named .png is artwork even if it is 128 px wide.
-	if roms.IsImageExt(strings.ToLower(filepath.Ext(baseName))) {
-		return kind, baseName
-	}
-	rc, err := open()
-	if err != nil {
-		return kind, baseName
-	}
-	buf := make([]byte, roms.DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	rc.Close()
-	detected := roms.DetectPlayableROMExt(buf[:n])
-	if detected == "" {
-		return kind, baseName
-	}
-	if strings.EqualFold(filepath.Ext(baseName), detected) {
-		return roms.KindROM, baseName
-	}
-	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-	return roms.KindROM, stem + detected
+// classifyWithMagic classifies an archive member by name and, when the
+// name does not decide it, by its first bytes; see roms.ClassifyArchiveMember.
+// This handles members whose name uses a generic extension, such as ".bin"
+// for a Mega Drive ROM, and ".md", which is Markdown or a Mega Drive ROM.
+func classifyWithMagic(name string, open func() (io.ReadCloser, error)) (roms.FileKind, string) {
+	kind, classified, _ := roms.ClassifyArchiveMember(name, open)
+	return kind, classified
 }
 
 func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {

@@ -243,23 +243,13 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		if IsInMacOSMetaDir(f.Name) {
 			continue
 		}
-		name := filepath.Base(f.Name)
-		kind := ClassifyEntry(name)
-
-		// For entries the extension-based classifier cannot identify, read the
-		// file header and attempt magic-byte detection. This handles uploads
-		// whose filenames carry no extension or a version-number suffix (e.g.
-		// "soulbound_v1_0" → detected as .p8 from the pico-8 text header).
-		// Skip magic detection for known image extensions: a .png is always
-		// artwork even if it is 128 px wide (e.g. raspi/linux Pico-8 exports).
-		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
-			if detected := classifyByMagic(f); detected != "" {
-				if !strings.EqualFold(filepath.Ext(name), detected) {
-					name = strings.TrimSuffix(name, filepath.Ext(name)) + detected
-				}
-				kind = KindROM
-			}
-		}
+		// Entries the extension cannot identify are classified from their
+		// first bytes. This handles uploads whose filenames carry no
+		// extension or a version-number suffix (e.g. "soulbound_v1_0" is a
+		// .p8 by its pico-8 text header) and ".md", which is Markdown or a
+		// Mega Drive ROM. Known image extensions are never promoted: a .png
+		// is artwork even if it is 128 px wide (raspi/linux Pico-8 exports).
+		kind, name, _ := ClassifyArchiveMember(filepath.Base(f.Name), f.Open)
 
 		m.Entries = append(m.Entries, ZIPEntry{
 			Name:           name,
@@ -289,19 +279,4 @@ func IsImageExt(ext string) bool {
 func IsInMacOSMetaDir(name string) bool {
 	name = filepath.ToSlash(strings.ReplaceAll(name, "\\", "/"))
 	return strings.HasPrefix(name, "__MACOSX/") || strings.Contains(name, "/__MACOSX/")
-}
-
-// classifyByMagic opens a ZIP entry, reads the first DetectBufSize uncompressed
-// bytes, and returns the detected playable ROM extension. Returns "" on any
-// error or when no signature matches. Works for both local and remote ZIPs
-// (remote reads trigger HTTP Range requests via the underlying ReaderAt).
-func classifyByMagic(f *zip.File) string {
-	rc, err := f.Open()
-	if err != nil {
-		return ""
-	}
-	defer rc.Close()
-	buf := make([]byte, DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	return DetectPlayableROMExt(buf[:n])
 }

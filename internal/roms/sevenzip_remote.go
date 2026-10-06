@@ -67,18 +67,9 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 		if strings.HasPrefix(name, "._") {
 			continue // macOS resource-fork stub outside __MACOSX/
 		}
-		kind := ClassifyEntry(name)
-
-		// Magic-byte detection for entries without a recognised extension.
-		// Skip for known image extensions — a .png is always artwork.
-		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
-			if detected := classify7zByMagic(f); detected != "" {
-				if !strings.EqualFold(filepath.Ext(name), detected) {
-					name = strings.TrimSuffix(name, filepath.Ext(name)) + detected
-				}
-				kind = KindROM
-			}
-		}
+		// Classify by extension, or by the first bytes when the name does not
+		// decide it (see ClassifyArchiveMember).
+		kind, name, _ := ClassifyArchiveMember(name, f.Open)
 
 		m.Entries = append(m.Entries, ZIPEntry{
 			Name: name,
@@ -87,17 +78,4 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 		})
 	}
 	return m
-}
-
-// classify7zByMagic reads the first DetectBufSize bytes of a 7z entry and
-// returns the detected playable ROM extension, or "" if unrecognised.
-func classify7zByMagic(f *sevenzip.File) string {
-	rc, err := f.Open()
-	if err != nil {
-		return ""
-	}
-	defer rc.Close()
-	buf := make([]byte, DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	return DetectPlayableROMExt(buf[:n])
 }
