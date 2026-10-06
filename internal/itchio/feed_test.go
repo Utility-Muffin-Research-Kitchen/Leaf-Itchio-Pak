@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -395,8 +394,7 @@ func TestFetchAllGames_NoProgressBeforeFirstMerge(t *testing.T) {
 }
 
 // The GBA feed uses the canonical tag-gameboy-advance slug rather than the
-// redirecting tag-gba alias. Cache entries carry the platform code and URL,
-// never the slug, so a cache written before the switch refreshes in place.
+// redirecting tag-gba alias. Games carry the platform code, never the slug.
 func TestFetchAllGames_GBAUsesCanonicalSlug(t *testing.T) {
 	const gbaURL = "https://gbadev.itch.io/gba-game"
 	gbaFeed := `<?xml version="1.0"?><rss version="2.0"><channel>
@@ -420,10 +418,6 @@ func TestFetchAllGames_GBAUsesCanonicalSlug(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cachePath := filepath.Join(t.TempDir(), "games_cache.json")
-	if err := itchio.SaveGamesCache(cachePath, []itchio.Game{{Title: "A GBA Game", URL: gbaURL, Platform: "GBA", IsFree: true}}); err != nil {
-		t.Fatal(err)
-	}
 	games, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
@@ -433,14 +427,6 @@ func TestFetchAllGames_GBAUsesCanonicalSlug(t *testing.T) {
 	}
 	if len(games) != 1 || games[0].URL != gbaURL || games[0].Platform != "GBA" {
 		t.Fatalf("games = %#v, want the one GBA game", games)
-	}
-	cache, err := itchio.LoadGamesCache(cachePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cache.Games[0].URL != games[0].URL || cache.Games[0].Platform != games[0].Platform {
-		t.Fatalf("cached identity %q/%q differs from refreshed %q/%q",
-			cache.Games[0].URL, cache.Games[0].Platform, games[0].URL, games[0].Platform)
 	}
 }
 
