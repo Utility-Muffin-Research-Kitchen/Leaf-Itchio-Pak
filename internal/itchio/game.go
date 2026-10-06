@@ -2,6 +2,7 @@ package itchio
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -267,9 +268,17 @@ type DownloadPageResult struct {
 // .gb/.gbc uploads found (with UploadID set) plus the page's CSRF token.
 // The CSRF token must be included in the body of the subsequent file resolver POST.
 func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) {
+	return c.parseDownloadPage(context.Background(), pageURL)
+}
+
+func (c *Client) parseDownloadPage(ctx context.Context, pageURL string) (*DownloadPageResult, error) {
 	// The signed URL contains a download key — do not log it.
 	logger.Debug("download-page: fetching signed download page")
-	resp, err := c.http.Get(pageURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build download page request")
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, safeRequestError("fetch download page", err)
 	}

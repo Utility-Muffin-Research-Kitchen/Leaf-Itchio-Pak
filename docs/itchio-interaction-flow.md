@@ -290,6 +290,12 @@ session's UUID, which a session left unused for long (for example while you
 choose a destination) might get, the install opens one new session and asks
 again; later resolutions use the new one. The UUID is never logged or saved.
 
+The download screens own a context (`CatDownloadFlow.Close`,
+`CatArchiveFlow.Close`) that bounds the upload lookup, the purchase listing,
+the format probe and archive inspection, including any wait before a
+rate-limit retry. Pressing B on those screens cancels it, so no request,
+session or resolve outlives the screen.
+
 Each purchase listing starts one install. Its uploads carry the session by
 pointer (`roms.Upload.Install`), which is also the only test for an API
 download, so a free API download without a purchase ID still goes through
