@@ -64,8 +64,9 @@ type ArchiveDownloadWorker struct {
 	// cueTracks holds the lower-case names of the files the archive's
 	// chosen .cue sheets reference; nil when the archive installs none.
 	cueTracks map[string]bool
-	// musicNames maps an archive entry path to its music file name, set by
-	// planMusicNames so same-named tracks from different folders both survive.
+	// musicNames maps an archive entry path to its slash-separated path
+	// inside the game's Music folder, set by planMusicNames so same-named
+	// tracks from different folders both survive.
 	musicNames     map[string]string
 	musicFailed    bool
 	err            error
