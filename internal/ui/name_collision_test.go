@@ -347,22 +347,48 @@ func TestArchiveMusicKeepsPlainNamesWithoutACollision(t *testing.T) {
 }
 
 // Names that differ only by case are one file on FAT32 and have no folder to
-// tell them apart: the later track is skipped, never written over the first.
-func TestArchiveMusicSkipsACaseOnlyDuplicate(t *testing.T) {
+// tell them apart. Every final name is planned in one pass, so the later
+// track is numbered instead of skipped or written over the first (review
+// finding R19-4).
+func TestArchiveMusicNumbersACaseOnlyDuplicate(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"leafbound.zip": zipOf(t, map[string][]byte{"Soundtrack/Theme.ogg": []byte("FIRST"), "Soundtrack/theme.ogg": []byte("SECOND")}),
 		"leafbound.7z":  decode7z(t, musicCaseOnly7z),
 	} {
 		worker, _ := runArchive(t, name, data, &settings.Config{}, false, musicOnly)
 		got := filesIn(t, musicDir(worker))
-		if len(worker.extracted) != 1 || len(worker.skipped) != 1 || len(got) != 1 {
-			t.Fatalf("%s: extracted %v skipped %v folder %v, want one kept and one skipped", name, worker.extracted, worker.skipped, got)
+		if len(worker.extracted) != 2 || len(worker.skipped) != 0 || len(got) != 2 {
+			t.Fatalf("%s: extracted %v skipped %v folder %v, want both tracks", name, worker.extracted, worker.skipped, keys(got))
 		}
-		for file, data := range got {
-			if data != "FIRST" {
-				t.Fatalf("%s: %s = %q, want the first track intact", name, file, data)
-			}
+		if got["Theme.ogg"] != "FIRST" || got["theme (2).ogg"] == "" {
+			t.Fatalf("%s: Music folder = %v, want Theme.ogg first and theme (2).ogg", name, got)
 		}
+	}
+}
+
+// Folders whose names differ only by case become one subfolder on FAT32; the
+// tracks that meet there are numbered too.
+func TestArchiveMusicNumbersTracksInCaseOnlyFolders(t *testing.T) {
+	data := zipOf(t, map[string][]byte{
+		"OST/CD1/01 Theme.ogg": []byte("UPPER"), "OST/cd1/01 Theme.ogg": []byte("LOWER"), "OST/cd2/01 Theme.ogg": []byte("TWO"),
+	})
+	worker, _ := runArchive(t, "leafbound.zip", data, &settings.Config{}, false, musicOnly)
+	got := treeIn(t, musicDir(worker))
+	if len(got) != 3 || len(worker.skipped) != 0 {
+		t.Fatalf("Music folder = %v skipped %v, want all three tracks", treeKeys(got), worker.skipped)
+	}
+}
+
+// The case from the review: a folder track and a plain track that the old
+// "<folder> - <name>" prefix made equal both install.
+func TestArchiveMusicKeepsAFolderTrackAndAPlainTrackOfOneName(t *testing.T) {
+	data := zipOf(t, map[string][]byte{
+		"a/x.ogg": []byte("A"), "b/x.ogg": []byte("B"), "a - x.ogg": []byte("PLAIN"),
+	})
+	worker, _ := runArchive(t, "leafbound.zip", data, &settings.Config{}, false, musicOnly)
+	got := treeIn(t, musicDir(worker))
+	if len(got) != 3 || got["a - x.ogg"] != "PLAIN" || got["a/x.ogg"] != "A" || got["b/x.ogg"] != "B" {
+		t.Fatalf("Music folder = %v skipped %v", got, worker.skipped)
 	}
 }
 

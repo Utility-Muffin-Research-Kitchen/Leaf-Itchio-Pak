@@ -744,8 +744,6 @@ func musicFolder(dirs []string) string {
 // so each disc stays together and Disco Boy, which sorts by full path,
 // plays it in order. Leading folders all of them share ("Soundtrack/") are
 // dropped. Deciding up front keeps the layout independent of entry order.
-// Tracks that still meet, such as case-only duplicates in one folder, are
-// caught by the reservations when they are written.
 func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 	s.musicNames = map[string]string{}
 	if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
@@ -804,6 +802,10 @@ func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 			}
 		}
 	}
+	// One reservation pass over every final name: a track that would still
+	// meet an earlier one (names or folders differing only in case) is
+	// numbered, "Theme (2).ogg", instead of skipped.
+	taken := map[string]bool{}
 	for _, t := range tracks {
 		rel := t.name
 		if colliding[t.dir] && t.dir != "." {
@@ -811,6 +813,18 @@ func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
 				rel = folder + "/" + t.name
 			}
 		}
+		if taken[strings.ToLower(rel)] {
+			folder, base := path.Split(rel)
+			ext := filepath.Ext(base)
+			for attempt := 2; attempt <= maxNameAttempts; attempt++ {
+				candidate := fmt.Sprintf("%s%s (%d)%s", folder, strings.TrimSuffix(base, ext), attempt, ext)
+				if !taken[strings.ToLower(candidate)] {
+					rel = candidate
+					break
+				}
+			}
+		}
+		taken[strings.ToLower(rel)] = true
 		s.musicNames[t.entry] = rel
 	}
 }
