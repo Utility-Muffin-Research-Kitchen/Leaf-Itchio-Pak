@@ -162,7 +162,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	if err != nil {
-		s.err = fmt.Errorf("download ZIP: %w", err)
+		s.err = stepError{step: "download ZIP", err: err}
 		s.storeState(zipDLError)
 		return
 	}

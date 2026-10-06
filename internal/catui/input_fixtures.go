@@ -106,7 +106,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-inhibit", "download-cancelled", "archive-inspect":
+	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled", "archive-inspect":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -122,6 +122,9 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "download-error":
 			model.State = appui.DownloadProgressError
 			model.Detail = "The signed download URL expired before the transfer completed. Return to Detail and try again."
+		case "download-stalled":
+			model.State = appui.DownloadProgressError
+			model.Detail = "Download stalled. Check the connection and try again."
 		case "download-inhibit":
 			model.State = appui.DownloadProgressInhibitBlocked
 			model.Detail = "Jawaka is unavailable, so Leaf cannot prevent suspend during this transfer. Continue without protection or cancel."

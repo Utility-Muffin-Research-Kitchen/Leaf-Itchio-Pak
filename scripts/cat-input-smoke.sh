@@ -40,6 +40,8 @@ capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0
 capture download-error 960 720 1 0
+capture download-error 960 720 1 2
+capture download-stalled 960 720 1 2
 capture download-inhibit 960 720 1 0
 capture download-cancelled 960 720 1 0
 capture archive-inspect 960 720 1 0

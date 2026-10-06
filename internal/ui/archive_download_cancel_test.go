@@ -265,3 +265,19 @@ func hasLogLine(logs string, parts ...string) bool {
 	}
 	return false
 }
+
+// The failed step stays in the log; the screen shows only the cause, which
+// starts a sentence.
+func TestArchiveDownloadErrorShowsTheCauseWithoutTheStep(t *testing.T) {
+	f := newArchiveTransfer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	logs := captureLogs(t)
+	worker := f.start()
+	waitFor(t, func() bool { return worker.loadState() != zipDLDownloading })
+	model := worker.CatSnapshot()
+	if model.State != appui.DownloadProgressError || model.Detail == "" || strings.Contains(model.Detail, "download ZIP") {
+		t.Fatalf("snapshot = %v %q, want the cause without the step", model.State, model.Detail)
+	}
+	waitFor(t, func() bool { return hasLogLine(logs.String(), "[WARN]", "download ZIP: "+model.Detail) })
+}

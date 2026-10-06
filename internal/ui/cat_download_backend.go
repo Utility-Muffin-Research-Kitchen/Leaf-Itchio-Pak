@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"errors"
 	"sort"
 	"sync/atomic"
 
@@ -176,6 +177,25 @@ func (s *MultiDownloadWorker) CatLibraryTitleGroups() []leaf.LibraryTitleGroup {
 	return libraryTitleGroups(s.inv, s.game.URL, s.game.Title, s.finalPaths)
 }
 
+// stepError names the step that failed for the log. The screen shows only
+// the cause, so a message such as "Download stalled. ..." reads as a
+// sentence instead of following an internal prefix.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e stepError) Error() string { return e.step + ": " + e.err.Error() }
+func (e stepError) Unwrap() error { return e.err }
+
+func screenError(err error) string {
+	var step stepError
+	if errors.As(err, &step) {
+		return step.err.Error()
+	}
+	return err.Error()
+}
+
 func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	state := s.loadState()
 	model := appui.DownloadProgressModel{
@@ -192,7 +212,7 @@ func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	case zipDLError:
 		model.State = appui.DownloadProgressError
 		if s.err != nil {
-			model.Detail = s.err.Error()
+			model.Detail = screenError(s.err)
 		}
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
