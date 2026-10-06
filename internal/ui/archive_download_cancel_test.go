@@ -5,7 +5,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -163,8 +162,8 @@ func TestArchiveExtractionIsLockedAndIgnoresCancel(t *testing.T) {
 }
 
 // primeCooldown sends one request that the CDN answers with HTTP 429, so the
-// client's shared transport pauses that host. A short deadline makes the
-// transport give up at once instead of waiting the cooldown out.
+// client's shared transport pauses that host. A CDN 429 is not replayed: it
+// comes straight back, and later requests to the host wait out the cooldown.
 func primeCooldown(t *testing.T, client *itchio.Client, rawURL string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -174,12 +173,12 @@ func primeCooldown(t *testing.T, client *itchio.Client, rawURL string) {
 		t.Fatal(err)
 	}
 	resp, err := client.HTTPClient().Do(req)
-	if err == nil {
-		resp.Body.Close()
-		t.Fatalf("priming request answered HTTP %d, want a rate-limit error", resp.StatusCode)
+	if err != nil {
+		t.Fatalf("priming request: %v", err)
 	}
-	if !errors.Is(err, itchio.ErrRateLimited) {
-		t.Fatalf("priming request error = %v, want rate limited", err)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("priming request answered HTTP %d, want 429", resp.StatusCode)
 	}
 }
 
