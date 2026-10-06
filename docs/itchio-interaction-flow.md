@@ -275,7 +275,10 @@ creates the server session lazily on the first resolution and every later
 resolution of that install reuses it, so itch.io counts probes, archive
 inspection, refreshed URLs, and all files as one download. The POST is never
 replayed. If creation fails the install continues without grouping; if the
-operation is cancelled, it stops. The UUID is never logged or saved.
+operation is cancelled, it stops. If a resolve answers 400, 404 or 410 to the
+session's UUID, which a session left unused for long (for example while you
+choose a destination) might get, the install opens one new session and asks
+again; later resolutions use the new one. The UUID is never logged or saved.
 
 Each purchase listing starts one install. Its uploads carry the session by
 pointer (`roms.Upload.Install`), which is also the only test for an API
