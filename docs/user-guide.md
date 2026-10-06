@@ -96,7 +96,9 @@ does not remove the installed ROM; use Leaf's Rescan action if needed.
 | Archives | `.zip`, `.7z` with inspected supported content |
 
 PlayStation support files such as BIN are installed with their descriptor but
-are not indexed as separate games. Descriptor/playlist names are preserved when
+are not indexed as separate games. From an archive that has a CUE sheet, only
+the BIN files the sheet references are installed, so a BIOS image such as
+`openbios.bin` shipped next to the game stays out of your PlayStation folder. Descriptor/playlist names are preserved when
 renaming could break internal references.
 
 ## Dual-SD destinations

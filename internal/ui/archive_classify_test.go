@@ -51,6 +51,9 @@ func TestArchiveOpensEachEntryAtMostOnceToSniffAndOnceToExtract(t *testing.T) {
 		"leafbound.gb":                gbROM("MAIN"),
 		"Soundtrack/cd1/01 Theme.ogg": []byte("ONE"),
 		"Soundtrack/cd2/01 Theme.ogg": []byte("TWO"),
+		"disc/game.cue":               []byte("FILE \"game.bin\" BINARY\n  TRACK 01 MODE2/2352\n"),
+		"disc/game.bin":               []byte("TRACK"),
+		"disc/openbios.bin":           []byte("BIOS"),
 	})
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -83,8 +86,9 @@ func TestArchiveOpensEachEntryAtMostOnceToSniffAndOnceToExtract(t *testing.T) {
 	worker.plan.DownloadROMs = true
 	worker.installEntries(entries, "test")
 
-	if len(worker.extracted) != 5 {
-		t.Fatalf("extracted %v skipped %v, want sonic.md, extra, leafbound.gb and two tracks", worker.extracted, worker.skipped)
+	if len(worker.extracted) != 7 {
+		t.Fatalf("extracted %v skipped %v, want sonic.md, extra, leafbound.gb, two tracks, game.cue and game.bin",
+			worker.extracted, worker.skipped)
 	}
 	for _, entry := range entries {
 		if sniffed[entry.name] > 1 {

@@ -61,6 +61,9 @@ type ArchiveDownloadWorker struct {
 	// romPaths maps an archive entry to where it is extracted, chosen by
 	// planROMNames so no entry lands on another game's file.
 	romPaths map[string]string
+	// cueTracks holds the lower-case names of the files the archive's
+	// chosen .cue sheets reference; nil when the archive installs none.
+	cueTracks map[string]bool
 	// musicNames maps an archive entry path to its music file name, set by
 	// planMusicNames so same-named tracks from different folders both survive.
 	musicNames     map[string]string
@@ -380,10 +383,50 @@ func classifyArchive(entries []archiveEntry) (roms.ZIPManifest, error) {
 			}
 			entry.kind, entry.base = kind, path.Base(name)
 			manifest.Entries[index].Kind, manifest.Entries[index].Name = kind, name
+			if strings.EqualFold(roms.ROMExt(entry.base), ".cue") {
+				entry.cueFiles = readCueFiles(entry.open)
+			}
 		}
 		index++
 	}
 	return manifest, nil
+}
+
+// maxCueBytes bounds how much of a .cue sheet is read for its FILE lines.
+const maxCueBytes = 64 << 10
+
+// readCueFiles returns the base names of the files a .cue sheet references
+// in its FILE lines, such as "Game (Track 1).bin".
+func readCueFiles(open func() (io.ReadCloser, error)) []string {
+	rc, err := open()
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, maxCueBytes))
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 5 || !strings.EqualFold(line[:5], "FILE ") {
+			continue
+		}
+		rest := strings.TrimSpace(line[5:])
+		name := ""
+		if strings.HasPrefix(rest, "\"") {
+			if end := strings.Index(rest[1:], "\""); end >= 0 {
+				name = rest[1 : end+1]
+			}
+		} else if fields := strings.Fields(rest); len(fields) > 0 {
+			name = fields[0]
+		}
+		if name != "" {
+			files = append(files, path.Base(strings.ReplaceAll(name, "\\", "/")))
+		}
+	}
+	return files
 }
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
@@ -545,6 +588,31 @@ func (s *ArchiveDownloadWorker) romDest(baseName string) string {
 	return archiveOutputPath(destDir, safeName)
 }
 
+// planCueTracks records which files the .cue sheets this archive installs
+// reference. When there is one, only those .bin tracks install: a BIOS
+// image such as openbios.bin shipped next to the game is not a track.
+func (s *ArchiveDownloadWorker) planCueTracks(entries []archiveEntry) {
+	s.cueTracks = nil
+	for _, entry := range entries {
+		if !entry.installable() || !strings.EqualFold(roms.ROMExt(entry.base), ".cue") ||
+			!s.shouldExtractROM(entry.classifiedName()) {
+			continue
+		}
+		if s.cueTracks == nil {
+			s.cueTracks = map[string]bool{}
+		}
+		for _, file := range entry.cueFiles {
+			s.cueTracks[strings.ToLower(file)] = true
+		}
+	}
+}
+
+// unusedTrack reports whether entry is a .bin that no installed .cue uses.
+func (s *ArchiveDownloadWorker) unusedTrack(entry archiveEntry) bool {
+	return s.cueTracks != nil && roms.IsPSXSupportExt(roms.ROMExt(entry.base)) &&
+		!s.cueTracks[strings.ToLower(entry.base)]
+}
+
 // plannedROMDest is where planROMNames decided an entry is extracted.
 func (s *ArchiveDownloadWorker) plannedROMDest(entryName, baseName string) string {
 	if dest, ok := s.romPaths[strings.ReplaceAll(entryName, "\\", "/")]; ok {
@@ -564,6 +632,8 @@ type archiveEntry struct {
 
 	kind roms.FileKind
 	base string // file name, with the extension its first bytes confirm
+	// cueFiles lists the base names a .cue member references.
+	cueFiles []string
 }
 
 // classifiedName is the entry's path with the extension classification
@@ -603,6 +673,7 @@ func sevenZipEntries(files []*sevenzip.File) []archiveEntry {
 // installEntries extracts the classified ROM and music entries of a
 // non-Pico-8 archive.
 func (s *ArchiveDownloadWorker) installEntries(entries []archiveEntry, logPrefix string) {
+	s.planCueTracks(entries)
 	s.planROMNames(entries)
 	s.planMusicNames(entries)
 	now := time.Now()
@@ -613,6 +684,10 @@ func (s *ArchiveDownloadWorker) installEntries(entries []archiveEntry, logPrefix
 		switch entry.kind {
 		case roms.KindROM, roms.KindROMSupport:
 			if !s.shouldExtractROM(entry.classifiedName()) {
+				continue
+			}
+			if s.unusedTrack(entry) {
+				logger.Info("%s: not installing %s; no .cue in this archive uses it", logPrefix, entry.base)
 				continue
 			}
 			dest, err := s.extractROMFromOpener(entry.open, int64(entry.size), entry.name, entry.base, now)
@@ -653,7 +728,8 @@ func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
 		if !entry.installable() {
 			continue
 		}
-		if (entry.kind == roms.KindROM || entry.kind == roms.KindROMSupport) && s.shouldExtractROM(entry.classifiedName()) {
+		if (entry.kind == roms.KindROM || entry.kind == roms.KindROMSupport) && s.shouldExtractROM(entry.classifiedName()) &&
+			!s.unusedTrack(entry) {
 			natural := s.romDest(entry.base)
 			key := strings.ToLower(filepath.Clean(natural))
 			dest, planned := owned[key]
