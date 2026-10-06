@@ -194,7 +194,7 @@ func inspectViaRange(client *http.Client, cdnURL string, size int64, onProgress 
 	if err != nil {
 		return ZIPManifest{}, fmt.Errorf("zip.NewReader: %w", err)
 	}
-	return manifestFromZipReader(r), nil
+	return manifestFromZipReader(r)
 }
 
 func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, error) {
@@ -228,10 +228,13 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 		return ZIPManifest{}, fmt.Errorf("zip.OpenReader: %w", err)
 	}
 	defer r.Close()
-	return manifestFromZipReader(&r.Reader), nil
+	return manifestFromZipReader(&r.Reader)
 }
 
-func manifestFromZipReader(r *zip.Reader) ZIPManifest {
+// manifestFromZipReader classifies a ZIP's members. A ".md" member that
+// cannot be read fails the inspection instead of passing as Markdown; the
+// range inspection then falls back to a full download.
+func manifestFromZipReader(r *zip.Reader) (ZIPManifest, error) {
 	var m ZIPManifest
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -249,7 +252,10 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		// .p8 by its pico-8 text header) and ".md", which is Markdown or a
 		// Mega Drive ROM. Known image extensions are never promoted: a .png
 		// is artwork even if it is 128 px wide (raspi/linux Pico-8 exports).
-		kind, name, _ := ClassifyArchiveMember(filepath.Base(f.Name), f.Open)
+		kind, name, err := ClassifyArchiveMember(filepath.Base(f.Name), f.Open)
+		if err != nil {
+			return ZIPManifest{}, fmt.Errorf("read %s: %w", filepath.Base(f.Name), err)
+		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
 			Name:           name,
@@ -258,7 +264,7 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 			CompressedSize: f.CompressedSize64,
 		})
 	}
-	return m
+	return m, nil
 }
 
 // IsImageExt reports whether ext is a common image format extension.

@@ -373,7 +373,11 @@ func classifyArchive(entries []archiveEntry) (roms.ZIPManifest, error) {
 		}
 		entry.kind, entry.base = manifest.Entries[index].Kind, path.Base(entry.name)
 		if entry.installable() {
-			kind, name := classifyWithMagic(entry.name, entry.open)
+			kind, name, err := classifyWithMagic(entry.name, entry.open)
+			if err != nil {
+				// A .md member that cannot be read could be a ROM.
+				return roms.ZIPManifest{}, fmt.Errorf("read %s: %w", path.Base(entry.name), err)
+			}
 			entry.kind, entry.base = kind, path.Base(name)
 			manifest.Entries[index].Kind, manifest.Entries[index].Name = kind, name
 		}
@@ -1015,9 +1019,8 @@ func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadClos
 // name does not decide it, by its first bytes; see roms.ClassifyArchiveMember.
 // This handles members whose name uses a generic extension, such as ".bin"
 // for a Mega Drive ROM, and ".md", which is Markdown or a Mega Drive ROM.
-func classifyWithMagic(name string, open func() (io.ReadCloser, error)) (roms.FileKind, string) {
-	kind, classified, _ := roms.ClassifyArchiveMember(name, open)
-	return kind, classified
+func classifyWithMagic(name string, open func() (io.ReadCloser, error)) (roms.FileKind, string, error) {
+	return roms.ClassifyArchiveMember(name, open)
 }
 
 func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {

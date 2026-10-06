@@ -49,10 +49,12 @@ func InspectRemote7z(client *http.Client, cdnURL string) (ZIPManifest, error) {
 	defer r.Close()
 
 	logger.Debug("7z-inspect: read %d entries", len(r.File))
-	return manifestFrom7zReader(r), nil
+	return manifestFrom7zReader(r)
 }
 
-func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
+// manifestFrom7zReader classifies a 7z's members. A ".md" member that
+// cannot be read fails the inspection instead of passing as Markdown.
+func manifestFrom7zReader(r *sevenzip.ReadCloser) (ZIPManifest, error) {
 	var m ZIPManifest
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -69,7 +71,10 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 		}
 		// Classify by extension, or by the first bytes when the name does not
 		// decide it (see ClassifyArchiveMember).
-		kind, name, _ := ClassifyArchiveMember(name, f.Open)
+		kind, name, err := ClassifyArchiveMember(name, f.Open)
+		if err != nil {
+			return ZIPManifest{}, fmt.Errorf("read %s: %w", name, err)
+		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
 			Name: name,
@@ -77,5 +82,5 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 			Size: f.FileHeader.UncompressedSize,
 		})
 	}
-	return m
+	return m, nil
 }

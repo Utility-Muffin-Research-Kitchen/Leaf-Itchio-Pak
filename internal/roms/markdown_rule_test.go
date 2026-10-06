@@ -83,3 +83,37 @@ func TestInspectRemoteZIPKeepsMegaDriveVariantsAndDropsMarkdown(t *testing.T) {
 		}
 	}
 }
+
+// A failed range read while probing a .md member must not hide a Mega Drive
+// ROM as Markdown. The probe error fails the range inspection, which falls
+// back to a full download (review finding R23-3).
+func TestInspectRemoteZIPRetriesWhenAMarkdownProbeFails(t *testing.T) {
+	sega := make([]byte, 0x200)
+	copy(sega[0x100:], " SEGA MEGA DRIVE")
+	pad := make([]byte, 300*1024)
+	for index := range pad {
+		pad[index] = byte(index*31 + index/7)
+	}
+	// zip entries are written in name order, so a.md starts at offset 0.
+	data := buildTestZIP(t, map[string]string{"a.md": string(sega), "pad.txt": string(pad)})
+	failed := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("Range"), "bytes=0-") {
+			failed++
+			http.Error(w, "flaky", http.StatusBadGateway)
+			return
+		}
+		http.ServeContent(w, r, "game.zip", time.Time{}, bytes.NewReader(data))
+	}))
+	defer srv.Close()
+	manifest, err := roms.InspectRemoteZIP(srv.Client(), srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed == 0 {
+		t.Fatal("the probe never hit the failing range")
+	}
+	if manifest.ROMCount() != 1 {
+		t.Fatalf("manifest = %+v, want a.md as a ROM", manifest)
+	}
+}

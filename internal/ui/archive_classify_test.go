@@ -95,3 +95,19 @@ func TestArchiveOpensEachEntryAtMostOnceToSniffAndOnceToExtract(t *testing.T) {
 		}
 	}
 }
+
+// The downloaded archive is classified the same way: a .md member that
+// cannot be read fails the install rather than being skipped as Markdown
+// (review finding R23-3).
+func TestClassifyArchiveFailsWhenAMarkdownMemberCannotBeRead(t *testing.T) {
+	entries := []archiveEntry{
+		{name: "game/sonic.md", size: 512, open: func() (io.ReadCloser, error) { return nil, io.ErrUnexpectedEOF }},
+		{name: "notes.txt", size: 5, open: func() (io.ReadCloser, error) { return nil, io.ErrClosedPipe }},
+	}
+	if _, err := classifyArchive(entries); err == nil {
+		t.Fatal("an unreadable .md member passed as Markdown")
+	}
+	if _, err := classifyArchive(entries[1:]); err != nil {
+		t.Fatalf("an unreadable non-.md member failed the archive: %v", err)
+	}
+}
