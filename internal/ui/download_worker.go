@@ -156,9 +156,11 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 					CoverURL: game.CoverURL,
 					IsFree:   game.IsFree,
 				}, file)
+				listing, listingSource := installListing(upload)
 				s.inv.CommitUploadInstall(game.URL, inventory.UploadInstall{
 					UploadID: upload.UploadID, Filename: upload.Filename,
 					Fingerprint: upload.UploadFingerprint, Written: []string{finalDest},
+					Listing: listing, ListingSource: listingSource,
 				})
 				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
 					logger.Warn("inventory: save failed: %v", saveErr)
@@ -187,6 +189,26 @@ func (s *DirectDownloadWorker) Cancel() {
 // IsBusy implements BusyChecker. Returns true while a download is in flight.
 func (s *DirectDownloadWorker) IsBusy() bool {
 	return s.loadState() == dlDownloading
+}
+
+// installListing converts the listing an upload was chosen from into the
+// update-check seed for its install.
+func installListing(upload roms.Upload) ([]inventory.UpstreamFile, string) {
+	if upload.Listing == nil {
+		return nil, ""
+	}
+	source := inventory.SourcePage
+	if upload.Listing.API {
+		source = inventory.SourceAPI
+	}
+	files := make([]inventory.UpstreamFile, 0, len(upload.Listing.Uploads))
+	for _, listed := range upload.Listing.Uploads {
+		files = append(files, inventory.UpstreamFile{
+			Filename: listed.Filename, DisplayName: listed.DisplayName, UploadID: listed.UploadID,
+			Fingerprint: listed.Fingerprint, DesktopOrWebOnly: listed.DesktopOrWebOnly,
+		})
+	}
+	return files, source
 }
 
 // downloadGameID is empty for offline/legacy detail views without metadata.

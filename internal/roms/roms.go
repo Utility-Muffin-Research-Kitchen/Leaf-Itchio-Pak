@@ -31,6 +31,23 @@ type Upload struct {
 	// only test for an API download: free API downloads have no purchase ID.
 	// nil means the anonymous web flow.
 	Install *InstallSession
+	// Listing is the list this upload was chosen from, shared by every
+	// upload of that list. The install seeds update checks with it.
+	Listing *UploadListing
+}
+
+// UploadListing records what one upload list offered.
+type UploadListing struct {
+	API     bool // listed by api.itch.io; false for the web download page
+	Uploads []ListedUpload
+}
+
+// ListedUpload is one entry of an UploadListing.
+type ListedUpload struct {
+	Filename, DisplayName, UploadID, Fingerprint string
+	// DesktopOrWebOnly marks an upload that only ships desktop or web
+	// builds; a new one never raises an update badge.
+	DesktopOrWebOnly bool
 }
 
 // ViaAPI reports whether the upload downloads through the itch.io API.

@@ -145,13 +145,39 @@ func (flow *CatDownloadFlow) discover() {
 func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 	uploads, err := flow.client.FetchWebUploadsContext(flow.requestContext(), flow.game.URL)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	listing := webUploadListing(uploads)
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-			UploadID: upload.UploadID, UploadFingerprint: upload.Fingerprint(),
+			UploadID: upload.UploadID, UploadFingerprint: upload.Fingerprint(), Listing: listing,
 		})
 	}
 	return update
+}
+
+// apiUploadListing and webUploadListing record what a listing offered, so
+// the install chosen from it can seed update checks. Web builds are left
+// out, as the update check leaves them out.
+func apiUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(true, uploads)
+}
+
+func webUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(false, uploads)
+}
+
+func uploadListing(api bool, uploads []itchio.Upload) *roms.UploadListing {
+	listing := &roms.UploadListing{API: api, Uploads: make([]roms.ListedUpload, 0, len(uploads))}
+	for _, upload := range uploads {
+		if upload.Type == "html" {
+			continue
+		}
+		listing.Uploads = append(listing.Uploads, roms.ListedUpload{
+			Filename: upload.Filename, DisplayName: upload.DisplayName,
+			UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
+		})
+	}
+	return listing
 }
 
 // fetchFree lists a free or name-your-own-price game through the API when a
@@ -171,11 +197,12 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
 		update := catDownloadUpdate{kind: catDownloadUpdateUploads}
 		install := roms.NewInstallSession(flow.detail.GameID, "")
+		listing := apiUploadListing(uploads)
 		for _, upload := range uploads {
 			update.uploads = append(update.uploads, roms.Upload{
 				Filename: upload.Filename, UploadID: upload.UploadID,
 				UploadFingerprint: upload.Fingerprint(),
-				NeedsFormat:       upload.NeedsFormat, Install: install,
+				NeedsFormat:       upload.NeedsFormat, Install: install, Listing: listing,
 				DesktopOrWeb: upload.DesktopOrWebOnly(),
 			})
 		}
@@ -202,11 +229,15 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, downloadKeyID)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
+	var listing *roms.UploadListing
+	if err == nil {
+		listing = apiUploadListing(uploads)
+	}
 	for _, upload := range uploads {
 		update.uploads = append(update.uploads, roms.Upload{
 			Filename: upload.Filename, UploadID: upload.UploadID,
 			UploadFingerprint: upload.Fingerprint(),
-			NeedsFormat:       upload.NeedsFormat, Install: install,
+			NeedsFormat:       upload.NeedsFormat, Install: install, Listing: listing,
 			DesktopOrWeb: upload.DesktopOrWebOnly(),
 		})
 	}

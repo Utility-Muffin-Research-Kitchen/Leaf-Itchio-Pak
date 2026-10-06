@@ -225,3 +225,44 @@ func TestDirectReinstallAcknowledgesUploadRenamedUnderSameID(t *testing.T) {
 		t.Fatalf("left over files = %v, want the version 1 ROM", entry.LeftoverFiles)
 	}
 }
+
+func TestInstallSeedsUpdateChecksFromItsListing(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	f := newInstallAPI(t, `{"uploads":[{"id":1,"filename":"cart.gb","build_id":1},{"id":2,"filename":"game-windows.zip","build_id":1},{"id":4,"filename":"web.zip","type":"html"}]}`,
+		map[string][]byte{"1": []byte("rom")})
+	flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+	listing := flow.fetchForKey(itchio.OwnedKey{ID: 7})
+	if listing.err != nil {
+		t.Fatal(listing.err)
+	}
+	worker := NewDirectDownloadWorker(flow.client, flow.cfg, flow.game, flow.detail, listing.uploads[0],
+		filepath.Join(primary, "Roms", "GB", "cart.gb"), flow.inv, filepath.Join(t.TempDir(), "inventory.json"))
+	waitFor(t, func() bool { return worker.loadState() != dlDownloading })
+	if worker.CatSnapshot().State != appui.DownloadProgressDone {
+		t.Fatalf("direct download failed: %+v", worker.CatSnapshot())
+	}
+	url := flow.game.URL
+	entry, _ := flow.inv.Lookup(url)
+	if entry.UpstreamSource != inventory.SourceAPI || len(entry.KnownUpstreamFiles) != 2 || flow.inv.HasPendingUpdates(url) {
+		t.Fatalf("seeded entry = %+v, want the listing without its web build", entry)
+	}
+	// The developer replaces the ROM before the first background check.
+	flow.inv.SetUpstreamFilesFrom(url, inventory.SourceAPI, []inventory.UpstreamFile{
+		{Filename: "cart-v2.gb", UploadID: "3", Fingerprint: "build:4"},
+		{Filename: "game-windows.zip", UploadID: "2", Fingerprint: "build:1"},
+	})
+	if pending := flow.inv.PendingUpdateFiles(url); len(pending) != 1 || pending[0].UploadID != "3" {
+		t.Fatalf("first check after the replacement = %+v, want the new ROM", pending)
+	}
+}
+
+func TestWebListingSeedsPageBaseline(t *testing.T) {
+	listing := webUploadListing([]itchio.Upload{{Filename: "cart.gb", UploadID: "1"}})
+	files, source := installListing(roms.Upload{Filename: "cart.gb", UploadID: "1", Listing: listing})
+	if source != inventory.SourcePage || len(files) != 1 || files[0].UploadID != "1" || files[0].Fingerprint != "" {
+		t.Fatalf("web listing seed = %+v from %q", files, source)
+	}
+	if files, source := installListing(roms.Upload{Filename: "cart.gb"}); files != nil || source != "" {
+		t.Fatalf("an upload without a listing seeded %+v from %q", files, source)
+	}
+}

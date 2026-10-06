@@ -397,10 +397,12 @@ func (s *ArchiveDownloadWorker) commitInstall() {
 	if len(s.extracted) == 0 || len(s.skipped) > 0 {
 		return
 	}
+	listing, listingSource := installListing(s.plan.Upload)
 	s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
 		UploadID: s.plan.Upload.UploadID, Filename: s.plan.Upload.Filename,
 		Fingerprint: s.plan.Upload.UploadFingerprint,
 		Written:     append([]string(nil), s.extracted...), Replaces: s.replacesFile,
+		Listing: listing, ListingSource: listingSource,
 	})
 }
 

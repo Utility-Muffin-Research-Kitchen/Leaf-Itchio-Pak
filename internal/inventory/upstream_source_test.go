@@ -392,3 +392,78 @@ func TestReinstallClearsUpdateWhenFilesMoved(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadReplacedBeforeTheFirstCheckShowsUpdate(t *testing.T) {
+	installed := inventory.DownloadedFile{Filename: "cart.gb", OriginalUpload: "cart.gb", UploadID: "1", DestPath: "/leaf/Roms/GB/cart.gb"}
+	install := func(t *testing.T, fingerprint, source string, listing []inventory.UpstreamFile) *inventory.Inventory {
+		t.Helper()
+		inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+		file := installed
+		file.UploadFingerprint = fingerprint
+		inv.Add("game", inventory.Entry{}, file)
+		inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "cart.gb", Fingerprint: fingerprint,
+			Written: []string{file.DestPath}, Listing: listing, ListingSource: source})
+		return inv
+	}
+	signedIn := []inventory.UpstreamFile{
+		{Filename: "cart.gb", UploadID: "1", Fingerprint: "build:1"},
+		{Filename: "game-windows.zip", UploadID: "2", Fingerprint: "build:1"},
+	}
+	anonymous := []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1"}, {Filename: "game-windows.zip", UploadID: "2"}}
+	for _, tc := range []struct {
+		name, fingerprint, source string
+		listing                   []inventory.UpstreamFile
+		next                      inventory.UpstreamFile
+	}{
+		{"new ID with a new name", "build:1", inventory.SourceAPI, signedIn, inventory.UpstreamFile{Filename: "cart-v2.gb", UploadID: "3", Fingerprint: "build:4"}},
+		{"new ID with the same name", "build:1", inventory.SourceAPI, signedIn, inventory.UpstreamFile{Filename: "cart.gb", UploadID: "3", Fingerprint: "build:4"}},
+		{"sign-in after an anonymous install, new name", "", inventory.SourcePage, anonymous, inventory.UpstreamFile{Filename: "cart-v2.gb", UploadID: "3", Fingerprint: "build:4"}},
+		{"sign-in after an anonymous install, same name", "", inventory.SourcePage, anonymous, inventory.UpstreamFile{Filename: "cart.gb", UploadID: "3", Fingerprint: "build:4"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := install(t, tc.fingerprint, tc.source, tc.listing)
+			if inv.HasPendingUpdates("game") {
+				t.Fatalf("install invented an update: %+v", inv.PendingUpdateFiles("game"))
+			}
+			check := []inventory.UpstreamFile{tc.next, {Filename: "game-windows.zip", UploadID: "2", Fingerprint: "build:1"}}
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, check)
+			pending := inv.PendingUpdateFiles("game")
+			if len(pending) != 1 || pending[0].UploadID != "3" {
+				t.Fatalf("first check after the replacement = %+v, want the new upload", pending)
+			}
+			inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, check)
+			if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || pending[0].UploadID != "3" {
+				t.Fatalf("second check = %+v, want the update kept", pending)
+			}
+		})
+	}
+}
+
+func TestSignInWithoutChangesShowsNoUpdate(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "cart.gb", UploadID: "1", DestPath: "/leaf/Roms/GB/cart.gb"})
+	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "cart.gb", Written: []string{"/leaf/Roms/GB/cart.gb"},
+		Listing: []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1"}, {Filename: "bonus.gbc", UploadID: "9"}}, ListingSource: inventory.SourcePage})
+	// Signing in exposes a paid upload of the same kind that the public page
+	// hid. It is not a replacement: the installed upload is still listed.
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{
+		{Filename: "cart.gb", UploadID: "1", Fingerprint: "build:1"}, {Filename: "bonus.gbc", UploadID: "9"},
+		{Filename: "deluxe.gb", UploadID: "10", Fingerprint: "build:1"},
+	})
+	if inv.HasPendingUpdates("game") {
+		t.Fatalf("signing in invented an update: %+v", inv.PendingUpdateFiles("game"))
+	}
+}
+
+func TestSourceSwitchKeepsComparingUploadsMatchedByID(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "cart.gb", UploadID: "1", DestPath: "/leaf/Roms/GB/cart.gb"})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1", Fingerprint: "build:1"}})
+	// Signed out: the public page lists the same name without metadata.
+	inv.SetUpstreamFiles("game", []inventory.UpstreamFile{{Filename: "cart.gb"}})
+	// Signed in again: the same upload now has a new build.
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1", Fingerprint: "build:2"}})
+	if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || !pending[0].Changed {
+		t.Fatalf("new build across a sign-out and sign-in = %+v, want an update", pending)
+	}
+}

@@ -145,6 +145,12 @@ type UploadInstall struct {
 	// install, such as one build picked from an archive, returns false for
 	// files it did not choose. nil means the install replaces every file.
 	Replaces func(DownloadedFile) bool
+	// Listing is the list of uploads the install was chosen from, and
+	// ListingSource where it came from (SourceAPI or SourcePage). When the
+	// game has no update baseline from that source yet, the listing becomes
+	// one, so the first background check compares instead of starting over.
+	Listing       []UpstreamFile
+	ListingSource string
 }
 
 type Inventory struct {
@@ -325,6 +331,10 @@ func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall)
 	e, ok := inv.Entries[gameURL]
 	if !ok {
 		return
+	}
+	if install.ListingSource != "" && install.Listing != nil &&
+		(e.UpdateCheckedAt.IsZero() || e.UpstreamSource != install.ListingSource) {
+		inv.setUpstreamFilesLocked(e, install.ListingSource, install.Listing)
 	}
 	identity := UpstreamFile{Filename: install.Filename, UploadID: install.UploadID}
 	if install.UploadID != "" {
@@ -833,7 +843,11 @@ func (inv *Inventory) SetUpstreamFilesFrom(gameURL, source string, files []Upstr
 }
 
 func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []UpstreamFile) {
-	baseline := e.UpdateCheckedAt.IsZero() || e.UpstreamSource != source
+	// The first listing, or the first from another source, is a baseline:
+	// the sources expose different files and metadata. An upload matched by
+	// ID is the same upload in either, so it is still compared.
+	firstCheck := e.UpdateCheckedAt.IsZero()
+	baseline := firstCheck || e.UpstreamSource != source
 	byID := make(map[string]int, len(e.KnownUpstreamFiles))
 	byName := make(map[string]int, len(e.KnownUpstreamFiles)*2)
 	for index, file := range e.KnownUpstreamFiles {
@@ -863,9 +877,14 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 		return index, ok
 	}
 	matched := make(map[int]bool, len(files))
+	knownByID := make([]bool, len(files))
 	for i := range files {
 		file := &files[i]
-		index, known := byID[file.UploadID]
+		index, known := 0, false
+		if file.UploadID != "" {
+			index, known = byID[file.UploadID]
+			knownByID[i] = known
+		}
 		if !known {
 			index, known = byNameIfGone(file.Filename)
 		}
@@ -881,19 +900,20 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 			if file.UploadID == "" {
 				file.UploadID = prior.UploadID
 			}
+			compare := !firstCheck && (!baseline || knownByID[i])
 			if file.Fingerprint == "" {
 				file.Fingerprint = prior.Fingerprint
-			} else if changed, _ := fingerprintChanged(prior.Fingerprint, file.Fingerprint); !baseline && changed {
+			} else if changed, _ := fingerprintChanged(prior.Fingerprint, file.Fingerprint); compare && changed {
 				file.Changed, file.SeenAt = true, now
 			}
 			if file.UploadID != "" && prior.UploadID != "" && file.UploadID != prior.UploadID {
-				// Keep the replaced ID so its installed files still match.
+				// Upload IDs mean the same in every source, so a replacement
+				// counts even on a baseline. Keep the replaced ID so its
+				// installed files still match.
 				if !slices.Contains(file.PreviousUploadIDs, prior.UploadID) {
 					file.PreviousUploadIDs = append(file.PreviousUploadIDs, prior.UploadID)
 				}
-				if !baseline {
-					file.Changed, file.SeenAt = true, now
-				}
+				file.Changed, file.SeenAt = true, now
 			}
 		} else if !baseline {
 			file.IsNew = true
@@ -928,6 +948,9 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 		}
 
 	}
+	if source == SourceAPI && baseline {
+		markReplacementsOfMissingUploadsLocked(e, files, knownByID, now)
+	}
 	if source == SourcePage {
 		// A public page can hide paid/API uploads. Omission cannot acknowledge
 		// a known update; only an authoritative API list may prune it.
@@ -940,6 +963,57 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 	e.KnownUpstreamFiles = files
 	e.UpstreamSource = source
 	e.UpdateCheckedAt = now
+}
+
+// markReplacementsOfMissingUploadsLocked handles an API baseline, which has
+// no earlier listing to compare: an installed upload missing from the
+// complete list was replaced, so an upload of the same kind that you have
+// not installed and that was not known before is new.
+func markReplacementsOfMissingUploadsLocked(e *Entry, files []UpstreamFile, knownByID []bool, now time.Time) {
+	present := make(map[string]bool, len(files))
+	for _, file := range files {
+		present[file.UploadID] = true
+		for _, id := range file.PreviousUploadIDs {
+			present[id] = true
+		}
+	}
+	missingKinds := make(map[string]bool)
+	for _, installed := range e.Files {
+		if installed.UploadID == "" || present[installed.UploadID] || slices.Contains(e.LeftoverFiles, installed.DestPath) {
+			continue
+		}
+		name := installed.OriginalUpload
+		if name == "" {
+			name = installed.Filename
+		}
+		if kind := uploadKind(name); kind != "" {
+			missingKinds[kind] = true
+		}
+	}
+	if len(missingKinds) == 0 {
+		return
+	}
+	for i := range files {
+		file := &files[i]
+		if knownByID[i] || file.UploadID == "" || !missingKinds[uploadKind(file.Filename)] {
+			continue
+		}
+		installed := slices.ContainsFunc(e.Files, func(installed DownloadedFile) bool { return fileInstalledFrom(installed, *file) })
+		if !installed && !file.IsNew {
+			file.IsNew, file.SeenAt = true, now
+		}
+	}
+}
+
+// uploadKind groups uploads that can replace one another: the same system
+// extension, or any archive for an archive.
+func uploadKind(name string) string {
+	ext := strings.ToLower(romFileExt(name))
+	switch ext {
+	case ".zip", ".7z", ".rar":
+		return "archive"
+	}
+	return ext
 }
 
 // LatestCheckedAt returns the most recent UpdateCheckedAt across all entries,

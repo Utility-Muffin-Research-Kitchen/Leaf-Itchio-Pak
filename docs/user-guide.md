@@ -136,8 +136,9 @@ longer includes, such as renamed tracks, stay where they are: the app never
 deletes them on its own. These checks read metadata without starting a
 download.
 When signed out, it can find newly listed filenames on public pages, but cannot
-verify changed file contents or hidden paid downloads. Switching between these
-sources establishes a new baseline without marking every file as an update.
+verify changed file contents or hidden paid downloads. Signing in or out does
+not mark every file as an update, but an installed upload that was replaced in
+the meantime still shows, even before the first check after you download.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
