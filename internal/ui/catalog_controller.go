@@ -249,7 +249,9 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 	}
 	controller.consumeUpdates()
 	model.Platform = "All platforms"
-	if controller.platformFilter != "" {
+	// The preview page ignores the platform filter, so name it only once
+	// the catalogue applies it.
+	if controller.cacheReady && controller.platformFilter != "" {
 		model.Platform = controller.platformFilter
 	}
 	model.Sort = itchio.SortModeBadge(controller.sortMode)

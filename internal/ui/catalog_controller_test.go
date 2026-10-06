@@ -321,3 +321,30 @@ func TestCatalogControllerCatalogueReplacesPreviewError(t *testing.T) {
 			model.State, len(model.Items))
 	}
 }
+
+// The preview page is unfiltered, so the header must not name a saved
+// platform filter until the catalogue that honours it is ready.
+func TestCatalogControllerHeaderShowsAllPlatformsOnUncachedPreview(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		platformFilter: "PSX", pageUpdateCh: make(chan pageResult, 1),
+		cacheUpdateCh: make(chan []itchio.Game, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "GB Studio Game", URL: "https://example.invalid/gb"},
+	}}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.Platform != "All platforms" || len(model.Items) != 1 {
+		t.Fatalf("preview header = %q with %d items, want All platforms over the unfiltered page",
+			model.Platform, len(model.Items))
+	}
+	controller.cacheUpdateCh <- []itchio.Game{
+		{Title: "PSX Game", URL: "https://example.invalid/psx", Platform: "PSX"},
+		{Title: "GB Game", URL: "https://example.invalid/gb", Platform: "GB"},
+	}
+	controller.SyncCatModel(model)
+	if model.Platform != "PSX" || len(model.Items) != 1 || model.Items[0].Title != "PSX Game" {
+		t.Fatalf("catalogue header = %q with %#v, want PSX over the PSX game", model.Platform, model.Items)
+	}
+}
