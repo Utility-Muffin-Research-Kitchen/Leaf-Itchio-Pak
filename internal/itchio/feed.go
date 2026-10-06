@@ -341,9 +341,11 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 
 // FetchAllGames fetches every page of every platform feed in AllPlatforms in
 // parallel (up to feedConcurrency slugs at a time), deduplicates games by URL
-// across platforms, and returns the merged list. progress is called after each
-// slug completes. If a slug errors, its games are skipped and the error is
-// recorded; partial results from other slugs are always returned.
+// across platforms, and returns the merged list. progress is called with the
+// games merged so far after each slug completes and while slugs are paging,
+// but never before the first game is merged. If a slug errors, its games are
+// skipped and the error is recorded; partial results from other slugs are
+// always returned.
 func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game)) ([]Game, error) {
 	select {
 	case <-ctx.Done():
@@ -409,7 +411,10 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 			for len(pingCh) > 0 {
 				<-pingCh
 			}
-			if progress != nil {
+			// Games join all only when their slug finishes. Until then there
+			// is nothing to report, and an empty snapshot would look like an
+			// empty catalogue.
+			if progress != nil && len(all) > 0 {
 				progress(all)
 			}
 		case r := <-resultCh:

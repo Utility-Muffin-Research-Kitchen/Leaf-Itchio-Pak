@@ -476,6 +476,11 @@ func (controller *CatalogController) buildCache() {
 		if controller.cacheCommitted.Load() {
 			return
 		}
+		// An empty snapshot would replace the preview page with an empty
+		// list and mark the catalogue ready before it has any games.
+		if len(partial) == 0 {
+			return
+		}
 		snapshot := append([]itchio.Game(nil), partial...)
 		select {
 		case controller.cacheUpdateCh <- snapshot:

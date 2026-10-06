@@ -331,6 +331,69 @@ func TestFetchAllGames(t *testing.T) {
 	}
 }
 
+// While the first feed is still paging, nothing has been merged yet. Progress
+// at that point would hand the caller an empty catalogue, which the first
+// launch would show in place of the preview page.
+func TestFetchAllGames_NoProgressBeforeFirstMerge(t *testing.T) {
+	page1, err := os.ReadFile("../../testdata/rss_page1.xml")
+	if err != nil {
+		t.Fatalf("read rss_page1.xml: %v", err)
+	}
+	page2Requested := make(chan struct{})
+	release := make(chan struct{})
+	var requestedOnce, releaseOnce sync.Once
+	releasePage2 := func() { releaseOnce.Do(func() { close(release) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/games/made-with-gb-studio.xml" {
+			switch r.URL.Query().Get("page") {
+			case "1":
+				w.Write(page1)
+				return
+			case "2":
+				requestedOnce.Do(func() { close(page2Requested) })
+				<-release
+			}
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	defer releasePage2()
+
+	var mu sync.Mutex
+	var sizes []int
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), func(partial []itchio.Game) {
+			mu.Lock()
+			sizes = append(sizes, len(partial))
+			mu.Unlock()
+		})
+		done <- err
+	}()
+	select {
+	case <-page2Requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second GB Studio page was never requested")
+	}
+	// Page 1 reported its games before page 2 was requested. Hold page 2 so
+	// the collect loop acts on that report while nothing is merged.
+	time.Sleep(200 * time.Millisecond)
+	releasePage2()
+	if err := <-done; err != nil {
+		t.Fatalf("FetchAllGames: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sizes) == 0 {
+		t.Fatal("no progress after the GB Studio feed merged")
+	}
+	for _, size := range sizes {
+		if size == 0 {
+			t.Fatalf("progress sizes = %v, want no empty snapshot", sizes)
+		}
+	}
+}
+
 // The GBA feed uses the canonical tag-gameboy-advance slug rather than the
 // redirecting tag-gba alias. Cache entries carry the platform code and URL,
 // never the slug, so a cache written before the switch refreshes in place.
