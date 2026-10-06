@@ -238,10 +238,16 @@ purchase and one per bundle that includes it.
 
 **Bundle or individual purchase.** Telling them apart needs the number of
 distinct games per `purchase_id`, which a filtered answer cannot show. The
-startup key validation scans the whole library (no `game_ids`) and caches
-those counts in memory. A filtered answer uses them; on a miss it scans the
-library once more. The counts belong to the current key: replacing or removing
-it clears them, and a scan that started under the old key discards its result.
+labels only matter when a game has several purchases to choose from, so a
+single key never triggers a scan. The startup key validation scans the whole
+library (no `game_ids`) and caches those counts in memory. A filtered answer
+with several keys uses them; on a miss it scans the library once more. A
+failed scan lists the purchases without bundle sizes instead of failing the
+download. A library past the 20-page cap keeps the counts it got, marked
+partial, and is not rescanned for every download. An empty filtered answer
+(a game you do not own) leaves the cache alone. The counts belong to the
+current key: replacing or removing it clears them, and a scan that started
+under the old key discards its result.
 Nothing account-derived is persisted except the owned-game URL cache, which is
 deleted when the key changes.
 
