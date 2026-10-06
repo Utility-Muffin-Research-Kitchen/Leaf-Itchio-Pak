@@ -95,11 +95,16 @@ does not remove the installed ROM; use Leaf's Rescan action if needed.
 | PlayStation | `.cbn`, `.chd`, `.cue`/`.bin`, `.img`, `.iso`, `.mdf`, `.pbp`, `.toc`, `.m3u` |
 | Archives | `.zip`, `.7z` with inspected supported content |
 
+`.md` is also the extension of Markdown text. A `.md` file, inside an archive or
+as its own upload, is installed as a Mega Drive ROM only when it has a Mega
+Drive header or is not plain text, so `README.md` and `LICENSE.md` are left out.
+
 PlayStation support files such as BIN are installed with their descriptor but
 are not indexed as separate games. From an archive that has a CUE sheet, only
 the BIN files the sheet references are installed, so a BIOS image such as
-`openbios.bin` shipped next to the game stays out of your PlayStation folder. Descriptor/playlist names are preserved when
-renaming could break internal references.
+`openbios.bin` shipped next to the game stays out of your PlayStation folder.
+Descriptor/playlist names are preserved when renaming could break internal
+references.
 
 ## Dual-SD destinations
 
@@ -249,6 +254,12 @@ moved or overwritten.
 The picker requires a real mounted filesystem, not merely the stock empty mount
 directory. Reinsert/mount the card and reopen the picker. The app intentionally
 does not guess between arbitrary mounts.
+
+### A README shows up as a Mega Drive game
+
+Earlier versions installed some `README.md` files from archives as Mega Drive
+ROMs, named after the game, such as `Roms/GENESIS/<Title>.md`. Open the game's
+Manage screen and delete that file.
 
 ### A paid/owned game is unavailable
 
