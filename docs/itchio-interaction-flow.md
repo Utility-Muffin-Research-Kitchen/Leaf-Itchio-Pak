@@ -269,6 +269,8 @@ approval code and key are never logged.
 
 Typed API keys are gone: `settings.Load` removes a stored `api_key`, sets
 `legacy_key_removed`, and the app opens Settings once with an explanation.
+Signed out, the catalogue never loads `owned_cache.json` and deletes it, so the
+removed key's OWNED badges and Owned sort go with it.
 
 ---
 

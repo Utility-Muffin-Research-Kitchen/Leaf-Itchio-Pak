@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -89,7 +90,15 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		platformFilter: cfg.PlatformFilter,
 	}
 
-	if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && urls != nil {
+	if !cfg.SignedIn() {
+		// Signed out, an owned-game cache can only be a previous account's,
+		// such as a typed API key that the upgrade removed: drop it.
+		if err := os.Remove(ownedCachePath); err == nil {
+			logger.Info("owned: removed the owned-game cache of a previous sign-in")
+		} else if !os.IsNotExist(err) {
+			logger.Warn("owned: could not remove a stale owned-game cache: %v", err)
+		}
+	} else if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && urls != nil {
 		controller.ownedURLs = make(map[string]bool, len(urls))
 		for _, url := range urls {
 			controller.ownedURLs[url] = true

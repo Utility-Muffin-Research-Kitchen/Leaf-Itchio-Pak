@@ -5,6 +5,7 @@ package ui
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -204,4 +205,33 @@ func TestDetailAccessFollowsTheAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("signed out again", appui.DetailGame{NeedsSignIn: true})
+}
+
+// R21-4: an upgrade from 0.1.0 removes the typed API key, so the app starts
+// signed out. The owned-game cache of that key must not show OWNED badges or
+// fill the Owned sort, and is deleted.
+func TestUpgradeFromATypedKeyDropsItsOwnedCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer srv.Close()
+	dir := t.TempDir()
+	cfgPath, ownedPath := filepath.Join(dir, "config.json"), filepath.Join(dir, "owned_cache.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"api_key":"typed-key-0-1-0","rom_selection":"auto","rom_location":"auto","unified_naming":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := itchio.SaveOwnedCache(ownedPath, []string{"https://dev.itch.io/owned-by-the-old-key"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := settings.Load(cfgPath)
+	if err != nil || cfg.SignedIn() || !cfg.LegacyKeyRemoved {
+		t.Fatalf("loaded config = %+v, %v", cfg, err)
+	}
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	controller := NewCatalogController(itchio.NewClientWithBase(srv.URL), cfg, cfgPath,
+		filepath.Join(dir, "games_cache.json"), inv, filepath.Join(dir, "inventory.json"), nil, ownedPath)
+	if controller.Owned("https://dev.itch.io/owned-by-the-old-key") || controller.ownedKnown() {
+		t.Fatal("the old key's owned games were loaded while signed out")
+	}
+	if _, err := os.Stat(ownedPath); !os.IsNotExist(err) {
+		t.Fatalf("the old key's owned cache is still on the card: %v", err)
+	}
 }
