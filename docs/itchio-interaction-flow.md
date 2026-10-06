@@ -216,8 +216,11 @@ the live token exchange still need a full device sign-in check.
    (S256 of a random 32-byte verifier) and `code_challenge_method=S256`.
    The answer carries `device_code`, `user_code`, `verification_uri`,
    `verification_uri_complete`, `expires_in` and `interval`. The QR code uses
-   the complete URI unchanged. The bare `verification_uri` has no manual
-   code entry. The short `user_code` is shown beside the QR so the user can
+   the complete URI unchanged, and only an HTTPS address on `itch.io` or a
+   subdomain, without credentials or a port, is accepted
+   (`ErrSignInUnavailable` otherwise). The bare `verification_uri` has no
+   manual code entry, so if the QR code cannot be drawn the screen says so and
+   A asks for a new code. The short `user_code` is shown beside the QR so the user can
    match it to the phone's approval page.
 2. `POST /oauth/device/poll` with `client_id` and `device_code`, waiting
    `interval` after each answer. `pending` continues (adopting a new interval),

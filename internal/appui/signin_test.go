@@ -37,3 +37,14 @@ func TestSignInModelRemainingNeverNegative(t *testing.T) {
 		t.Fatal("remaining time is wrong")
 	}
 }
+
+// R21-10: when the QR code cannot be drawn, A asks for a new code.
+func TestSignInModelRetriesWhenTheQRCodeFails(t *testing.T) {
+	model := &SignInModel{State: SignInWaiting, QRFailed: true}
+	if model.Handle(InputEvent{Button: ButtonA, Pressed: true}) != SignInIntentRetry {
+		t.Fatal("A must ask for a new code")
+	}
+	if model.Handle(InputEvent{Button: ButtonB, Pressed: true}) != SignInIntentCancel {
+		t.Fatal("B must still cancel")
+	}
+}

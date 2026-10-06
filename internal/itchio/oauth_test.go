@@ -352,3 +352,34 @@ func TestSignInErrorsAreReportedByCause(t *testing.T) {
 		}
 	}
 }
+
+// R21-10: the QR code may only send the phone to itch.io over HTTPS.
+func TestBeginDeviceLoginRejectsAQRAddressOffItchIO(t *testing.T) {
+	for _, address := range []string{
+		"http://itch.io/user/oauth/device?code=x",
+		"https://evil.example/user/oauth/device?code=x",
+		"https://itch.io.evil.example/user/oauth/device?code=x",
+		"https://user@itch.io/user/oauth/device?code=x",
+		"https://itch.io:8443/user/oauth/device?code=x",
+		"itch.io/user/oauth/device?code=x",
+	} {
+		f := newFakeOAuth(t)
+		f.start = func(w http.ResponseWriter, _ url.Values) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"device_code": "x", "user_code": "ABCD-1234", "verification_uri_complete": address, "expires_in": 600,
+			})
+		}
+		if _, err := f.client().BeginDeviceLogin(context.Background()); !errors.Is(err, ErrSignInUnavailable) {
+			t.Errorf("%s: err = %v, want ErrSignInUnavailable", address, err)
+		}
+	}
+	f := newFakeOAuth(t)
+	f.start = func(w http.ResponseWriter, _ url.Values) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"device_code": "x", "user_code": "ABCD-1234", "verification_uri_complete": "https://www.itch.io/device?code=x", "expires_in": 600,
+		})
+	}
+	if _, err := f.client().BeginDeviceLogin(context.Background()); err != nil {
+		t.Errorf("an itch.io subdomain was refused: %v", err)
+	}
+}

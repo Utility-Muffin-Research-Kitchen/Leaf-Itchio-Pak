@@ -34,6 +34,9 @@ type SignInModel struct {
 	Heading  string
 	Detail   string
 	CanRetry bool
+	// QRFailed is set by the screen when it cannot draw the QR code. itch.io
+	// has no manual code entry, so A then asks for a new code.
+	QRFailed bool
 }
 
 func NewSignInModel() *SignInModel { return &SignInModel{State: SignInStarting} }
@@ -54,6 +57,9 @@ func (m *SignInModel) Handle(event InputEvent) SignInIntent {
 	case SignInStarting, SignInWaiting:
 		if back {
 			return SignInIntentCancel
+		}
+		if m.State == SignInWaiting && m.QRFailed && event.Button == ButtonA {
+			return SignInIntentRetry
 		}
 	case SignInDone:
 		if back || event.Button == ButtonA {

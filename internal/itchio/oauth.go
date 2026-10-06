@@ -120,6 +120,10 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceLogin, error) {
 		return nil, fmt.Errorf("start sign-in: HTTP %d", status)
 	case resp.DeviceCode == "" || resp.UserCode == "" || resp.VerificationURIComplete == "" || resp.ExpiresIn <= 0:
 		return nil, fmt.Errorf("start sign-in: incomplete response from itch.io")
+	case !isItchIOPage(resp.VerificationURIComplete):
+		// The address carries the code, so it is not logged.
+		logger.Warn("oauth: the sign-in address is not an HTTPS itch.io page")
+		return nil, fmt.Errorf("start sign-in: %w", ErrSignInUnavailable)
 	}
 	interval := time.Duration(resp.Interval) * time.Second
 	if interval <= 0 {
@@ -254,6 +258,18 @@ func (l *DeviceLogin) exchange(ctx context.Context, code string) (string, error)
 	logger.RegisterSecret(resp.AccessToken, "[TOKEN]")
 	logger.Info("oauth: signed in")
 	return resp.AccessToken, nil
+}
+
+// isItchIOPage reports whether address is an HTTPS page on itch.io or one of
+// its subdomains, with no credentials or port: the only place the QR code
+// may send the phone.
+func isItchIOPage(address string) bool {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "itch.io" || strings.HasSuffix(host, ".itch.io")
 }
 
 // deviceInfo labels the key on itch.io's side. It names the fixed handheld

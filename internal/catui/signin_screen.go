@@ -45,6 +45,9 @@ func (screen *SignInScreen) HandleInput(event InputEvent) appui.SignInIntent {
 func (screen *SignInScreen) footer() []FooterHint {
 	switch screen.model.State {
 	case appui.SignInStarting, appui.SignInWaiting:
+		if screen.model.State == appui.SignInWaiting && screen.model.QRFailed {
+			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Cancel"}}
+		}
 		return []FooterHint{{Button: ButtonB, Label: "Cancel"}}
 	case appui.SignInChecking:
 		return nil
@@ -57,6 +60,9 @@ func (screen *SignInScreen) footer() []FooterHint {
 }
 
 func (screen *SignInScreen) Draw() error {
+	if screen.model.State == appui.SignInWaiting {
+		screen.prepareQR() // before the footer, which depends on the outcome
+	}
 	frame, err := screen.ui.BeginScreen(ScreenSpec{Title: "Sign in with itch.io", Footer: screen.footer()})
 	if err != nil {
 		return err
@@ -67,7 +73,11 @@ func (screen *SignInScreen) Draw() error {
 	case appui.SignInStarting:
 		err = screen.ui.DrawState(body, StateLoading, "Getting a sign-in code", "Contacting itch.io…")
 	case appui.SignInWaiting:
-		err = screen.drawCode(frame)
+		if model.QRFailed {
+			err = screen.ui.DrawState(body, StateError, "Can't show the QR code", "Press A for a new code.")
+		} else {
+			err = screen.drawCode(frame)
+		}
 	case appui.SignInChecking:
 		err = screen.ui.DrawState(body, StateLoading, "Signed in", "Loading your owned games…")
 	case appui.SignInDone:
@@ -81,12 +91,20 @@ func (screen *SignInScreen) Draw() error {
 	return frame.Finish()
 }
 
+// prepareQR builds the QR texture once per code. A failure is recorded on
+// the model so the screen explains it and A asks for a new code.
+func (screen *SignInScreen) prepareQR() {
+	model := screen.model
+	if screen.qrText == model.QRURL {
+		return
+	}
+	screen.Close()
+	screen.qr, screen.qrText = newQRTexture(screen.ctx, model.QRURL), model.QRURL
+	model.QRFailed = screen.qr == nil
+}
+
 func (screen *SignInScreen) drawCode(frame *ScreenFrame) error {
 	model := screen.model
-	if screen.qrText != model.QRURL {
-		screen.Close()
-		screen.qr, screen.qrText = newQRTexture(screen.ctx, model.QRURL), model.QRURL
-	}
 	remaining := model.Remaining(screen.now()).Round(time.Second)
 	lines := []string{
 		"Scan the QR code with your phone.",
