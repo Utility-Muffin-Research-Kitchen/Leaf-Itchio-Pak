@@ -334,3 +334,49 @@ func TestEmptyListForGameInstalledFreeIsCheckedOnThePublicPage(t *testing.T) {
 		t.Fatalf("removed=%v after %d public page checks, want kept after one", inv.IsRemoved(url), pageRequests)
 	}
 }
+
+func TestNewDesktopBuildInTheAPIListingDoesNotBadge(t *testing.T) {
+	listing := `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			fmt.Fprint(w, `{"owned_keys":{}}`)
+		case "/games/42/uploads":
+			fmt.Fprint(w, listing)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	url := srv.URL + "/game"
+	inv, path := updateTestInventory(t, url)
+	client := itchio.NewClientWithBase(srv.URL)
+	client.SetAuthToken("A")
+	svc := NewUpdateService(inv, path, client, nil)
+	svc.runCheck(checkRequest{all: true})
+	// The developer adds a Windows build and a browser build.
+	listing = `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1},
+		{"id":9,"filename":"game-windows.zip","traits":["p_windows"]},
+		{"id":10,"filename":"game-web.zip","type":"html"}]}`
+	svc.runCheck(checkRequest{all: true})
+	if pending := inv.PendingUpdateFiles(url); len(pending) != 0 {
+		t.Fatalf("new desktop and web builds = %+v, want no update", pending)
+	}
+	entry, _ := inv.Lookup(url)
+	marked := false
+	for _, upload := range entry.KnownUpstreamFiles {
+		marked = marked || upload.UploadID == "9" && upload.DesktopOrWebOnly && upload.IsNew
+	}
+	if !marked {
+		t.Fatalf("known uploads = %+v, want the Windows build tracked as a new desktop build", entry.KnownUpstreamFiles)
+	}
+	// A new build you can play still shows.
+	listing = `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1},
+		{"id":9,"filename":"game-windows.zip","traits":["p_windows"]},
+		{"id":11,"filename":"bonus.gbc"}]}`
+	svc.runCheck(checkRequest{all: true})
+	if pending := inv.PendingUpdateFiles(url); len(pending) != 1 || pending[0].UploadID != "11" {
+		t.Fatalf("new Game Boy Color upload = %+v, want one update", pending)
+	}
+}

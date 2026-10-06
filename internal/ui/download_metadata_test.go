@@ -266,3 +266,14 @@ func TestWebListingSeedsPageBaseline(t *testing.T) {
 		t.Fatalf("an upload without a listing seeded %+v from %q", files, source)
 	}
 }
+
+func TestListingSeedMarksDesktopAndWebBuilds(t *testing.T) {
+	listing := apiUploadListing([]itchio.Upload{
+		{Filename: "cart.gb", UploadID: "1"},
+		{Filename: "game-windows.zip", UploadID: "2", Traits: []string{"p_windows"}},
+	})
+	files, source := installListing(roms.Upload{Filename: "cart.gb", UploadID: "1", Listing: listing})
+	if source != inventory.SourceAPI || len(files) != 2 || files[0].DesktopOrWebOnly || !files[1].DesktopOrWebOnly {
+		t.Fatalf("seed = %+v from %q, want only the Windows build marked", files, source)
+	}
+}

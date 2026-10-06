@@ -548,7 +548,8 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamR
 					continue
 				}
 				files = append(files, UpstreamFile{Filename: upload.Filename, DisplayName: upload.DisplayName,
-					UploadID: upload.UploadID, Fingerprint: upload.Fingerprint()})
+					UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
+					DesktopOrWebOnly: upload.DesktopOrWebOnly()})
 			}
 			if len(files) > 0 || key != "" {
 				// A complete list you can access with no downloadable files
