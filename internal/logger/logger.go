@@ -70,7 +70,7 @@ var (
 
 	// Query credentials occur in itch.io resolver URLs and CDN-signed URLs.
 	// Preserve parameter names for diagnosis, but never their values.
-	sensitiveQueryValue = regexp.MustCompile(`(?i)([?&](?:api[_-]?key|key|csrf(?:_token)?|token|access[_-]?token|refresh[_-]?token|signature|x-amz-signature|x-amz-credential|x-amz-security-token|awsaccesskeyid|googleaccessid|policy|download_key(?:_id)?|purchase[_-]?token)=)[^&\s"'<>]+`)
+	sensitiveQueryValue = regexp.MustCompile(`(?i)([?&](?:api[_-]?key|key|csrf(?:_token)?|token|access[_-]?token|refresh[_-]?token|signature|x-amz-signature|x-amz-credential|x-amz-security-token|awsaccesskeyid|googleaccessid|policy|download_key(?:_id)?|purchase[_-]?token|uuid)=)[^&\s"'<>]+`)
 	// Free-download page URLs carry the download key as a path segment rather
 	// than a query parameter.
 	signedDownloadPath = regexp.MustCompile(`(?i)(https?://[^\s"'<>]+/download/)[^/?\s"'<>]+`)

@@ -175,10 +175,20 @@ func productUserAgent(version string) string {
 }
 
 // safeRequestError keeps credential-bearing request URLs out of UI/crash
-// messages while retaining the full failure in the local, redacted debug log.
-// Cancellation identity is preserved for transaction rollback logic.
+// messages and out of the log, which gets only the operation, the host and
+// the underlying failure. Cancellation identity is preserved for transaction
+// rollback logic.
 func safeRequestError(operation string, err error) error {
-	logger.Debug("%s request failed: %v", operation, err)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		host := "unknown host"
+		if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil && parsed.Host != "" {
+			host = parsed.Host
+		}
+		logger.Debug("%s request to %s failed: %v", operation, host, urlErr.Err)
+	} else {
+		logger.Debug("%s request failed: %v", operation, err)
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("%s: %w", operation, context.Canceled)

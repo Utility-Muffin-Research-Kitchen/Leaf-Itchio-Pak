@@ -32,6 +32,7 @@ type fakeAPI struct {
 	cdnAuth       []string // Authorization seen by the CDN
 	sessionStatus int      // 0 = 201 with a UUID
 	blockSession  chan struct{}
+	dropResolve   bool // close the connection instead of answering a resolve
 	requestURLs   []string
 }
 
@@ -72,7 +73,15 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 			f.mu.Lock()
 			f.resolveUUIDs = append(f.resolveUUIDs, r.URL.Query().Get("uuid"))
 			f.resolveKeys = append(f.resolveKeys, r.URL.Query().Get("download_key_id"))
+			drop := f.dropResolve
 			f.mu.Unlock()
+			if drop {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					conn.Close()
+				}
+				return
+			}
 			http.Redirect(w, r, f.cdn.URL+"/r2/upload.gbc?X-Amz-Signature=signed-8d2c", http.StatusFound)
 		default:
 			http.NotFound(w, r)
@@ -468,5 +477,26 @@ func TestValidationFromAnOlderKeyStoresNothing(t *testing.T) {
 	}
 	if owned.fullScans.Load() != before+1 {
 		t.Fatal("a validation that started under the old key seeded bundle sizes")
+	}
+}
+
+// A resolve that fails below HTTP logs neither the session UUID nor the
+// request path and query it travelled in.
+func TestTransportFailureLogsNoSessionUUID(t *testing.T) {
+	f := newFakeAPI(t)
+	f.dropResolve = true
+	buf := captureDebugLog(t)
+	_, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "777"))
+	if err == nil {
+		t.Fatal("resolve over a dropped connection succeeded")
+	}
+	if _, uuids, _, _, _ := f.snapshot(); len(uuids) == 0 || uuids[0] != "install-uuid-7f3a" {
+		t.Fatalf("resolve sent uuids %q, want the session's", uuids)
+	}
+	out := buf.String()
+	for _, forbidden := range []string{"install-uuid-7f3a", "/uploads/9/download", "download_key_id=777"} {
+		if strings.Contains(out, forbidden) || strings.Contains(err.Error(), forbidden) {
+			t.Errorf("%q leaked into the log or error:\n%s\nerror: %v", forbidden, out, err)
+		}
 	}
 }
