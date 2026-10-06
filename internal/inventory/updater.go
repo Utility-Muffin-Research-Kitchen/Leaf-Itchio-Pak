@@ -291,15 +291,19 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 		}
 	}
 
-	// A reachable page offering no downloads is a confirmed removal. One that
-	// still offers downloads means the game exists: a downloaded file missing
-	// from the list was superseded by a new version, which HasPendingUpdates
-	// reports as an update (upstream 79539ff).
+	// A reachable page offering no downloads the app can use is a confirmed
+	// removal. A downloaded file missing from a page that still offers
+	// downloads was superseded only when the page offers an upload of the
+	// same kind; one you have not downloaded yet is flagged as new so
+	// HasPendingUpdates reports an update (upstream 79539ff). Otherwise the
+	// file was deleted upstream and the game is marked removed.
 	if len(uploads) == 0 {
 		s.inv.MarkRemoved(gameURL)
 		logger.Warn("update-svc: %s offers no downloads", gameURL)
 		return upstreamFiles
 	}
+	downloaded := downloadedNames(downloadedFiles)
+	removed := false
 	// Music files extracted from ZIPs have individual track names that are never
 	// directly listed as upload filenames, so skip them here.
 	for _, f := range downloadedFiles {
@@ -310,19 +314,73 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 		// name against upstream rather than the extracted ROM's renamed filename
 		// (which may be entirely different due to unified naming).
 		checkName := f.Filename
+		kind := uploadKind(f.Filename)
 		if f.SourceArchive != "" {
-			checkName = f.SourceArchive
+			checkName, kind = f.SourceArchive, uploadKindArchive
 		}
 		stem := strings.TrimSuffix(checkName, romFileExt(checkName))
-		if !upstreamNames[checkName] && !upstreamNames[stem] {
-			logger.Info("update-svc: downloaded file %q was superseded upstream for %s", checkName, gameURL)
+		if upstreamNames[checkName] || upstreamNames[stem] {
+			continue
 		}
+		replaced := false
+		for index := range upstreamFiles {
+			name := upstreamFiles[index].Filename
+			if kind == "" || uploadKind(name) != kind {
+				continue
+			}
+			replaced = true
+			if !downloaded[name] && !downloaded[strings.TrimSuffix(name, romFileExt(name))] {
+				upstreamFiles[index].IsNew = true
+			}
+		}
+		if replaced {
+			logger.Info("update-svc: downloaded file %q was superseded upstream for %s", checkName, gameURL)
+		} else {
+			logger.Warn("update-svc: downloaded file %q is no longer offered for %s", checkName, gameURL)
+			removed = true
+		}
+	}
+	if removed {
+		s.inv.MarkRemoved(gameURL)
+		return upstreamFiles
 	}
 
 	// Reachable with downloads: clear any stale removal state.
 	s.inv.MarkReachable(gameURL)
 	logger.Debug("update-svc: %s — %d upstream file(s) recorded", gameURL, len(upstreamFiles))
 	return upstreamFiles
+}
+
+const uploadKindArchive = "archive"
+
+// uploadKind groups uploads that can replace one another: an archive with an
+// archive, a ROM with a ROM for the same system. It is "" when the name does
+// not say.
+func uploadKind(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".zip", ".7z":
+		return uploadKindArchive
+	}
+	if system, ok := leaf.CanonicalSystemForExtension(romFileExt(name)); ok {
+		return system
+	}
+	return ""
+}
+
+// downloadedNames indexes the upload names a game's files came from, the same
+// way HasPendingUpdates matches upstream files.
+func downloadedNames(files []DownloadedFile) map[string]bool {
+	downloaded := make(map[string]bool, len(files)*3)
+	for _, f := range files {
+		for _, name := range []string{f.Filename, f.SourceArchive} {
+			if name == "" {
+				continue
+			}
+			downloaded[name] = true
+			downloaded[strings.TrimSuffix(name, romFileExt(name))] = true
+		}
+	}
+	return downloaded
 }
 
 func (s *UpdateService) checkPaidGame(gameURL string) {

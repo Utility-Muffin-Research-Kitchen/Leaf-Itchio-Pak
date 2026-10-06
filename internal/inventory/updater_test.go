@@ -439,6 +439,13 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 // check against srv. prior, when set, seeds an earlier check's upload list.
 func runFreeGameCheck(t *testing.T, srv *httptest.Server, prior []string, removed bool) (*inventory.Inventory, string) {
 	t.Helper()
+	return runFreeGameCheckFor(t, srv, inventory.DownloadedFile{Filename: "game.gb"}, prior, removed)
+}
+
+// runFreeGameCheckFor is runFreeGameCheck for a game whose one downloaded
+// file is installed (Filename and SourceArchive set by the caller).
+func runFreeGameCheckFor(t *testing.T, srv *httptest.Server, installed inventory.DownloadedFile, prior []string, removed bool) (*inventory.Inventory, string) {
+	t.Helper()
 	dir := t.TempDir()
 	configureUpdaterPaths(t, dir)
 	romPath := filepath.Join(dir, "game.gb")
@@ -450,9 +457,8 @@ func runFreeGameCheck(t *testing.T, srv *httptest.Server, prior []string, remove
 	invPath := filepath.Join(dir, "inventory.json")
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
 	gameURL := srv.URL + "/game"
-	inv.Add(gameURL,
-		inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
-		inventory.DownloadedFile{Filename: "game.gb", DestPath: romPath, DownloadedAt: time.Now()})
+	installed.DestPath, installed.DownloadedAt = romPath, time.Now()
+	inv.Add(gameURL, inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"}, installed)
 	if prior != nil {
 		files := make([]inventory.UpstreamFile, 0, len(prior))
 		for index, name := range prior {
@@ -505,6 +511,89 @@ func TestUpdateService_ReachablePageWithoutDownloadsIsARemoval(t *testing.T) {
 	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, false)
 	if !inv.IsRemoved(gameURL) {
 		t.Error("IsRemoved: want true when the game page offers no downloads")
+	}
+}
+
+// A deleted upload is superseded only by a new upload of the same kind. A
+// page that still lists other platforms' builds does not hide the removal
+// (review finding R18-3).
+func TestUpdateService_DeletedUploadWithoutAReplacementIsARemoval(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game_win.zip", "game_mac.zip"})
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb", "game_win.zip", "game_mac.zip"}, false)
+	if !inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: the downloaded upload is gone and nothing replaces it")
+	}
+	if inv.HasPendingUpdates(gameURL) {
+		t.Error("HasPendingUpdates: other platforms' builds were offered as an update")
+	}
+}
+
+// The replacement is flagged even when the first check after the download
+// already sees only the new upload.
+func TestUpdateService_SupersededUploadIsAnUpdateOnTheFirstCheck(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, nil, false)
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: a superseded upload marked the game removed")
+	}
+	if !inv.HasPendingUpdates(gameURL) {
+		t.Error("HasPendingUpdates: the replacement upload was not offered as an update")
+	}
+}
+
+// After you download the replacement, the old file stays on the card. It is
+// still superseded, not removed, and nothing is new.
+func TestUpdateService_DownloadedReplacementKeepsTheGameReachable(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
+	defer srv.Close()
+
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := srv.URL + "/game"
+	for _, name := range []string{"game.gb", "game-v2.gb"} {
+		path := filepath.Join(dir, name)
+		os.WriteFile(path, []byte("ROM"), 0644)
+		art := inventory.CoverArtPath(srv.URL+"/cover.png", path)
+		os.MkdirAll(filepath.Dir(art), 0755)
+		os.WriteFile(art, minimalPNG(), 0644)
+		inv.Add(gameURL, inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
+			inventory.DownloadedFile{Filename: name, DestPath: path, DownloadedAt: time.Now()})
+	}
+	inv.SetUpstreamFiles(gameURL, []inventory.UpstreamFile{{Filename: "game-v2.gb", UploadID: "101", SeenAt: time.Now().Add(-time.Hour)}})
+	inv.Save(invPath)
+
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase(srv.URL), nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+	if inv.IsRemoved(gameURL) || inv.HasPendingUpdates(gameURL) {
+		t.Errorf("removed=%v update=%v, want neither", inv.IsRemoved(gameURL), inv.HasPendingUpdates(gameURL))
+	}
+}
+
+// An archive is replaced by an archive; a ROM of another kind does not
+// replace it.
+func TestUpdateService_ArchiveIsSupersededOnlyByAnArchive(t *testing.T) {
+	installed := inventory.DownloadedFile{Filename: "Game.gb", SourceArchive: "game-1.0.zip"}
+	srv := freeGameServer(t, http.StatusOK, []string{"game-1.1.zip"})
+	inv, gameURL := runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip"}, false)
+	srv.Close()
+	if inv.IsRemoved(gameURL) || !inv.HasPendingUpdates(gameURL) {
+		t.Errorf("new archive: removed=%v update=%v, want an update", inv.IsRemoved(gameURL), inv.HasPendingUpdates(gameURL))
+	}
+
+	srv = freeGameServer(t, http.StatusOK, []string{"game.nes"})
+	inv, gameURL = runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip", "game.nes"}, false)
+	srv.Close()
+	if !inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: an archive was treated as replaced by a ROM upload")
 	}
 }
 

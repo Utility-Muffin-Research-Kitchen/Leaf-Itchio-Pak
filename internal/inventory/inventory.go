@@ -731,7 +731,12 @@ func (inv *Inventory) SetUpstreamFiles(gameURL string, files []UpstreamFile) {
 	for i := range files {
 		if p, ok := prior[files[i].Filename]; ok {
 			files[i].SeenAt = p.seenAt // preserve original first-seen time
-			files[i].IsNew = p.isNew   // preserve new-upload flag
+			if files[i].IsNew && !p.isNew {
+				// The check found this known upload replacing a downloaded
+				// file; it is new from now on.
+				files[i].SeenAt = time.Now()
+			}
+			files[i].IsNew = files[i].IsNew || p.isNew // preserve new-upload flag
 		} else if !isFirstCheck {
 			// Genuinely new file appearing after the first check — flag it.
 			files[i].IsNew = true
@@ -739,7 +744,12 @@ func (inv *Inventory) SetUpstreamFiles(gameURL string, files []UpstreamFile) {
 				files[i].SeenAt = time.Now()
 			}
 		}
-		// if isFirstCheck: IsNew stays false (zero value); file was already present at download time
+		// if isFirstCheck: IsNew stays as the caller set it. Files already
+		// present at download time are false; an upload found replacing a
+		// downloaded file is true.
+		if files[i].IsNew && files[i].SeenAt.IsZero() {
+			files[i].SeenAt = time.Now()
+		}
 	}
 	e.KnownUpstreamFiles = files
 	e.UpdateCheckedAt = time.Now()

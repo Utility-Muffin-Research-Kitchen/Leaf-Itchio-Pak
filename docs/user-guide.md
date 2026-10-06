@@ -128,9 +128,11 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
-A new version that replaces a file you downloaded shows as an update. A game is
-only marked removed when its page is gone or offers no downloads; a network
-error leaves its status as it was.
+A new version that replaces a file you downloaded, such as a new `.gb` build
+for your `.gb` or a new archive for your archive, shows as an update. A game is
+marked removed when its page is gone, when it offers no downloads the app can
+use, or when a file you downloaded is gone and nothing of the same kind
+replaces it. A network error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
