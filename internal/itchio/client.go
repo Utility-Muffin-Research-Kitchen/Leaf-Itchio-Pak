@@ -326,3 +326,9 @@ func (c *Client) HTTPClient() *http.Client {
 func (c *Client) DownloadURL(cdnURL, dest string, progress func(int64, int64)) error {
 	return c.streamToFile(cdnURL, dest, progress)
 }
+
+// DownloadURLContext is DownloadURL with caller cancellation. A cancelled
+// download leaves dest untouched and no partial file behind.
+func (c *Client) DownloadURLContext(ctx context.Context, cdnURL, dest string, progress func(int64, int64)) error {
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
+}

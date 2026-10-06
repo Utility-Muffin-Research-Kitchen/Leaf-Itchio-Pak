@@ -177,11 +177,13 @@ func (s *MultiDownloadWorker) CatLibraryTitleGroups() []leaf.LibraryTitleGroup {
 }
 
 func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
+	state := s.loadState()
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.plan.Upload.Filename,
-		Downloaded: atomic.LoadInt64(&s.downloaded), Total: atomic.LoadInt64(&s.total), FileCount: 1, Locked: true,
+		Downloaded: atomic.LoadInt64(&s.downloaded), Total: atomic.LoadInt64(&s.total), FileCount: 1,
+		Locked: state != zipDLDownloading,
 	}
-	switch s.loadState() {
+	switch state {
 	case zipDLExtracting:
 		model.Filename = "Extracting " + s.plan.Upload.Filename
 	case zipDLDone:
@@ -195,6 +197,9 @@ func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}
+	case zipDLCancelled:
+		model.State = appui.DownloadProgressCancelled
+		model.Detail = "No files were installed."
 	}
 	return model
 }
@@ -213,7 +218,11 @@ func (s *ArchiveDownloadWorker) CatLibraryTitleGroups() []leaf.LibraryTitleGroup
 	return libraryTitleGroups(s.inv, s.game.URL, s.game.Title, s.extracted)
 }
 
-// Archive extraction cannot safely stop halfway through a file set. Cancel is
-// therefore a no-op while busy and the progress screen keeps the operation
-// visible until its protected transaction completes.
-func (s *ArchiveDownloadWorker) CatCancel() {}
+// CatCancel stops the archive transfer and removes its partial file. Once
+// extraction starts it is a no-op: extraction cannot safely stop halfway
+// through a file set, so the progress screen stays locked until it completes.
+func (s *ArchiveDownloadWorker) CatCancel() {
+	if s.loadState() == zipDLDownloading {
+		s.cancel()
+	}
+}

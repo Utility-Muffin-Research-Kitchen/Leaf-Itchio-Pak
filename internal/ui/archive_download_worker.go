@@ -33,6 +33,7 @@ const (
 	zipDLExtracting
 	zipDLDone
 	zipDLError
+	zipDLCancelled
 )
 
 // ArchiveDownloadWorker downloads a ZIP to a temp path, extracts ROM and music files
@@ -54,6 +55,11 @@ type ArchiveDownloadWorker struct {
 	musicFailed    bool
 	err            error
 	inhibitBlocked atomic.Bool
+
+	// ctx ends the transfer when the user cancels. Extraction never reads it:
+	// a half-extracted file set must not be left behind.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (s *ArchiveDownloadWorker) loadState() zipDLState {
@@ -73,6 +79,7 @@ func NewArchiveDownloadWorker(
 		game: game, detail: detail, plan: plan.Seal(),
 		inv: inv, invPath: invPath,
 	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	go s.run(false)
 	return s
 }
@@ -123,7 +130,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	cdnURL := s.plan.CDNURL
 	if s.plan.Upload.ViaAPI() {
 		// Same install session as the inspection that produced this plan.
-		fresh, rerr := s.client.ResolveUploadURLContext(context.Background(), s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
+		fresh, rerr := s.client.ResolveUploadURLContext(s.ctx, s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
 		} else {
@@ -131,7 +138,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		}
 	} else {
 		itchUpload := itchio.Upload{Filename: s.plan.Upload.Filename, URL: s.plan.Upload.URL}
-		fresh, rerr := s.client.ResolveFreeURL(itchUpload)
+		fresh, rerr := s.client.ResolveFreeURLContext(s.ctx, itchUpload)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve free URL failed (%v), using cached URL", rerr)
 		} else {
@@ -144,7 +151,16 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		atomic.StoreInt64(&s.total, total)
 	}
 	logger.Info("zip-download: streaming %s → %s", s.plan.Upload.Filename, tmpPath)
-	if err := s.client.DownloadURL(cdnURL, tmpPath, progress); err != nil {
+	err = s.client.DownloadURLContext(s.ctx, cdnURL, tmpPath, progress)
+	// A cancel that arrives as the transfer ends still wins: nothing is
+	// extracted yet.
+	if s.ctx.Err() != nil {
+		_ = os.Remove(tmpPath)
+		logger.Info("zip-download: cancelled %s", s.plan.Upload.Filename)
+		s.storeState(zipDLCancelled)
+		return
+	}
+	if err != nil {
 		s.err = fmt.Errorf("download ZIP: %w", err)
 		s.storeState(zipDLError)
 		return
