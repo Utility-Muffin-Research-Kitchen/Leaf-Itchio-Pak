@@ -129,7 +129,9 @@ without deleting downloads.
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
 When signed in, it also detects files replaced under the same name, including
-paid games you own. These checks read metadata without starting a download.
+paid games you own. A changed upload marks a game only when you installed that
+upload, so a new Windows or soundtrack build of a game you play as a ROM does
+not. These checks read metadata without starting a download.
 When signed out, it can find newly listed filenames on public pages, but cannot
 verify changed file contents or hidden paid downloads. Switching between these
 sources establishes a new baseline without marking every file as an update.

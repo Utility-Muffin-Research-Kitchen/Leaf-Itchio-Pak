@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -90,6 +91,13 @@ type UpstreamFile struct {
 	DisplayName string    `json:"display_name,omitempty"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
 	Changed     bool      `json:"changed,omitempty"`
+	// PreviousUploadIDs lists the IDs this file had before the developer
+	// replaced it under the same name. A file installed from any of them
+	// still counts as installed from this upload.
+	PreviousUploadIDs []string `json:"previous_upload_ids,omitempty"`
+	// DesktopOrWebOnly marks an upload that only ships desktop or web
+	// builds. A new one never raises an update badge.
+	DesktopOrWebOnly bool `json:"desktop_or_web_only,omitempty"`
 }
 
 const (
@@ -324,7 +332,7 @@ func (inv *Inventory) Lookup(gameURL string) (Entry, bool) {
 	}
 	snap := *e
 	snap.Files = append([]DownloadedFile(nil), e.Files...)
-	snap.KnownUpstreamFiles = append([]UpstreamFile(nil), e.KnownUpstreamFiles...)
+	snap.KnownUpstreamFiles = cloneUpstreamFiles(e.KnownUpstreamFiles)
 	return snap, true
 }
 
@@ -583,16 +591,43 @@ func (inv *Inventory) PendingUpdateFiles(gameURL string) []UpstreamFile {
 		}
 		installed := false
 		for _, file := range e.Files {
-			if fileMatchesUpload(file, upload) {
+			if fileInstalledFrom(file, upload) {
 				installed = true
 				break
 			}
 		}
-		if upload.Changed || (upload.IsNew && !installed) {
-			pending = append(pending, upload)
+		// A change matters only to an upload you installed; a new desktop or
+		// web build never does.
+		if (upload.Changed && installed) || (upload.IsNew && !installed && !upload.DesktopOrWebOnly) {
+			pending = append(pending, cloneUpstreamFile(upload))
 		}
 	}
 	return pending
+}
+
+// fileInstalledFrom also accepts a file installed from an upload ID that the
+// developer has since replaced under the same name.
+func fileInstalledFrom(file DownloadedFile, upload UpstreamFile) bool {
+	if fileMatchesUpload(file, upload) {
+		return true
+	}
+	return file.UploadID != "" && slices.Contains(upload.PreviousUploadIDs, file.UploadID)
+}
+
+func cloneUpstreamFile(file UpstreamFile) UpstreamFile {
+	file.PreviousUploadIDs = slices.Clone(file.PreviousUploadIDs)
+	return file
+}
+
+func cloneUpstreamFiles(files []UpstreamFile) []UpstreamFile {
+	if files == nil {
+		return nil
+	}
+	out := make([]UpstreamFile, len(files))
+	for index, file := range files {
+		out[index] = cloneUpstreamFile(file)
+	}
+	return out
 }
 
 // IsRemoved returns true when the game was detected as 404 upstream and the
@@ -679,33 +714,50 @@ func (inv *Inventory) SetUpstreamFilesFrom(gameURL, source string, files []Upstr
 
 func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []UpstreamFile) {
 	baseline := e.UpdateCheckedAt.IsZero() || e.UpstreamSource != source
-	byID := make(map[string]UpstreamFile, len(e.KnownUpstreamFiles))
-	byName := make(map[string]UpstreamFile, len(e.KnownUpstreamFiles)*2)
-	for _, file := range e.KnownUpstreamFiles {
+	byID := make(map[string]int, len(e.KnownUpstreamFiles))
+	byName := make(map[string]int, len(e.KnownUpstreamFiles)*2)
+	for index, file := range e.KnownUpstreamFiles {
 		if file.UploadID != "" {
-			byID[file.UploadID] = file
+			byID[file.UploadID] = index
 		}
-		byName[file.Filename] = file
+		byName[file.Filename] = index
 		if file.DisplayName != "" {
-			byName[file.DisplayName] = file
+			byName[file.DisplayName] = index
 		}
 	}
 	now := time.Now()
-	files = append([]UpstreamFile(nil), files...)
-	matched := make(map[UpstreamFile]bool, len(files))
+	files = cloneUpstreamFiles(files)
+	listedIDs := make(map[string]bool, len(files))
+	for _, file := range files {
+		if file.UploadID != "" {
+			listedIDs[file.UploadID] = true
+		}
+	}
+	// A name match is a replacement only when the earlier upload is gone; a
+	// second upload under a name that is still listed is a new upload.
+	byNameIfGone := func(name string) (int, bool) {
+		index, ok := byName[name]
+		if ok && listedIDs[e.KnownUpstreamFiles[index].UploadID] {
+			return 0, false
+		}
+		return index, ok
+	}
+	matched := make(map[int]bool, len(files))
 	for i := range files {
 		file := &files[i]
-		prior, known := byID[file.UploadID]
+		index, known := byID[file.UploadID]
 		if !known {
-			prior, known = byName[file.Filename]
+			index, known = byNameIfGone(file.Filename)
 		}
 		if !known && file.DisplayName != "" {
-			prior, known = byName[file.DisplayName]
+			index, known = byNameIfGone(file.DisplayName)
 		}
 		file.IsNew, file.Changed, file.SeenAt = false, false, now
 		if known {
-			matched[prior] = true
+			prior := e.KnownUpstreamFiles[index]
+			matched[index] = true
 			file.IsNew, file.Changed, file.SeenAt = prior.IsNew, prior.Changed, prior.SeenAt
+			file.PreviousUploadIDs = slices.Clone(prior.PreviousUploadIDs)
 			if file.UploadID == "" {
 				file.UploadID = prior.UploadID
 			}
@@ -714,8 +766,14 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 			} else if !baseline && prior.Fingerprint != "" && prior.Fingerprint != file.Fingerprint {
 				file.Changed, file.SeenAt = true, now
 			}
-			if !baseline && file.UploadID != "" && prior.UploadID != "" && file.UploadID != prior.UploadID {
-				file.Changed, file.SeenAt = true, now
+			if file.UploadID != "" && prior.UploadID != "" && file.UploadID != prior.UploadID {
+				// Keep the replaced ID so its installed files still match.
+				if !slices.Contains(file.PreviousUploadIDs, prior.UploadID) {
+					file.PreviousUploadIDs = append(file.PreviousUploadIDs, prior.UploadID)
+				}
+				if !baseline {
+					file.Changed, file.SeenAt = true, now
+				}
 			}
 		} else if !baseline {
 			file.IsNew = true
@@ -745,8 +803,8 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 	if source == SourcePage {
 		// A public page can hide paid/API uploads. Omission cannot acknowledge
 		// a known update; only an authoritative API list may prune it.
-		for _, prior := range e.KnownUpstreamFiles {
-			if !matched[prior] && (prior.Changed || prior.IsNew) {
+		for index, prior := range e.KnownUpstreamFiles {
+			if !matched[index] && (prior.Changed || prior.IsNew) {
 				files = append(files, prior)
 			}
 		}

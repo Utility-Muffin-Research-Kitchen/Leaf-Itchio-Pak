@@ -168,3 +168,66 @@ func TestEmptyAPIListingRemainsAnEstablishedBaseline(t *testing.T) {
 		t.Fatalf("new upload after authoritative empty listing = %+v, want an update", pending)
 	}
 }
+
+func TestChangedUploadCountsOnlyWhenInstalled(t *testing.T) {
+	// Device evidence: an installed Game Boy ROM also tracks the game's
+	// desktop and deluxe zips. A new build of those must not badge the game.
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "glory.gb", UploadID: "1", UploadFingerprint: "build:1", DestPath: "/leaf/Roms/GB/glory.gb"})
+	files := []inventory.UpstreamFile{
+		{Filename: "glory.gb", UploadID: "1", Fingerprint: "build:1"},
+		{Filename: "Glory Hunters 2.0.zip", UploadID: "2", Fingerprint: "build:1"},
+		{Filename: "Digital Deluxe Itch 4.0.zip", UploadID: "3", Fingerprint: "md5:a"},
+	}
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, files)
+	files[1].Fingerprint, files[2].Fingerprint = "build:2", "md5:b"
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, files)
+	if pending := inv.PendingUpdateFiles("game"); len(pending) != 0 {
+		t.Fatalf("new builds of uploads you never installed = %+v, want no update", pending)
+	}
+	files[0].Fingerprint = "build:2"
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, files)
+	if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || pending[0].UploadID != "1" || !pending[0].Changed {
+		t.Fatalf("new build of the installed ROM = %+v, want one update", pending)
+	}
+}
+
+func TestSameNameReplacementStillMatchesInstalledFile(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "cart.gb", UploadID: "1", DestPath: "/leaf/Roms/GB/cart.gb"})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1", Fingerprint: "build:1"}})
+	replaced := []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "3", Fingerprint: "build:1"}}
+	for check := range 2 {
+		inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, replaced)
+		pending := inv.PendingUpdateFiles("game")
+		if len(pending) != 1 || pending[0].UploadID != "3" || !pending[0].Changed {
+			t.Fatalf("check %d: same-name replacement = %+v, want one update", check, pending)
+		}
+		if got := pending[0].PreviousUploadIDs; len(got) != 1 || got[0] != "1" {
+			t.Fatalf("check %d: previous upload IDs = %v, want [1]", check, got)
+		}
+	}
+	// A second upload under the same name is a new upload, not a replacement
+	// of one that is still listed.
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, append(replaced, inventory.UpstreamFile{Filename: "cart.gb", UploadID: "4"}))
+	entry, _ := inv.Lookup("game")
+	for _, upload := range entry.KnownUpstreamFiles {
+		if upload.UploadID == "4" && (len(upload.PreviousUploadIDs) != 0 || upload.Changed || !upload.IsNew) {
+			t.Fatalf("second same-name upload = %+v, want a new upload", upload)
+		}
+	}
+}
+
+func TestNewDesktopOrWebUploadDoesNotBadge(t *testing.T) {
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{}}
+	inv.Add("game", inventory.Entry{}, inventory.DownloadedFile{Filename: "cart.gb", UploadID: "1", DestPath: "/leaf/Roms/GB/cart.gb"})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{{Filename: "cart.gb", UploadID: "1"}})
+	inv.SetUpstreamFilesFrom("game", inventory.SourceAPI, []inventory.UpstreamFile{
+		{Filename: "cart.gb", UploadID: "1"},
+		{Filename: "game-windows.zip", UploadID: "2", DesktopOrWebOnly: true},
+		{Filename: "sequel.gbc", UploadID: "3"},
+	})
+	if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || pending[0].UploadID != "3" {
+		t.Fatalf("pending = %+v, want only the new Game Boy Color upload", pending)
+	}
+}
