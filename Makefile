@@ -30,6 +30,7 @@ public-assets-check:
 
 pakrat-metadata-check:
 	./scripts/pakrat-metadata-check.py
+	./scripts/pakrat-metadata-check-test.py
 
 check-catastrophe:
 	@test -f "$(CATASTROPHE_DIR)/include/catastrophe.h" || { \
