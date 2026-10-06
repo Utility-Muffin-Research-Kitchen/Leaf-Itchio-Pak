@@ -15,6 +15,10 @@ import (
 // OwnerOf compares paths the way FAT32 does, so a differently cased path is
 // the same file (review finding R18-1).
 func TestOwnerOfMatchesPathsCaseInsensitively(t *testing.T) {
+	// Updater tests point the global source paths elsewhere.
+	if err := configureInventoryTestPaths(); err != nil {
+		t.Fatal(err)
+	}
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
 	inv.Add("https://dev.itch.io/a", inventory.Entry{Title: "A"},
 		inventory.DownloadedFile{Filename: "disc1.chd", DestPath: "/leaf/Roms/PSX/disc1.chd"})
@@ -67,7 +71,7 @@ func TestLoadWarnsAboutPathsSharedBetweenGames(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := buf.String()
-	if !strings.Contains(logged, "[WARN]") || !strings.Contains(logged, "disc1.chd") ||
+	if !strings.Contains(logged, "[WARN]") || !strings.Contains(strings.ToLower(logged), "roms/psx/disc1.chd") ||
 		!strings.Contains(logged, "https://dev.itch.io/a") || !strings.Contains(logged, "https://dev.itch.io/b") {
 		t.Fatalf("no shared-path warning in log:\n%s", logged)
 	}
