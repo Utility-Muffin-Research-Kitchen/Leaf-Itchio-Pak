@@ -84,14 +84,7 @@ func (flow *CatArchiveFlow) requestContext() context.Context {
 }
 
 func (flow *CatArchiveFlow) inspect() {
-	var cdnURL string
-	var err error
-	ctx := flow.requestContext()
-	if flow.upload.ViaAPI() {
-		cdnURL, err = flow.client.ResolveUploadURLContext(ctx, flow.cfg.APIKey, flow.upload.UploadID, flow.upload.Install)
-	} else {
-		cdnURL, err = flow.client.ResolveFreeURLContext(ctx, itchio.Upload{Filename: flow.upload.Filename, URL: flow.upload.URL})
-	}
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, flow.upload)
 	if err != nil {
 		flow.publish(catArchiveUpdate{err: err})
 		return

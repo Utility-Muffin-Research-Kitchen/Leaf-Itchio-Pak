@@ -545,7 +545,7 @@ func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID s
 		location = result.URL
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		logger.Warn("auth: CDN resolve HTTP %d", resp.StatusCode)
-		return "", fmt.Errorf("Game not owned or API key does not grant access to this download")
+		return "", ErrDownloadRefused
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return "", netlimit.FromResponse("auth: CDN resolve", resp)
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:

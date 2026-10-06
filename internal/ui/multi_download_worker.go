@@ -127,13 +127,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		logger.Info("multi-download: [%d/%d] starting %s → %s api=%v",
 			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, dl.Upload.ViaAPI())
 
-		var err error
-		if dl.Upload.ViaAPI() {
-			err = s.client.DownloadUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.Install, dl.DestPath, progress)
-		} else {
-			itchUpload := itchio.Upload{Filename: dl.Upload.Filename, URL: dl.Upload.URL}
-			err = s.client.DownloadFreeContext(ctx, itchUpload, dl.DestPath, progress)
-		}
+		err := downloadUpload(ctx, s.client, s.cfg.APIKey, s.game.URL, dl.Upload, dl.DestPath, progress)
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

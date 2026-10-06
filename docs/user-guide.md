@@ -127,8 +127,9 @@ are fetched again when needed.
 Free browsing/downloads work without a key. Add a key to authenticate owned paid
 games. With a key, free and pay-what-you-want games are also listed through the
 itch.io API, which is quicker than the web download page. If the API fails or
-lists nothing, the app tries the web download page once. If itch.io asks the
-app to slow down, it stops and asks you to try again later instead.
+lists nothing, the app tries the web download page once, and it does the same
+if itch.io lists the game but refuses the download. If itch.io asks the app to
+slow down, it stops and asks you to try again later instead.
 
 1. Open Start > Settings > API Key.
 2. Accept the physical-access warning.

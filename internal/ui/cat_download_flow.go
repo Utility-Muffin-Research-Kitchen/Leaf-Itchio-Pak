@@ -298,13 +298,7 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 }
 
 func (flow *CatDownloadFlow) detect(upload roms.Upload) {
-	var cdnURL string
-	var err error
-	if upload.ViaAPI() {
-		cdnURL, err = flow.client.ResolveUploadURLContext(flow.requestContext(), flow.cfg.APIKey, upload.UploadID, upload.Install)
-	} else {
-		cdnURL, err = flow.client.ResolveFreeURLContext(flow.requestContext(), itchio.Upload{Filename: upload.Filename, URL: upload.URL})
-	}
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, upload)
 	if err != nil {
 		flow.publish(catDownloadUpdate{kind: catDownloadUpdateDetected, upload: upload, err: err})
 		return

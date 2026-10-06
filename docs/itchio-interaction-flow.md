@@ -321,6 +321,13 @@ access, and malformed bodies fail with sanitized errors. Here and in the
 upload list, 404 or 410 reports "This file is no longer on itch.io.", 401 or
 403 the no-access error, and 429 the shared rate-limit message.
 
+A refusal (HTTP 401 or 403, `ErrDownloadRefused`) of a free install, one
+with no `download_key_id`, is retried once through the anonymous web flow:
+the app lists the game's web download page, picks the same upload by ID (or
+by filename) and resolves it there. A purchase is never retried
+anonymously. Resolving a free game without a purchase works today; this
+keeps downloads working if itch.io starts refusing it.
+
 The signed CDN URL expires quickly (60 seconds). It is resolved immediately
 before streaming, not cached.
 
