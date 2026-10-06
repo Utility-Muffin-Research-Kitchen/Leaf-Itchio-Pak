@@ -337,12 +337,19 @@ signed download page each issue their own token.
   shared transport, so the metadata client and the streaming/range copies see
   the same per-host cooldown; `itch.io`, `api.itch.io`, and each CDN host cool
   down independently. `Retry-After` (seconds or HTTP-date) is honored between
-  2 and 60 seconds, otherwise the back-off doubles from 2 seconds to that cap. Only
-  bodyless GET/HEAD requests are replayed, at most 3 times; POST handshakes
-  wait out a cooldown but are never replayed. A request whose deadline ends
-  inside a cooldown fails at once with `ErrRateLimited`. The feed loop does
-  not retry 429s again, and a catalogue refresh waits out at most 2 minutes of
-  cooldown in total before failing with `ErrRateLimited` and keeping the cache.
+  2 and 60 seconds, otherwise the back-off doubles from 2 seconds to that cap.
+  Each waiting request adds its own jitter of up to a fifth of its wait. Only
+  bodyless GET/HEAD requests to `itch.io`, `api.itch.io` and `*.itch.io` are
+  replayed, at most 3 times; POST handshakes wait out a cooldown but are never
+  replayed. A CDN 429 is never replayed, because the signed URL can expire
+  during the cooldown: a download waits the cooldown out, resolves a fresh URL
+  and tries once more. A request whose deadline ends inside a cooldown fails at
+  once with `ErrRateLimited`. A 429 that remains becomes `ErrRateLimited`
+  (`internal/netlimit`, shared with the archive readers), shown as "itch.io is
+  limiting requests. Wait a minute, then try again."; archive inspection never
+  falls back to a full download after one. The feed loop does not retry 429s
+  again, and a catalogue refresh waits out at most 2 minutes of cooldown in
+  total before failing with `ErrRateLimited` and keeping the cache.
 
 - **Identity.** Requests send `User-Agent: Leaf-Itchio-Pak/<version>
   (+https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak)` over

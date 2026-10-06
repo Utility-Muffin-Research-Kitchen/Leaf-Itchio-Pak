@@ -463,3 +463,18 @@ func TestFetchAllGames_RateLimitFailsTypedWithoutFeedRetries(t *testing.T) {
 		t.Fatalf("rate-limited feed requests = %d, want 1 plus 3 transport retries", got)
 	}
 }
+
+// Only itch.io's own hosts are replayed after a 429; CDNs and look-alike
+// names are not.
+func TestRateLimitReplaysOnlyItchHosts(t *testing.T) {
+	limiter := newRateLimitTransport(newScripted(nil), "127.0.0.1:8080")
+	for host, want := range map[string]bool{
+		"itch.io": true, "api.itch.io": true, "someone.itch.io": true, "ITCH.IO:443": true,
+		"127.0.0.1:8080": true, "127.0.0.1:9090": false,
+		"cdn.example": false, "img.itch.zone": false, "evilitch.io": false, "itch.io.example": false,
+	} {
+		if got := limiter.replays(host); got != want {
+			t.Errorf("replays(%q) = %v, want %v", host, got, want)
+		}
+	}
+}

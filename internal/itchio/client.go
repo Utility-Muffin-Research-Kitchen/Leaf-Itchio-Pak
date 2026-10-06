@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -197,7 +198,9 @@ func safeRequestError(operation string, err error) error {
 	return fmt.Errorf("%s: network request failed", operation)
 }
 
-func newHTTPClient(version string) *http.Client {
+// newHTTPClient builds the shared client. replayHosts names extra hosts
+// (host:port) to treat as itch.io when replaying 429s, for test servers.
+func newHTTPClient(version string, replayHosts ...string) *http.Client {
 	jar, _ := cookiejar.New(nil)
 	roots := tlsRootCAs
 	h2t := &http2.Transport{
@@ -221,7 +224,7 @@ func newHTTPClient(version string) *http.Client {
 				h2:      h2t,
 				h1:      h1t,
 				h1hosts: make(map[string]struct{}),
-			}),
+			}, replayHosts...),
 		},
 	}
 }
@@ -253,7 +256,7 @@ func NewClientWithVersion(version string) *Client {
 
 func NewClientWithBase(base string) *Client {
 	return &Client{
-		http:   newHTTPClient("dev"),
+		http:   newHTTPClient("dev", urlHost(base)),
 		base:   base,
 		butler: apiItchIO,
 	}
@@ -262,9 +265,34 @@ func NewClientWithBase(base string) *Client {
 // NewClientWithBaseAndButler is used in tests to override both base URLs.
 func NewClientWithBaseAndButler(base, butler string) *Client {
 	return &Client{
-		http:   newHTTPClient("dev"),
+		http:   newHTTPClient("dev", urlHost(base), urlHost(butler)),
 		base:   base,
 		butler: butler,
+	}
+}
+
+// urlHost returns the host:port of rawURL, or "" when it does not parse.
+func urlHost(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+// rateLimiter returns the client's 429 cooldown transport, or nil when the
+// client was built without one.
+func (c *Client) rateLimiter() *rateLimitTransport {
+	transport := c.http.Transport
+	for {
+		switch layer := transport.(type) {
+		case *rateLimitTransport:
+			return layer
+		case *uaTransport:
+			transport = layer.wrapped
+		default:
+			return nil
+		}
 	}
 }
 

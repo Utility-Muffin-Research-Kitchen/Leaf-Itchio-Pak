@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,7 +27,8 @@ const (
 	// Each waiter adds its own jitter on top, up to a fifth of its wait.
 	rateLimitMaxDelay = 60 * time.Second
 	// rateLimitMaxRetries is how often the transport replays one bodyless
-	// GET/HEAD after a 429 before handing the 429 back to the caller.
+	// GET/HEAD to itch.io after a 429 before handing the 429 back to the
+	// caller. Other hosts are never replayed; see replays.
 	rateLimitMaxRetries = 3
 	// refreshCooldownBudget bounds the wall-clock time one catalogue refresh
 	// may spend waiting out cooldowns before it fails and keeps the cache.
@@ -51,6 +53,9 @@ type hostCooldown struct {
 // does not pause api.itch.io or a CDN.
 type rateLimitTransport struct {
 	wrapped http.RoundTripper
+	// replayHosts adds exact hosts (host:port) that replays treats as
+	// itch.io: the local servers that stand in for it in tests.
+	replayHosts map[string]bool
 
 	mu    sync.Mutex
 	hosts map[string]*hostCooldown
@@ -60,10 +65,17 @@ type rateLimitTransport struct {
 	jitter     func(d time.Duration) time.Duration             // replaced in tests
 }
 
-func newRateLimitTransport(wrapped http.RoundTripper) *rateLimitTransport {
+func newRateLimitTransport(wrapped http.RoundTripper, replayHosts ...string) *rateLimitTransport {
+	extra := make(map[string]bool, len(replayHosts))
+	for _, host := range replayHosts {
+		if host != "" {
+			extra[host] = true
+		}
+	}
 	return &rateLimitTransport{
-		wrapped: wrapped,
-		hosts:   make(map[string]*hostCooldown),
+		wrapped:     wrapped,
+		replayHosts: extra,
+		hosts:       make(map[string]*hostCooldown),
 		now:     time.Now,
 		sleepUntil: func(ctx context.Context, wake time.Time) error {
 			return waitForRetry(ctx, time.Until(wake))
@@ -75,12 +87,29 @@ func newRateLimitTransport(wrapped http.RoundTripper) *rateLimitTransport {
 	}
 }
 
+// replays reports whether 429s from host may be replayed after a cooldown:
+// itch.io, api.itch.io and the creators' *.itch.io pages. Anything else is a
+// CDN or image host whose signed URLs can expire during a cooldown, so its
+// 429 goes straight back to the caller, which resolves a fresh URL.
+func (t *rateLimitTransport) replays(host string) bool {
+	if t.replayHosts[host] {
+		return true
+	}
+	name := host
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		name = hostname
+	}
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	return name == "itch.io" || strings.HasSuffix(name, ".itch.io")
+}
+
 func (t *rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Host
-	// Only bodyless GET/HEAD requests can be replayed. Download handshakes
-	// and session POSTs are never sent twice automatically.
+	// Only bodyless GET/HEAD requests to itch.io can be replayed. Download
+	// handshakes, session POSTs and signed CDN URLs are never sent twice
+	// automatically.
 	replayable := (req.Method == http.MethodGet || req.Method == http.MethodHead) &&
-		(req.Body == nil || req.Body == http.NoBody)
+		(req.Body == nil || req.Body == http.NoBody) && t.replays(host)
 	for attempt := 0; ; attempt++ {
 		if err := t.waitTurn(req.Context(), host); err != nil {
 			return nil, err

@@ -275,11 +275,32 @@ func (c *Client) DownloadFree(upload Upload, dest string, progress func(int64, i
 }
 
 func (c *Client) DownloadFreeContext(ctx context.Context, upload Upload, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveFreeURLContext(ctx, upload)
-	if err != nil {
-		return err
+	return c.streamFreshURL(ctx, func(ctx context.Context) (string, error) {
+		return c.ResolveFreeURLContext(ctx, upload)
+	}, dest, progress)
+}
+
+// streamFreshURL resolves a signed CDN URL and streams it to dest. The
+// transport never replays a CDN 429, because the signed URL can expire
+// during the cooldown. Instead this waits the cooldown out, resolves a fresh
+// URL and tries once more; a second 429 is returned.
+func (c *Client) streamFreshURL(ctx context.Context, resolve func(context.Context) (string, error), dest string, progress func(int64, int64)) error {
+	for attempt := 0; ; attempt++ {
+		cdnURL, err := resolve(ctx)
+		if err != nil {
+			return err
+		}
+		err = c.streamToFileContext(ctx, cdnURL, dest, progress)
+		var limited *RateLimitedError
+		limiter := c.rateLimiter()
+		if attempt > 0 || !errors.As(err, &limited) || limiter == nil || limiter.replays(limited.Host) {
+			return err
+		}
+		logger.Info("stream: %s is rate limiting; resolving a fresh URL after its cooldown", limited.Host)
+		if err := limiter.waitTurn(ctx, limited.Host); err != nil {
+			return err
+		}
 	}
-	return c.streamToFileContext(ctx, cdnURL, dest, progress)
 }
 
 func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) error {
