@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -567,5 +569,61 @@ func TestUpdateService_MatchesInstalledFileByUploadID(t *testing.T) {
 
 	if inv.IsRemoved(gameURL) {
 		t.Error("IsRemoved: the installed upload is still offered under another name")
+	}
+}
+
+func TestUpdateServiceRepairsArtworkAfterMetadataRateLimit(t *testing.T) {
+	pngData := minimalPNG()
+	var mu sync.Mutex
+	metadataRequests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/cover.png":
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(pngData)
+		case strings.HasSuffix(r.URL.Path, "/data.json"):
+			mu.Lock()
+			metadataRequests++
+			mu.Unlock()
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	var roms []string
+	for _, name := range []string{"one", "two", "three"} {
+		rom := filepath.Join(dir, name+".gb")
+		if err := os.WriteFile(rom, []byte("ROM"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		roms = append(roms, rom)
+		inv.Add(srv.URL+"/"+name, inventory.Entry{Title: name, CoverURL: srv.URL + "/cover.png"},
+			inventory.DownloadedFile{Filename: name + ".gb", DestPath: rom})
+	}
+	invPath := filepath.Join(dir, "inventory.json")
+	client := itchio.NewClientWithBase(srv.URL)
+	client.HTTPClient().Transport = http.DefaultTransport // deterministic 429; transport retries have their own tests
+	client.SetAuthToken("A")
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+	for _, rom := range roms {
+		if art := inventory.CanonicalArtworkPath(rom); art == "" {
+			t.Fatalf("no artwork path for %s", rom)
+		} else if _, err := os.Stat(art); err != nil {
+			t.Errorf("artwork for %s was not repaired after a metadata rate limit: %v", filepath.Base(rom), err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if metadataRequests != 1 {
+		t.Fatalf("made %d metadata requests, want the rest deferred after the first 429", metadataRequests)
 	}
 }

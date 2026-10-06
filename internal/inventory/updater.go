@@ -287,7 +287,11 @@ func (s *UpdateService) runCheck(request checkRequest) {
 			continue
 		}
 		id := entry.GameID
-		if id == "" {
+		if id == "" && !canCheck {
+			// After a rate limit, look the ID up on the next run; artwork
+			// repair still covers every entry.
+			skipped[gameURL] = true
+		} else if id == "" {
 			// A stable stored ID avoids fetching data.json on every launch.
 			if !s.pace() {
 				return
@@ -298,7 +302,6 @@ func (s *UpdateService) runCheck(request checkRequest) {
 				skipped[gameURL] = true
 				if errors.Is(err, itchio.ErrRateLimited) {
 					canCheck = false
-					break
 				}
 			} else if err == nil && data.ID > 0 {
 				id = strconv.FormatInt(data.ID, 10)
