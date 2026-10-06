@@ -128,23 +128,25 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 
 	// Re-resolve CDN URL immediately before the download so a stale URL from
 	// the inspect step (which may have run minutes ago) does not cause a 403.
-	cdnURL := s.plan.CDNURL
-	if s.plan.Upload.ViaAPI() {
-		// Same install session as the inspection that produced this plan.
-		fresh, rerr := s.client.ResolveUploadURLContext(s.ctx, s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
-		if rerr != nil {
-			logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
-		} else {
-			cdnURL = fresh
+	// After a CDN 429 the download resolves once more, because the signed URL
+	// can expire during the cooldown.
+	resolve := func(ctx context.Context) (string, error) {
+		if s.plan.Upload.ViaAPI() {
+			// Same install session as the inspection that produced this plan.
+			fresh, rerr := s.client.ResolveUploadURLContext(ctx, s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
+			if rerr != nil {
+				logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
+				return s.plan.CDNURL, nil
+			}
+			return fresh, nil
 		}
-	} else {
 		itchUpload := itchio.Upload{Filename: s.plan.Upload.Filename, URL: s.plan.Upload.URL}
-		fresh, rerr := s.client.ResolveFreeURLContext(s.ctx, itchUpload)
+		fresh, rerr := s.client.ResolveFreeURLContext(ctx, itchUpload)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve free URL failed (%v), using cached URL", rerr)
-		} else {
-			cdnURL = fresh
+			return s.plan.CDNURL, nil
 		}
+		return fresh, nil
 	}
 
 	progress := func(dl, total int64) {
@@ -152,7 +154,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		atomic.StoreInt64(&s.total, total)
 	}
 	logger.Info("zip-download: streaming %s → %s", s.plan.Upload.Filename, tmpPath)
-	err = s.client.DownloadURLContext(s.ctx, cdnURL, tmpPath, progress)
+	err = s.client.DownloadFreshURLContext(s.ctx, resolve, tmpPath, progress)
 	// A cancel that arrives as the transfer ends still wins: nothing is
 	// extracted yet.
 	if s.ctx.Err() != nil {

@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
@@ -28,11 +29,12 @@ import (
 // archiveTransfer is an offline web resolver plus a CDN for one archive
 // download into a configured primary card.
 type archiveTransfer struct {
-	client  *itchio.Client
-	plan    ZIPPlan
-	romDir  string
-	inv     *inventory.Inventory
-	invPath string
+	client   *itchio.Client
+	plan     ZIPPlan
+	romDir   string
+	inv      *inventory.Inventory
+	invPath  string
+	resolves *atomic.Int32 // CDN URL resolves the worker asked for
 }
 
 func newArchiveTransfer(t *testing.T, cdn http.HandlerFunc) archiveTransfer {
@@ -40,7 +42,9 @@ func newArchiveTransfer(t *testing.T, cdn http.HandlerFunc) archiveTransfer {
 	primary, _ := transactionPaths(t)
 	cdnServer := httptest.NewServer(cdn)
 	t.Cleanup(cdnServer.Close)
+	resolves := &atomic.Int32{}
 	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolves.Add(1)
 		fmt.Fprintf(w, `{"url":%q}`, cdnServer.URL+"/game.zip")
 	}))
 	t.Cleanup(resolver.Close)
@@ -61,7 +65,7 @@ func newArchiveTransfer(t *testing.T, cdn http.HandlerFunc) archiveTransfer {
 			DownloadROMs: true,
 			ROMDirs:      map[string]string{".gbc": romDir},
 		},
-		romDir: romDir, inv: inv, invPath: invPath,
+		romDir: romDir, inv: inv, invPath: invPath, resolves: resolves,
 	}
 }
 
@@ -279,4 +283,96 @@ func TestArchiveDownloadErrorShowsTheCauseWithoutTheStep(t *testing.T) {
 		t.Fatalf("snapshot = %v %q, want the cause without the step", model.State, model.Detail)
 	}
 	waitFor(t, func() bool { return hasLogLine(logs.String(), "[WARN]", "download ZIP: "+model.Detail) })
+}
+
+// rateLimitingCDN answers HTTP 429 to its first `limited` requests, then
+// serves an archive with the fixture plan's one GBC ROM.
+func rateLimitingCDN(t *testing.T, limited int32, retryAfter string, hits *atomic.Int32) http.HandlerFunc {
+	t.Helper()
+	var buf bytes.Buffer
+	archive := zip.NewWriter(&buf)
+	entry, err := archive.Create("game.gbc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(bytes.Repeat([]byte("G"), 32)); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body := buf.Bytes()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= limited {
+			w.Header().Set("Retry-After", retryAfter)
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		http.ServeContent(w, r, "game.zip", time.Time{}, bytes.NewReader(body))
+	}
+}
+
+func partialFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, ".itchio-*.part"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return matches
+}
+
+// A CDN 429 is not replayed, because the signed URL can expire during the
+// cooldown. Like a single-file download, the archive waits the cooldown out,
+// resolves a fresh URL once and streams again.
+func TestArchiveDownloadRecoversFromOneCDN429WithAFreshURL(t *testing.T) {
+	var hits atomic.Int32
+	f := newArchiveTransfer(t, rateLimitingCDN(t, 1, "1", &hits))
+	worker := f.start()
+	waitFor(t, func() bool {
+		state := worker.loadState()
+		return state != zipDLDownloading && state != zipDLExtracting
+	})
+	if model := worker.CatSnapshot(); model.State != appui.DownloadProgressDone {
+		t.Fatalf("snapshot = %v %q, want a completed download", model.State, model.Detail)
+	}
+	if resolves, requests := f.resolves.Load(), hits.Load(); resolves != 2 || requests != 2 {
+		t.Fatalf("resolves %d, CDN requests %d; want one fresh URL after the 429", resolves, requests)
+	}
+	if roms, err := filepath.Glob(filepath.Join(f.romDir, "*.gbc")); err != nil || len(roms) != 1 {
+		t.Fatalf("extracted ROMs = %v, %v", roms, err)
+	}
+	waitFor(t, func() bool { return len(partialFiles(t, f.romDir)) == 0 })
+}
+
+func TestArchiveDownloadStopsAfterASecondCDN429(t *testing.T) {
+	var hits atomic.Int32
+	f := newArchiveTransfer(t, rateLimitingCDN(t, 2, "1", &hits))
+	worker := f.start()
+	waitFor(t, func() bool { return worker.loadState() != zipDLDownloading })
+	model := worker.CatSnapshot()
+	if model.State != appui.DownloadProgressError || model.Detail != "itch.io is limiting requests. Wait a minute, then try again." {
+		t.Fatalf("snapshot = %v %q, want the rate-limit sentence", model.State, model.Detail)
+	}
+	if resolves, requests := f.resolves.Load(), hits.Load(); resolves != 2 || requests != 2 {
+		t.Fatalf("resolves %d, CDN requests %d; want one fresh URL, then the second 429 ends it", resolves, requests)
+	}
+	waitFor(t, func() bool { return len(partialFiles(t, f.romDir)) == 0 })
+}
+
+func TestArchiveDownloadCancelWhileWaitingToResolveAFreshURL(t *testing.T) {
+	var hits atomic.Int32
+	f := newArchiveTransfer(t, rateLimitingCDN(t, 1, "60", &hits))
+	logs := captureLogs(t)
+	worker := f.start()
+	waitFor(t, func() bool { return strings.Contains(logs.String(), "resolving a fresh URL after its cooldown") })
+	start := time.Now()
+	worker.CatCancel()
+	waitFor(t, func() bool { return worker.loadState() != zipDLDownloading })
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("cancel took %v; it waited out the cooldown", elapsed)
+	}
+	assertArchiveCancelled(t, worker, f.romDir)
+	if resolves, requests := f.resolves.Load(), hits.Load(); resolves != 1 || requests != 1 {
+		t.Fatalf("resolves %d, CDN requests %d; want no fresh URL after the cancel", resolves, requests)
+	}
 }
