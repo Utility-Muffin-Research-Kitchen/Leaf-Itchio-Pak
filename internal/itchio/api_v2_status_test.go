@@ -38,6 +38,20 @@ func TestAPIV2StatusesBecomeScreenText(t *testing.T) {
 				t.Errorf("%s HTTP %d: err = %v, want %q", name, status, err, want)
 			}
 		}
+		if name == "upload list" {
+			// A game whose upload list is gone was removed, which the update
+			// checks rely on.
+			for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(status)
+				}))
+				err := call(newClockedClient(srv, newFakeClock()))
+				srv.Close()
+				if !errors.Is(err, ErrGameRemoved) {
+					t.Errorf("%s HTTP %d: err = %v, want it to match ErrGameRemoved", name, status, err)
+				}
+			}
+		}
 		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)

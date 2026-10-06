@@ -22,3 +22,14 @@ var ErrUploadGone = errors.New("This file is no longer on itch.io.")
 
 // ErrGameRemoved is returned when the game page responds with HTTP 404 or 410.
 var ErrGameRemoved = errors.New("game removed (HTTP 404/410)")
+
+// uploadListGone is an HTTP 404 or 410 on a game's upload list: the game was
+// removed or is hidden. It reads as ErrUploadGone on screen and matches both
+// ErrUploadGone and ErrGameRemoved.
+type uploadListGone struct{}
+
+func (uploadListGone) Error() string { return ErrUploadGone.Error() }
+
+func (uploadListGone) Is(target error) bool {
+	return target == ErrUploadGone || target == ErrGameRemoved
+}

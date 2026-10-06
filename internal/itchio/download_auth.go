@@ -370,7 +370,7 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		return nil, netlimit.FromResponse("auth: upload list", resp)
 	case http.StatusNotFound, http.StatusGone:
 		logger.Warn("auth: upload list HTTP %d", resp.StatusCode)
-		return nil, ErrUploadGone
+		return nil, uploadListGone{}
 	default:
 		logger.Error("auth: upload list HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch uploads: HTTP %d", resp.StatusCode)
