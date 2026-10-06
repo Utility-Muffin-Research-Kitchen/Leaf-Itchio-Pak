@@ -374,3 +374,34 @@ func TestArchiveUpdateReplacesTheSupersededArchivesROM(t *testing.T) {
 		}
 	}
 }
+
+// A Pico-8 game extracts into its own folder by relative path, so its files
+// cannot be renamed apart. Installing another archive of the same game, such
+// as a second build the page still offers, replaces that game's files there;
+// only another game's or an unknown file is left alone (review finding R18-1).
+func TestPico8ArchiveReplacesItsOwnGamesFilesFromAnotherUpload(t *testing.T) {
+	primary, _ := transactionPaths(t)
+	inv, invPath := collisionInventory(t)
+	gameDir := filepath.Join(primary, "Roms", "PICO8", "Moss Garden")
+	pico8 := func(listing []roms.Offer) func(*ZIPPlan, string) {
+		return func(plan *ZIPPlan, _ string) {
+			plan.Pico8GameDir = gameDir + string(filepath.Separator)
+			plan.Upload.Offered = listing
+		}
+	}
+	cart := func(tag string) map[string][]byte {
+		return map[string][]byte{
+			"game/main.p8": []byte("pico-8 cartridge // " + tag + "\n"), "game/lib.lua": []byte("-- " + tag + "\n"),
+		}
+	}
+	listing := offers("moss-web.zip", "moss-carts.zip")
+	runArchiveFor(t, primary, ownerGame, inv, invPath, "moss-web.zip", zipOf(t, cart("WEB")), &settings.Config{}, pico8(listing))
+	second := runArchiveFor(t, primary, ownerGame, inv, invPath, "moss-carts.zip", zipOf(t, cart("CARTS")), &settings.Config{}, pico8(listing))
+
+	if len(second.skipped) != 0 || len(second.extracted) != 2 {
+		t.Fatalf("extracted %v skipped %v, want both files", second.extracted, second.skipped)
+	}
+	if got := readFile(t, filepath.Join(gameDir, "main.p8")); !strings.Contains(got, "CARTS") {
+		t.Fatalf("main.p8 = %q, want the second archive's cart", got)
+	}
+}

@@ -216,7 +216,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			if len(p8Files) > 1 {
 				sort.Slice(p8Files, func(i, j int) bool { return naturalLess(p8Files[i], p8Files[j]) })
 				m3uPath := filepath.Join(gameDir, safe+".m3u")
-				if s.ownedElsewhere(m3uPath) {
+				if s.ownedByAnotherGame(m3uPath) {
 					logger.Warn("zip-download: pico8 m3u: another game's file is already saved as %s", filepath.Base(m3uPath))
 				} else if err := os.WriteFile(m3uPath, []byte(strings.Join(p8Files, "\n")+"\n"), 0644); err != nil {
 					logger.Warn("zip-download: pico8 m3u write: %v", err)
@@ -490,7 +490,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		}
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
-		if s.ownedElsewhere(dest) {
+		if s.ownedByAnotherGame(dest) {
 			logger.Warn("7z-download: pico8 %s: another game's file is already saved there", base)
 			s.skipped = append(s.skipped, base)
 			continue
@@ -560,8 +560,18 @@ func (s *ArchiveDownloadWorker) namer() *installNamer {
 	return newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, s.names).withListing(s.plan.Upload)
 }
 
+// ownedByAnotherGame reports whether dest holds another game's file or one
+// the app does not know. A Pico-8 game extracts by relative path into its
+// own folder, where its files cannot be renamed apart, so files from any
+// upload of the same game are replaced there.
+func (s *ArchiveDownloadWorker) ownedByAnotherGame(dest string) bool {
+	namer := s.namer()
+	namer.anyUpload = true
+	return !namer.replaceable(dest)
+}
+
 // ownedElsewhere reports whether dest holds a file this archive may not
-// replace: another game's, another upload's, or one the app does not know.
+// replace: another game's, another build's, or one the app does not know.
 func (s *ArchiveDownloadWorker) ownedElsewhere(dest string) bool {
 	return !s.namer().replaceable(dest)
 }
@@ -991,7 +1001,7 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
 
-		if s.ownedElsewhere(dest) {
+		if s.ownedByAnotherGame(dest) {
 			logger.Warn("zip-download: pico8 %s: another game's file is already saved there", base)
 			s.skipped = append(s.skipped, base)
 			continue
