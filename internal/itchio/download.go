@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 )
 
 // knownNonROMExts lists extensions that are definitely not supported ROM/disc files.
@@ -59,7 +61,11 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 	// Step 1: get CSRF token from game page
 	resp, err := c.http.Get(gameURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch game page: %w", err)
+		return nil, safeRequestError("fetch game page", err)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		resp.Body.Close()
+		return nil, netlimit.FromResponse("uploads: game page", resp)
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		resp.Body.Close()
@@ -88,9 +94,16 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 	form := url.Values{"csrf_token": {csrf}, "suggested_amount": {"0"}}
 	postResp, err := c.http.Post(postURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("download_url POST: %w", err)
+		return nil, safeRequestError("download_url POST", err)
 	}
 	defer postResp.Body.Close()
+	if postResp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("uploads: download_url POST", postResp)
+	}
+	if postResp.StatusCode != http.StatusOK {
+		logger.Error("uploads: download_url POST HTTP %d", postResp.StatusCode)
+		return nil, fmt.Errorf("download_url POST: HTTP %d", postResp.StatusCode)
+	}
 
 	var dlResult struct {
 		URL string `json:"url"`
@@ -115,6 +128,9 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 
 	// Step 4: parse the signed download page for upload IDs + filenames + CSRF token
 	dlPage, err := c.ParseDownloadPage(dlResult.URL)
+	if errors.Is(err, ErrRateLimited) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parse download page: %w", err)
 	}
@@ -220,6 +236,9 @@ func (c *Client) ResolveFreeURLContext(ctx context.Context, upload Upload) (stri
 		return "", fmt.Errorf("read resolver response: %w", readErr)
 	}
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", netlimit.FromResponse("uploads: resolver", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("uploads: resolver HTTP %d: %.200s", resp.StatusCode, rawBody)
 		return "", fmt.Errorf("resolve CDN URL: HTTP %d", resp.StatusCode)
@@ -292,6 +311,9 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return netlimit.FromResponse("stream", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("stream: HTTP %d fetching file", resp.StatusCode)
 		return fmt.Errorf("file download status %d", resp.StatusCode)
@@ -376,6 +398,9 @@ func (c *Client) FetchFileHeader(cdnURL string, n int) ([]byte, error) {
 		return nil, safeRequestError("header fetch", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("header fetch", resp)
+	}
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
 		logger.Error("header fetch: HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("header fetch: HTTP %d", resp.StatusCode)

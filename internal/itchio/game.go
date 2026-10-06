@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
@@ -270,6 +271,9 @@ func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("download-page", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("download-page: HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch download page: HTTP %d", resp.StatusCode)

@@ -183,7 +183,12 @@ func safeRequestError(operation string, err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
 	case errors.Is(err, ErrRateLimited):
-		return fmt.Errorf("%s: %w", operation, ErrRateLimited)
+		// No operation prefix: the download screens show this text as is.
+		var limited *RateLimitedError
+		if errors.As(err, &limited) {
+			return limited
+		}
+		return ErrRateLimited
 	}
 	var networkErr net.Error
 	if errors.As(err, &networkErr) && networkErr.Timeout() {

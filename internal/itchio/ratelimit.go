@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 )
 
 // Starting values from the upstream refresh plan. Change them only with a test
@@ -33,15 +34,7 @@ const (
 // RateLimitedError reports that a host asked the app to slow down and the
 // request could not be sent, or retried, within its limits. It matches
 // ErrRateLimited with errors.Is.
-type RateLimitedError struct {
-	Host string
-}
-
-func (err *RateLimitedError) Error() string {
-	return "rate limited by " + err.Host
-}
-
-func (err *RateLimitedError) Is(target error) bool { return target == ErrRateLimited }
+type RateLimitedError = netlimit.RateLimitedError
 
 // hostCooldown is the shared back-off state for one host.
 type hostCooldown struct {
