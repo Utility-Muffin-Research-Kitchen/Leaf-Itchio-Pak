@@ -76,7 +76,7 @@ func newRateLimitTransport(wrapped http.RoundTripper, replayHosts ...string) *ra
 		wrapped:     wrapped,
 		replayHosts: extra,
 		hosts:       make(map[string]*hostCooldown),
-		now:     time.Now,
+		now:         time.Now,
 		sleepUntil: func(ctx context.Context, wake time.Time) error {
 			return waitForRetry(ctx, time.Until(wake))
 		},
