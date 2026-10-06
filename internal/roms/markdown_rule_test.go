@@ -31,28 +31,28 @@ func markdownTexts() map[string][]byte {
 	return map[string][]byte{"README.md": []byte("# About\n\nUse the arrows.\n"), "LICENSE.md": []byte(license)}
 }
 
-func TestArchiveMDIsROM(t *testing.T) {
+func TestMDIsROM(t *testing.T) {
 	sega := make([]byte, 0x200)
 	copy(sega[0x100:], "SEGA GENESIS    ")
-	if !roms.ArchiveMDIsROM(sega) {
+	if !roms.MDIsROM(sega) {
 		t.Error("SGDK-style header was not a ROM")
 	}
 	for name, data := range megaDriveHeaderVariants() {
-		if !roms.ArchiveMDIsROM(data) {
+		if !roms.MDIsROM(data) {
 			t.Errorf("%s was not a ROM", name)
 		}
 	}
 	for name, data := range markdownTexts() {
-		if roms.ArchiveMDIsROM(data) {
+		if roms.MDIsROM(data) {
 			t.Errorf("%s was a ROM", name)
 		}
 	}
 	// A 4 KB window that ends inside a multi-byte character is still text.
 	cut := []byte(strings.Repeat("a", 4095) + "©")
-	if roms.ArchiveMDIsROM(cut) {
+	if roms.MDIsROM(cut) {
 		t.Error("text cut inside a character was a ROM")
 	}
-	if roms.ArchiveMDIsROM(nil) {
+	if roms.MDIsROM(nil) {
 		t.Error("an empty file was a ROM")
 	}
 }

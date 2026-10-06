@@ -13,13 +13,13 @@ import (
 // text before it is treated as Markdown rather than a Mega Drive ROM.
 const markdownTextWindow = 4096
 
-// ArchiveMDIsROM decides whether an archive member named "*.md" is a Mega
-// Drive ROM or Markdown, from its first bytes. "SEGA" at 0x100 or 0x101
+// MDIsROM decides whether a file named "*.md", an archive member or a
+// top-level upload, is a Mega Drive ROM or Markdown, from its first bytes. "SEGA" at 0x100 or 0x101
 // marks a ROM header; TMSS also accepts the leading space some images use.
 // Otherwise the member is Markdown only when its first 4 KB read as text:
 // no NUL bytes and valid UTF-8. Anything else is a ROM, such as an image
 // without a header.
-func ArchiveMDIsROM(header []byte) bool {
+func MDIsROM(header []byte) bool {
 	if len(header) >= 0x104 && string(header[0x100:0x104]) == "SEGA" {
 		return true
 	}
@@ -53,7 +53,7 @@ func looksLikeText(data []byte) bool {
 // the name does not decide it, by its first DetectBufSize bytes read through
 // open. It returns the kind and the name, whose extension the first bytes
 // may correct. A ".md" member is a Mega Drive ROM or Markdown by
-// ArchiveMDIsROM. Image names are never promoted to ROMs. A member that
+// MDIsROM. Image names are never promoted to ROMs. A member that
 // cannot be read stays KindOther, and for a ".md" name the read error is
 // returned as well.
 func ClassifyArchiveMember(name string, open func() (io.ReadCloser, error)) (FileKind, string, error) {
@@ -67,7 +67,7 @@ func ClassifyArchiveMember(name string, open func() (io.ReadCloser, error)) (Fil
 		if err != nil {
 			return KindOther, name, err
 		}
-		if ArchiveMDIsROM(header) {
+		if MDIsROM(header) {
 			return KindROM, name, nil
 		}
 		return KindOther, name, nil
