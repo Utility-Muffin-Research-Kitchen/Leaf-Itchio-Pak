@@ -159,3 +159,26 @@ func TestCatalogControllerSearchesUncachedPreviewLocally(t *testing.T) {
 		t.Fatalf("cleared search view = %d games, want the full preview page", len(controller.viewGames))
 	}
 }
+
+// Before the cache exists, a persisted Downloaded sort must still list the
+// downloaded games on the preview page instead of an empty list.
+func TestCatalogControllerDownloadedSortOnUncachedPreview(t *testing.T) {
+	const downloadedURL = "https://example.invalid/downloaded"
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{
+		downloadedURL: {GameURL: downloadedURL, Files: []inventory.DownloadedFile{{Filename: "game.gb"}}},
+	}}
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: inv, sortMode: itchio.SortModeDL,
+		pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "Not Downloaded", URL: "https://example.invalid/other"},
+		{Title: "Downloaded", URL: downloadedURL},
+	}}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 1 || model.Items[0].Title != "Downloaded" {
+		t.Fatalf("Downloaded sort on the preview = state %v, items %#v; want the one downloaded game",
+			model.State, model.Items)
+	}
+}

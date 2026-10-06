@@ -411,10 +411,16 @@ func (controller *CatalogController) rebuildView() {
 	if controller.cursor >= 0 && controller.cursor < len(controller.viewGames) {
 		selectedURL = controller.viewGames[controller.cursor].URL
 	}
+	// Until the cache is ready the preview page is what is shown, so the
+	// inventory-based sorts must look at it rather than the empty cache.
+	shown := controller.cachedGames
+	if !controller.cacheReady {
+		shown = controller.previewGames
+	}
 	downloaded := make(map[string]bool)
 	pending := make(map[string]bool)
 	removed := make(map[string]bool)
-	for _, game := range controller.cachedGames {
+	for _, game := range shown {
 		if controller.inv.IsPresent(game.URL) {
 			downloaded[game.URL] = true
 		}
@@ -425,11 +431,9 @@ func (controller *CatalogController) rebuildView() {
 			removed[game.URL] = true
 		}
 	}
-	filtered := controller.cachedGames
-	if !controller.cacheReady {
-		// The preview page is one untagged feed, so only search and sort apply.
-		filtered = controller.previewGames
-	} else if controller.platformFilter != "" {
+	filtered := shown
+	// The preview page is one untagged feed, so only search and sort apply.
+	if controller.cacheReady && controller.platformFilter != "" {
 		filtered = applyPlatformFilter(filtered, controller.platformFilter)
 	}
 	if controller.searchQuery != "" {
