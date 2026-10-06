@@ -423,7 +423,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	}
 	// signOutRejected signs out after itch.io rejected the stored key.
 	signOutRejected := func() {
-		if err := account.SignOut(); err != nil {
+		if err := account.SignOutRejected(); err != nil {
 			logger.Error("sign-in: %v", err)
 		}
 		if settingsFlow != nil && settingsModel != nil {
@@ -730,6 +730,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	drawCurrent := func() error {
+		// itch.io rejected the stored key at startup: say so once on the
+		// list, and keep the flag in config until you close the notice.
+		if cfg.SignedOutNotice && route == catRouteList {
+			model.NoticeTitle, model.Notice = "Signed out", "itch.io signed you out. Sign in again from Settings."
+		} else if !cfg.SignedOutNotice {
+			model.NoticeTitle, model.Notice = "", ""
+		}
 		if powerPending {
 			if pendingPowerAction == power.ActionShutdown {
 				return waitShutdown.Draw()
@@ -1218,6 +1225,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					}
 				case appui.ListIntentDismissNotice:
 					list.DismissNotice(model.Cursor)
+				case appui.ListIntentCloseNotice:
+					model.NoticeTitle, model.Notice = "", ""
+					cfg.SignedOutNotice = false
+					if err := cfg.Save(cfgPath); err != nil {
+						logger.Warn("settings: %v", err)
+					}
 				}
 			}
 			redraw = true

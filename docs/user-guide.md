@@ -156,7 +156,8 @@ owner-only permissions against physical access, and the key is not encrypted.
 It never appears on screen. **Sign Out** clears it and the owned-game cache but
 keeps downloads and inventory. The app cannot revoke the key on itch.io, so
 delete it from your itch.io account's API keys if you lose the card. If itch.io
-stops accepting the key, the app signs you out and asks you to sign in again.
+stops accepting the key, the app signs you out and says so on the game list
+until you press A.
 
 Earlier releases stored a typed API key. This release removes it, and the list
 of games that key owned, on first start and opens Settings so you can sign in.

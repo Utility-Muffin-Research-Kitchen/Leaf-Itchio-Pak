@@ -264,7 +264,9 @@ the key stays valid on the website until the user deletes it. A 401 from
 `/profile`, or a 403 carrying itch.io's JSON `errors` list
 (`ErrSignInRejected`), signs out, at startup or when checking the account;
 network errors and a 403 page from anything in between (a proxy or
-Cloudflare) never do. The device code, verifier,
+Cloudflare) never do. A startup sign-out sets `signed_out_notice` in
+`config.json`, and the main list shows "itch.io signed you out. Sign in again
+from Settings." until you close it; signing in again clears it. The device code, verifier,
 approval code and key are never logged.
 
 Typed API keys are gone: `settings.Load` removes a stored `api_key`, sets

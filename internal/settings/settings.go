@@ -63,7 +63,10 @@ type Config struct {
 	CredentialWarningAccepted bool `json:"api_key_physical_warning_accepted,omitempty"`
 	// LegacyKeyRemoved is set when Load removed a manually entered API key,
 	// so the app can explain once that sign-in replaces it.
-	LegacyKeyRemoved bool                             `json:"legacy_key_removed,omitempty"`
+	LegacyKeyRemoved bool `json:"legacy_key_removed,omitempty"`
+	// SignedOutNotice is set when itch.io rejected the stored key at
+	// startup; the main list explains it once, until you close the notice.
+	SignedOutNotice  bool                             `json:"signed_out_notice,omitempty"`
 	ROMSelection     string                           `json:"rom_selection"`
 	ROMLocation      string                           `json:"rom_location"`
 	ROMDestinations  map[string]RememberedDestination `json:"remembered_rom_destinations,omitempty"`

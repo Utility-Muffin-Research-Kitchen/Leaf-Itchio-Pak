@@ -42,7 +42,7 @@ func (account *Account) SetOwnedChanged(callback func([]itchio.OwnedGame)) {
 func (account *Account) Store(token string) error {
 	previous := *account.cfg
 	account.cfg.AuthToken, account.cfg.AuthUser = token, ""
-	account.cfg.LegacyKeyRemoved = false
+	account.cfg.LegacyKeyRemoved, account.cfg.SignedOutNotice = false, false
 	if err := account.cfg.Save(account.cfgPath); err != nil {
 		*account.cfg = previous
 		return fmt.Errorf("save sign-in: %w", err)
@@ -62,6 +62,17 @@ func (account *Account) SignOut() error {
 	}
 	logger.RemoveSecret(tokenSecretLabel)
 	return account.reset()
+}
+
+// SignOutRejected signs out after itch.io rejected the stored key, and
+// keeps a notice pending so the main list can explain it.
+func (account *Account) SignOutRejected() error {
+	account.cfg.SignedOutNotice = true
+	if err := account.SignOut(); err != nil {
+		account.cfg.SignedOutNotice = false
+		return err
+	}
+	return nil
 }
 
 // Validated records the account name and owned games from a successful

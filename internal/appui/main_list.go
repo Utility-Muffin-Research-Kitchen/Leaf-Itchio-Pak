@@ -63,6 +63,7 @@ const (
 	ListIntentPreviousPlatform
 	ListIntentNextPlatform
 	ListIntentDismissNotice
+	ListIntentCloseNotice
 )
 
 type MainListModel struct {
@@ -74,6 +75,10 @@ type MainListModel struct {
 	Platform    string
 	Sort        string
 	CacheStatus string
+	// NoticeTitle and Notice show a message over the list until A or B
+	// closes it.
+	NoticeTitle string
+	Notice      string
 }
 
 func NewMainListModel(items []ListItem) *MainListModel {
@@ -116,6 +121,12 @@ func (m *MainListModel) Handle(event InputEvent) ListIntent {
 	}
 	if event.Button == ButtonQuit {
 		return ListIntentExit
+	}
+	if m.Notice != "" {
+		if event.Button == ButtonA || event.Button == ButtonB {
+			return ListIntentCloseNotice
+		}
+		return ListIntentNone
 	}
 	if m.State == ListError {
 		switch event.Button {

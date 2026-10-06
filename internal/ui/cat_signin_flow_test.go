@@ -413,3 +413,27 @@ func TestSignInWarnsBeforeTheFirstSignIn(t *testing.T) {
 		t.Fatalf("second sign-in state = %v, want no second warning", again.State)
 	}
 }
+
+// R21-6: when itch.io rejects the stored key at startup, the sign-out keeps
+// a notice flag in the config until you close the notice; signing in again
+// clears it.
+func TestStartupRejectionKeepsANoticeUntilShown(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := &settings.Config{AuthToken: "old-key", AuthUser: "tester"}
+	account := NewAccount(cfg, cfgPath, filepath.Join(dir, "owned_cache.json"), itchio.NewClientWithBase("https://example.invalid"))
+	t.Cleanup(func() { logger.RemoveSecret(tokenSecretLabel) })
+	if err := account.SignOutRejected(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := settings.Load(cfgPath)
+	if err != nil || loaded.SignedIn() || !loaded.SignedOutNotice {
+		t.Fatalf("saved config = %+v, %v; want signed out with the notice pending", loaded, err)
+	}
+	if err := account.Store("new-key"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SignedOutNotice {
+		t.Fatal("signing in again must drop the pending notice")
+	}
+}
