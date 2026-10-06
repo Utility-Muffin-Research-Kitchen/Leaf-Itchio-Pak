@@ -566,6 +566,12 @@ type archiveEntry struct {
 	base string // file name, with the extension its first bytes confirm
 }
 
+// classifiedName is the entry's path with the extension classification
+// gave it. The ROM chooser and the preflight plan list members by it.
+func (entry archiveEntry) classifiedName() string {
+	return path.Join(path.Dir(entry.name), entry.base)
+}
+
 // installable reports whether extraction looks at the entry at all.
 // Directories and macOS metadata never install.
 func (entry archiveEntry) installable() bool {
@@ -606,7 +612,7 @@ func (s *ArchiveDownloadWorker) installEntries(entries []archiveEntry, logPrefix
 		}
 		switch entry.kind {
 		case roms.KindROM, roms.KindROMSupport:
-			if !s.shouldExtractROM(entry.name) {
+			if !s.shouldExtractROM(entry.classifiedName()) {
 				continue
 			}
 			dest, err := s.extractROMFromOpener(entry.open, int64(entry.size), entry.name, entry.base, now)
@@ -647,7 +653,7 @@ func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
 		if !entry.installable() {
 			continue
 		}
-		if (entry.kind == roms.KindROM || entry.kind == roms.KindROMSupport) && s.shouldExtractROM(name) {
+		if (entry.kind == roms.KindROM || entry.kind == roms.KindROMSupport) && s.shouldExtractROM(entry.classifiedName()) {
 			natural := s.romDest(entry.base)
 			key := strings.ToLower(filepath.Clean(natural))
 			dest, planned := owned[key]
@@ -1023,19 +1029,10 @@ func classifyWithMagic(name string, open func() (io.ReadCloser, error)) (roms.Fi
 	return roms.ClassifyArchiveMember(name, open)
 }
 
+// shouldExtractROM reports whether the ROM member with the classified name
+// is one the user chose (or no choice applied to its type).
 func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
-	if !s.plan.DownloadROMs {
-		return false
-	}
-	if len(s.plan.SelectedROMs) == 0 {
-		return true
-	}
-	ext := strings.ToLower(roms.ROMExt(name))
-	chosen, ok := s.plan.SelectedROMs[ext]
-	if !ok {
-		return true
-	}
-	return chosen == name || chosen == filepath.Base(name)
+	return s.plan.shouldExtractROM(name)
 }
 
 // extractPico8ZIP extracts all .p8, .p8.png, and .lua files from r into

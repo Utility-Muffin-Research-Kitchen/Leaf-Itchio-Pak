@@ -33,3 +33,21 @@ func TestArchiveInstallsMegaDriveVariantsButNotMarkdown(t *testing.T) {
 		t.Fatalf("MD folder = %v (extracted %v)", keys(got), worker.extracted)
 	}
 }
+
+// The ROM chooser picks by the classified name. A member whose bytes make it
+// a .md ROM under another extension (sonic.dat) is not installed when a
+// different .md was picked (review finding R23-5).
+func TestArchiveChoiceComparesTheClassifiedName(t *testing.T) {
+	sega := make([]byte, 0x200)
+	copy(sega[0x100:], "SEGA MEGA DRIVE ")
+	alt := append([]byte(nil), sega...)
+	alt[0x1F0] = 1
+	data := zipOf(t, map[string][]byte{"sonic.dat": sega, "alt.md": alt})
+	worker, gbDir := runArchive(t, "bundle.zip", data, &settings.Config{}, false, func(plan *ZIPPlan, _ string) {
+		plan.SelectedROMs = map[string]string{".md": "alt.md"}
+	})
+	got := filesIn(t, filepath.Join(filepath.Dir(gbDir), "MD"))
+	if len(got) != 1 || got["alt.md"] == "" {
+		t.Fatalf("MD folder = %v (extracted %v), want only the chosen alt.md", keys(got), worker.extracted)
+	}
+}
