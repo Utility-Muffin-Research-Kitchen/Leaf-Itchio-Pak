@@ -237,6 +237,12 @@ the live token exchange still need a full device sign-in check.
    screen is still saved and checked: the app keeps the flow until it is
    idle.
 
+A power action (sleep or shutdown) waits only for that exchange and for its
+key to be saved (`CatSignInFlow.Busy`). A sign-in still getting a code or
+waiting for approval is cancelled and its screen closed
+(`CatSignInFlow.YieldToPower`); the account check after the key is saved is
+not protected either.
+
 Errors are reported by cause: 400 `invalid_grant` is an expired code, any
 other 400 or a 404 on these three endpoints is `ErrSignInUnavailable` (sign-in
 is set up wrong, such as an invalid scope), and 429 on the code request or the

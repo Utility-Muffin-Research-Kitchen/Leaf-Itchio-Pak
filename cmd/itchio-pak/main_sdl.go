@@ -1270,6 +1270,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			redraw = true
 		}
 		if powerPending {
+			// A sign-in only waiting for approval gives way: it is cancelled
+			// and its screen closed, so the power action is not held for the
+			// code's ten-minute lifetime.
+			if signInFlow != nil && signInFlow.YieldToPower(signInModel) {
+				closeSignIn()
+			}
 			busy := list.IsBusy() || updateSvc.IsRunning()
 			busy = busy || detailModel != nil && detailModel.State == appui.DetailLoading
 			busy = busy || downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading
@@ -1279,7 +1285,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			busy = busy || managementScansPending > 0
 			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
 			busy = busy || settingsFlow != nil && settingsFlow.Busy()
-			busy = busy || ui.SignInBusy(signInModel)
+			busy = busy || signInFlow.Busy()
 			if !busy {
 				if pendingPowerAction == power.ActionShutdown {
 					logger.Info("power: Cat routes idle, writing /tmp/poweroff")
@@ -1375,7 +1381,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			// The code's countdown changes once a second.
 			ctx.RequestFrameIn(1000)
 			redraw = true
-		} else if route == catRouteSignIn && ui.SignInBusy(signInModel) {
+		} else if route == catRouteSignIn && signInModel != nil &&
+			(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking) {
 			ctx.RequestFrameIn(100)
 			redraw = true
 		} else if list.IsBusy() {

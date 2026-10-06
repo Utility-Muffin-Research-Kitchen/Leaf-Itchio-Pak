@@ -46,6 +46,9 @@ type CatSignInFlow struct {
 	cancel  context.CancelFunc
 	// work counts goroutines that have not delivered their result yet.
 	work atomic.Int32
+	// keys counts keys being exchanged or received but not saved yet: the
+	// only sign-in work that holds a power action.
+	keys atomic.Int32
 }
 
 func NewCatSignInFlow(client *itchio.Client, account *Account, wake func()) (*CatSignInFlow, *appui.SignInModel) {
@@ -78,9 +81,13 @@ func (flow *CatSignInFlow) Start(model *appui.SignInModel) {
 		}
 		// itch.io issues the key in this exchange. Cancelling it would
 		// leave a key on the account that the app never saw.
+		flow.keys.Add(1)
 		exchangeCtx, done := context.WithTimeout(context.WithoutCancel(ctx), exchangeTimeout)
 		token, err := login.Exchange(exchangeCtx, code)
 		done()
+		if token == "" {
+			flow.keys.Add(-1)
+		}
 		flow.publish(signInUpdate{attempt: attempt, token: token, err: err})
 	}()
 }
@@ -95,6 +102,27 @@ func (flow *CatSignInFlow) Cancel() {
 	flow.attempt++
 }
 
+// Busy reports whether a key is being exchanged or is not saved yet. That
+// short window is the only sign-in work a power action waits for: waiting
+// for approval is cancelled instead, and the account check starts only after
+// the key is saved.
+func (flow *CatSignInFlow) Busy() bool { return flow != nil && flow.keys.Load() > 0 }
+
+// YieldToPower gives way to a power action. A sign-in that is getting a code
+// or waiting for approval is cancelled, and it returns true so the caller
+// closes the screen. Otherwise nothing changes; see Busy.
+func (flow *CatSignInFlow) YieldToPower(model *appui.SignInModel) bool {
+	if model == nil || flow.Busy() {
+		return false
+	}
+	if model.State != appui.SignInStarting && model.State != appui.SignInWaiting {
+		return false
+	}
+	logger.Info("sign-in: cancelled for a power action")
+	flow.Cancel()
+	return true
+}
+
 // Idle reports whether nothing is left to deliver, so the app can drop a
 // flow whose screen is closed.
 func (flow *CatSignInFlow) Idle() bool {
@@ -106,11 +134,6 @@ func (flow *CatSignInFlow) publish(update signInUpdate) {
 	if flow.wake != nil {
 		flow.wake()
 	}
-}
-
-// SignInBusy reports whether a sign-in is in progress on model.
-func SignInBusy(model *appui.SignInModel) bool {
-	return model != nil && model.State != appui.SignInDone && model.State != appui.SignInError
 }
 
 // Sync applies finished work and reports whether model changed. model is
@@ -154,6 +177,7 @@ func (flow *CatSignInFlow) apply(model *appui.SignInModel, update signInUpdate) 
 
 // store saves a key itch.io issued and starts the account check.
 func (flow *CatSignInFlow) store(model *appui.SignInModel, update signInUpdate) {
+	defer flow.keys.Add(-1)
 	if err := flow.account.Store(update.token); err != nil {
 		logger.Error("sign-in: %v", err)
 		if model != nil {

@@ -125,7 +125,9 @@ func (f *signInFixture) syncUntil(t *testing.T, done func(*appui.SignInModel) bo
 	}
 }
 
-func settled(model *appui.SignInModel) bool { return !SignInBusy(model) }
+func settled(model *appui.SignInModel) bool {
+	return model.State == appui.SignInDone || model.State == appui.SignInError
+}
 
 func TestSignInStoresTheKeyAndLoadsTheAccount(t *testing.T) {
 	site := newSignInSite(t)
@@ -288,5 +290,49 @@ func TestSignInFinishesTheKeyExchangeAfterYouCancel(t *testing.T) {
 	f.syncDetached(t)
 	if site.tokens.Load() != 1 || f.cfg.Credential() != signInKey {
 		t.Fatalf("exchanges answered %d, config = %+v; want the key saved", site.tokens.Load(), f.cfg)
+	}
+}
+
+// R21-1: a power press while the QR code waits for approval cancels the
+// sign-in at once. Nothing protects that wait, polling stops, and an
+// approval that comes later stores no key.
+func TestPowerCancelsASignInWaitingForApproval(t *testing.T) {
+	site := newSignInSite(t)
+	site.setPoll("pending")
+	f := startSignIn(t, site, &settings.Config{})
+	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInWaiting })
+	if !f.flow.YieldToPower(f.model) {
+		t.Fatal("a sign-in waiting for approval must give way to the power action")
+	}
+	if f.flow.Busy() {
+		t.Fatal("a cancelled sign-in still holds the power action")
+	}
+	polls := site.polls.Load()
+	site.setPoll("approved")
+	time.Sleep(1500 * time.Millisecond) // longer than the 1 s poll interval
+	f.syncDetached(t)
+	if f.cfg.SignedIn() || site.tokens.Load() != 0 || site.polls.Load() != polls {
+		t.Fatalf("after the power press: signed in %v, exchanges %d, polls %d -> %d",
+			f.cfg.SignedIn(), site.tokens.Load(), polls, site.polls.Load())
+	}
+}
+
+// R21-1: only the short key exchange holds a power action, until its key
+// is saved. The account check after it does not.
+func TestPowerWaitsOnlyForTheKeyExchange(t *testing.T) {
+	site := newSignInSite(t)
+	site.tokenGate = make(chan struct{})
+	site.profileGate = make(chan struct{})
+	t.Cleanup(func() { close(site.profileGate) })
+	f := startSignIn(t, site, &settings.Config{})
+	waitSignal(t, site.tokenReached, "the token exchange")
+	f.flow.Sync(f.model)
+	if f.flow.YieldToPower(f.model) || !f.flow.Busy() {
+		t.Fatal("the key exchange must finish before the power action")
+	}
+	close(site.tokenGate)
+	f.syncUntil(t, func(m *appui.SignInModel) bool { return m.State == appui.SignInChecking })
+	if f.flow.Busy() || f.flow.YieldToPower(f.model) || !f.cfg.SignedIn() {
+		t.Fatalf("after the key was saved: busy %v, signed in %v; the check must not hold power", f.flow.Busy(), f.cfg.SignedIn())
 	}
 }
