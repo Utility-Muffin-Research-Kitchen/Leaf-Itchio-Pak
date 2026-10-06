@@ -20,9 +20,20 @@ func ROMExt(filename string) string {
 type Upload struct {
 	Filename      string
 	URL           string
-	UploadID      string // itch.io upload ID (API-based paid download)
+	UploadID      string // itch.io upload ID
 	DownloadKeyID string // itch.io download key ID (API-based paid download)
 	NeedsFormat   bool   // true if the user must choose a supported format
+	// Offered lists every upload the game's page offered when this one was
+	// chosen. An install uses it to tell an update, whose old upload is
+	// gone from the page, from another build the page still offers. Nil
+	// when the listing is unknown.
+	Offered []Offer
+}
+
+// Offer identifies one upload a game's page offered.
+type Offer struct {
+	Filename string
+	UploadID string
 }
 
 var psxLaunchExts = map[string]bool{

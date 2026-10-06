@@ -20,15 +20,21 @@ const maxNameAttempts = 999
 
 // installNamer picks where one install writes its files. A path may be
 // written when nothing is there, or when everything recorded there is this
-// game's earlier copy from the same upload, which is a reinstall. A file
-// another game installed, another upload of this game, or a file the app
-// does not know about is never replaced; the new file gets a name of its
-// own instead. Names are compared case-insensitively, as FAT32 does.
+// game's earlier copy from the same upload (a reinstall) or from an upload
+// the page no longer offers (an update). A file another game installed,
+// another build of this game the page still offers, or a file the app does
+// not know about is never replaced; the new file gets a name of its own
+// instead. Names are compared case-insensitively, as FAT32 does.
 type installNamer struct {
 	inv     *inventory.Inventory
 	gameURL string
 	title   string
 	upload  string
+	// uploadID and offered come from the listing the user chose from;
+	// offered is nil when that listing is unknown, and then another
+	// upload's file is never treated as superseded.
+	uploadID string
+	offered  []roms.Offer
 	// anyUpload accepts every file of this game as replaceable. Music
 	// records do not say which upload they came from.
 	anyUpload bool
@@ -38,6 +44,33 @@ type installNamer struct {
 
 func newInstallNamer(inv *inventory.Inventory, game itchio.Game, upload string, names *roms.NameReservations) *installNamer {
 	return &installNamer{inv: inv, gameURL: game.URL, title: game.Title, upload: upload, names: names}
+}
+
+// withListing records the chosen upload's ID and the listing it came from.
+func (n *installNamer) withListing(upload roms.Upload) *installNamer {
+	n.uploadID, n.offered = upload.UploadID, upload.Offered
+	return n
+}
+
+// sameUpload reports whether file came from the upload being installed.
+func (n *installNamer) sameUpload(file inventory.DownloadedFile) bool {
+	return file.UploadName() == n.upload || file.UploadID != "" && file.UploadID == n.uploadID
+}
+
+// superseded reports whether the listing no longer offers file's upload, so
+// installing this upload updates that build rather than adding another.
+func (n *installNamer) superseded(file inventory.DownloadedFile) bool {
+	if n.offered == nil {
+		return false
+	}
+	name := file.UploadName()
+	stem := strings.TrimSuffix(name, roms.ROMExt(name))
+	for _, offer := range n.offered {
+		if file.UploadID != "" && offer.UploadID == file.UploadID || offer.Filename == name || offer.Filename == stem {
+			return false
+		}
+	}
+	return true
 }
 
 func (n *installNamer) owners(path string) []inventory.FileOwner {
@@ -52,7 +85,10 @@ func (n *installNamer) owners(path string) []inventory.FileOwner {
 func (n *installNamer) replaceable(path string) bool {
 	owners := n.owners(path)
 	for _, owner := range owners {
-		if owner.GameURL != n.gameURL || !n.anyUpload && owner.File.UploadName() != n.upload {
+		if owner.GameURL != n.gameURL {
+			return false
+		}
+		if !n.anyUpload && !n.sameUpload(owner.File) && !n.superseded(owner.File) {
 			return false
 		}
 	}
@@ -115,9 +151,11 @@ func (n *installNamer) ownName(path string) (string, error) {
 
 // unifiedName returns where unified naming moves current, and whether that
 // name is title-based. The title name is used when this install may write
-// it. When it holds another build of this game, the file is named
-// "<Title> (<upload>)" so both builds stay. When it holds another game's or
-// an unknown file, the next free "<Title> (2)" is used.
+// it, which includes updating a build the page no longer offers. When it
+// holds another build of this game that the page still offers, or the
+// listing is unknown, the file is named "<Title> (<upload>)" so both builds
+// stay. When it holds another game's or an unknown file, the next free
+// "<Title> (2)" is used.
 func (n *installNamer) unifiedName(current string) (string, bool) {
 	target := roms.UnifiedTarget(current, n.title)
 	if target == "" {
@@ -127,6 +165,13 @@ func (n *installNamer) unifiedName(current string) (string, bool) {
 		return current, true
 	}
 	if n.free(target) {
+		for _, owner := range n.owners(target) {
+			if !n.anyUpload && !n.sameUpload(owner.File) {
+				logger.Info("unified-naming: %s updates %s, which the page no longer offers",
+					n.upload, owner.File.UploadName())
+				break
+			}
+		}
 		return realPath(target), true
 	}
 	ext := roms.ROMExt(filepath.Base(current))
@@ -185,7 +230,7 @@ func planInstallTargets(inv *inventory.Inventory, cfg *settings.Config, game itc
 	targets := make([]installTarget, len(downloads))
 	paths := make([]string, len(downloads))
 	for index, dl := range downloads {
-		path, err := newInstallNamer(inv, game, dl.Upload.Filename, names).ownName(dl.DestPath)
+		path, err := newInstallNamer(inv, game, dl.Upload.Filename, names).withListing(dl.Upload).ownName(dl.DestPath)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +257,7 @@ func planInstallTargets(inv *inventory.Inventory, cfg *settings.Config, game itc
 			logger.Info("unified-naming: keeping %q; another file in this download needs the same name", filepath.Base(paths[index]))
 			continue
 		}
-		final, unified := newInstallNamer(inv, game, dl.Upload.Filename, names).unifiedName(paths[index])
+		final, unified := newInstallNamer(inv, game, dl.Upload.Filename, names).withListing(dl.Upload).unifiedName(paths[index])
 		if !roms.SameFAT32Path(final, paths[index]) {
 			names.Claim(final)
 		}

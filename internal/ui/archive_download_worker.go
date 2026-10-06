@@ -557,7 +557,7 @@ func (s *ArchiveDownloadWorker) unifyArchiveROM(dest, logPrefix string) (string,
 // namer picks names for this archive's files: an earlier install of the same
 // archive for this game may be replaced, nothing else.
 func (s *ArchiveDownloadWorker) namer() *installNamer {
-	return newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, s.names)
+	return newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, s.names).withListing(s.plan.Upload)
 }
 
 // ownedElsewhere reports whether dest holds a file this archive may not
@@ -621,7 +621,7 @@ func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
 			dest, planned := owned[key]
 			if !planned {
 				var err error
-				if dest, err = newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, nil).ownName(natural); err != nil {
+				if dest, err = newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, nil).withListing(s.plan.Upload).ownName(natural); err != nil {
 					dest = natural
 				} else if !roms.SameFAT32Path(dest, natural) {
 					logger.Info("archive: %s belongs to another game or upload; saving as %s", filepath.Base(natural), filepath.Base(dest))

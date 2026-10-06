@@ -66,9 +66,11 @@ the same system, such as an update and the original jam release, or offers an
 archive, the app lists every upload instead and downloads only the one you
 choose.
 
-If you download another build for the same system later, the app keeps both.
-The first build keeps the title name, such as `Glory Hunters.gba`, and the
-next one is saved with its upload name added: `Glory Hunters (glory_ez4).gba`.
+If you later pick another build for the same system that the page still
+offers, the app keeps both: the first keeps the title name, such as
+`Glory Hunters.gba`, and the next gets its upload name added,
+`Glory Hunters (glory_ez4).gba`. An update that replaced the old upload on the
+page replaces the old file instead.
 
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before

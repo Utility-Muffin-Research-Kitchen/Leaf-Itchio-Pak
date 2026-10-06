@@ -163,7 +163,7 @@ func TestMultiDownloadKeepsAnotherGamesDiscs(t *testing.T) {
 }
 
 func runArchiveFor(t *testing.T, primary string, game itchio.Game, inv *inventory.Inventory, invPath,
-	filename string, data []byte, cfg *settings.Config) *ArchiveDownloadWorker {
+	filename string, data []byte, cfg *settings.Config, configure ...func(plan *ZIPPlan, primary string)) *ArchiveDownloadWorker {
 	t.Helper()
 	srv := freeFileServer(t, map[string][]byte{"9": data})
 	var manifest roms.ZIPManifest
@@ -183,6 +183,9 @@ func runArchiveFor(t *testing.T, primary string, game itchio.Game, inv *inventor
 	plan := ZIPPlan{
 		Upload: freeUpload(srv, "9", filename), CDNURL: srv.URL + "/cdn/9",
 		Manifest: manifest, DownloadROMs: true,
+	}
+	for _, apply := range configure {
+		apply(&plan, primary)
 	}
 	worker := NewArchiveDownloadWorker(itchio.NewClientWithBase(srv.URL), cfg, game, &itchio.GameDetail{}, plan, inv, invPath)
 	waitForWorker(t, func() bool { state := worker.loadState(); return state == zipDLDone || state == zipDLError })
@@ -261,35 +264,113 @@ func sameFAT32(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
-// A second build for the same system keeps the first one: both stay, under
-// distinct names (review finding R18-2, decision D2).
+// offers is the listing a page showed, by upload name.
+func offers(names ...string) []roms.Offer {
+	listing := make([]roms.Offer, 0, len(names))
+	for _, name := range names {
+		listing = append(listing, roms.Offer{Filename: name})
+	}
+	return listing
+}
+
+func offeredUpload(upload roms.Upload, listing []roms.Offer) roms.Upload {
+	upload.Offered = listing
+	return upload
+}
+
+// A second build for the same system that the page still offers keeps the
+// first one: both stay, under distinct names (review finding R18-2,
+// decision D2). Without a listing the app cannot tell, and keeps both.
 func TestDirectDownloadKeepsBothBuildsOfOneSystem(t *testing.T) {
+	for _, listing := range [][]roms.Offer{offers("glory.gba", "glory_ez4.gba"), nil} {
+		primary, _ := transactionPaths(t)
+		gbaDir := filepath.Join(primary, "Roms", "GBA")
+		inv, invPath := collisionInventory(t)
+		game := itchio.Game{Title: "Glory Hunters", URL: "https://dev.itch.io/glory-hunters", IsFree: true}
+		srv := freeFileServer(t, map[string][]byte{"1": []byte("PLAIN"), "2": []byte("EZ-IV")})
+		cfg := &settings.Config{UnifiedNaming: true}
+
+		plain := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+			offeredUpload(freeUpload(srv, "1", "glory.gba"), listing), filepath.Join(gbaDir, "glory.gba"))
+		ez := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+			offeredUpload(freeUpload(srv, "2", "glory_ez4.gba"), listing), filepath.Join(gbaDir, "glory_ez4.gba"))
+
+		if filepath.Base(plain.dest) != "Glory Hunters.gba" || filepath.Base(ez.dest) != "Glory Hunters (glory_ez4).gba" {
+			t.Fatalf("listing %v: saved %q and %q", listing, filepath.Base(plain.dest), filepath.Base(ez.dest))
+		}
+		got := filesIn(t, gbaDir)
+		if len(got) != 2 || got["Glory Hunters.gba"] != "PLAIN" || got["Glory Hunters (glory_ez4).gba"] != "EZ-IV" {
+			t.Fatalf("listing %v: GBA folder = %v", listing, keys(got))
+		}
+		if paths := entryPaths(t, inv, game.URL); len(paths) != 2 {
+			t.Fatalf("listing %v: inventory rows = %v, want one per build", listing, paths)
+		}
+
+		again := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+			offeredUpload(freeUpload(srv, "2", "glory_ez4.gba"), listing), inv.ExistingDestPath(game.URL, "glory_ez4.gba"))
+		if again.dest != ez.dest || len(filesIn(t, gbaDir)) != 2 {
+			t.Fatalf("listing %v: reinstalling the second build saved %q", listing, filepath.Base(again.dest))
+		}
+	}
+}
+
+// An update published under a new filename, with the old upload gone from
+// the page, is the same build: it replaces the title-named file and its
+// inventory row instead of keeping a second copy.
+func TestDirectDownloadReplacesABuildTheUpdateSuperseded(t *testing.T) {
 	primary, _ := transactionPaths(t)
-	gbaDir := filepath.Join(primary, "Roms", "GBA")
+	gbDir := filepath.Join(primary, "Roms", "GB")
 	inv, invPath := collisionInventory(t)
 	game := itchio.Game{Title: "Glory Hunters", URL: "https://dev.itch.io/glory-hunters", IsFree: true}
-	srv := freeFileServer(t, map[string][]byte{"1": []byte("PLAIN"), "2": []byte("EZ-IV")})
+	srv := freeFileServer(t, map[string][]byte{"1": gbROM("V1.0"), "2": gbROM("V1.1")})
 	cfg := &settings.Config{UnifiedNaming: true}
 
-	plain := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
-		freeUpload(srv, "1", "glory.gba"), filepath.Join(gbaDir, "glory.gba"))
-	ez := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
-		freeUpload(srv, "2", "glory_ez4.gba"), filepath.Join(gbaDir, "glory_ez4.gba"))
+	runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+		offeredUpload(freeUpload(srv, "1", "glory-1.0.gb"), offers("glory-1.0.gb")), filepath.Join(gbDir, "glory-1.0.gb"))
+	update := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
+		offeredUpload(freeUpload(srv, "2", "glory-1.1.gb"), offers("glory-1.1.gb")), filepath.Join(gbDir, "glory-1.1.gb"))
 
-	if filepath.Base(plain.dest) != "Glory Hunters.gba" || filepath.Base(ez.dest) != "Glory Hunters (glory_ez4).gba" {
-		t.Fatalf("saved %q and %q", filepath.Base(plain.dest), filepath.Base(ez.dest))
+	if filepath.Base(update.dest) != "Glory Hunters.gb" {
+		t.Fatalf("update saved as %q, want Glory Hunters.gb", filepath.Base(update.dest))
 	}
-	got := filesIn(t, gbaDir)
-	if len(got) != 2 || got["Glory Hunters.gba"] != "PLAIN" || got["Glory Hunters (glory_ez4).gba"] != "EZ-IV" {
-		t.Fatalf("GBA folder = %v", keys(got))
+	got := filesIn(t, gbDir)
+	if len(got) != 1 || !strings.Contains(got["Glory Hunters.gb"], "V1.1") {
+		t.Fatalf("GB folder = %v, want only the updated Glory Hunters.gb", keys(got))
 	}
-	if paths := entryPaths(t, inv, game.URL); len(paths) != 2 {
-		t.Fatalf("inventory rows = %v, want one per build", paths)
+	entry, _ := inv.Lookup(game.URL)
+	if len(entry.Files) != 1 || entry.Files[0].Filename != "glory-1.1.gb" {
+		t.Fatalf("inventory = %+v, want one row for glory-1.1.gb", entry.Files)
 	}
+}
 
-	again := runDirect(t, cfg, game, inv, invPath, serverURL(srv.URL),
-		freeUpload(srv, "2", "glory_ez4.gba"), inv.ExistingDestPath(game.URL, "glory_ez4.gba"))
-	if again.dest != ez.dest || len(filesIn(t, gbaDir)) != 2 {
-		t.Fatalf("reinstalling the second build saved %q", filepath.Base(again.dest))
+// The same holds for a soundtrack-less game archive: a new archive that
+// replaced the old one on the page updates the extracted ROM in place, with
+// or without unified naming.
+func TestArchiveUpdateReplacesTheSupersededArchivesROM(t *testing.T) {
+	for _, unified := range []bool{true, false} {
+		primary, _ := transactionPaths(t)
+		gbDir := filepath.Join(primary, "Roms", "GB")
+		inv, invPath := collisionInventory(t)
+		listing := func(name string) func(*ZIPPlan, string) {
+			return func(plan *ZIPPlan, _ string) { plan.Upload.Offered = offers(name) }
+		}
+		cfg := &settings.Config{UnifiedNaming: unified}
+		runArchiveFor(t, primary, ownerGame, inv, invPath, "moss-1.0.zip",
+			zipOf(t, map[string][]byte{"moss.gb": gbROM("V1.0")}), cfg, listing("moss-1.0.zip"))
+		update := runArchiveFor(t, primary, ownerGame, inv, invPath, "moss-1.1.zip",
+			zipOf(t, map[string][]byte{"moss.gb": gbROM("V1.1")}), cfg, listing("moss-1.1.zip"))
+
+		want := "moss.gb"
+		if unified {
+			want = "Moss Garden.gb"
+		}
+		got := filesIn(t, gbDir)
+		if len(got) != 1 || !strings.Contains(got[want], "V1.1") {
+			t.Fatalf("unified=%v: GB folder = %v (extracted %v), want only the updated %s", unified, keys(got), update.extracted, want)
+		}
+		entry, _ := inv.Lookup(ownerGame.URL)
+		if len(entry.Files) != 1 || entry.Files[0].SourceArchive != "moss-1.1.zip" {
+			t.Fatalf("unified=%v: inventory = %+v, want one row from moss-1.1.zip", unified, entry.Files)
+		}
 	}
 }

@@ -168,6 +168,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			DestPath:     finalDest,
 			DownloadedAt: time.Now(),
 			UnifiedName:  unifiedName,
+			UploadID:     dl.Upload.UploadID,
 		}
 		applyArtwork(&file, artwork)
 		s.inv.Add(s.game.URL, inventory.Entry{

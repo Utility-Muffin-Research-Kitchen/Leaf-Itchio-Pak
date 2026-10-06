@@ -138,6 +138,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 					DestPath:     finalDest,
 					DownloadedAt: time.Now(),
 					UnifiedName:  unifiedName,
+					UploadID:     upload.UploadID,
 				}
 				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{

@@ -109,7 +109,7 @@ func (flow *CatDownloadFlow) discover() {
 			update.kind, update.err = catDownloadUpdateUploads, err
 			for _, upload := range uploads {
 				update.uploads = append(update.uploads, roms.Upload{
-					Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
+					Filename: upload.Filename, URL: upload.URL, UploadID: upload.UploadID, NeedsFormat: upload.NeedsFormat,
 				})
 			}
 		}
@@ -250,6 +250,15 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 	if len(uploads) == 0 {
 		model.SetError("No downloadable files were found for this game.")
 		return
+	}
+	// Every upload carries the listing it is chosen from, so the install can
+	// tell an update (old upload gone) from another build (still offered).
+	listing := make([]roms.Offer, 0, len(uploads))
+	for _, upload := range uploads {
+		listing = append(listing, roms.Offer{Filename: upload.Filename, UploadID: upload.UploadID})
+	}
+	for index := range uploads {
+		uploads[index].Offered = listing
 	}
 	flow.uploads = uploads
 	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {
