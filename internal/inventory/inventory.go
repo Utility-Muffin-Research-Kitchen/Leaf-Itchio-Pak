@@ -104,6 +104,9 @@ type UpstreamFile struct {
 const (
 	SourcePage = "page"
 	SourceAPI  = "api"
+
+	RemovedByPage    = "page"
+	RemovedByListing = "listing"
 )
 
 type Entry struct {
@@ -122,6 +125,11 @@ type Entry struct {
 	GameRemovedAt         time.Time        `json:"game_removed_at,omitempty"`
 	RemovalDismissedAt    time.Time        `json:"removal_dismissed_at,omitempty"`
 	UnifiedNamingDisabled bool             `json:"unified_naming_disabled,omitempty"`
+	// RemovedBy records why GameRemovedAt is set: RemovedByPage when the game
+	// page was gone, RemovedByListing when a complete upload list no longer
+	// offered an installed upload or anything to replace it. A page that
+	// loads cannot clear a listing removal on its own.
+	RemovedBy string `json:"removed_by,omitempty"`
 	// AcknowledgedUploads maps an upload ID to the fingerprint of its last
 	// complete install ("" for a download without one). Update checks compare
 	// the listed version against it rather than against every file ever
@@ -819,8 +827,7 @@ func (inv *Inventory) MarkReachable(gameURL string) {
 	if !ok {
 		return
 	}
-	e.GameRemovedAt = time.Time{}
-	e.RemovalDismissedAt = time.Time{}
+	clearRemovalLocked(e)
 }
 
 // SetUpstreamFiles records a public-page list; retained for callers that do
@@ -970,50 +977,141 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 // complete list was replaced, so an upload of the same kind that you have
 // not installed and that was not known before is new.
 func markReplacementsOfMissingUploadsLocked(e *Entry, files []UpstreamFile, knownByID []bool, now time.Time) {
-	present := make(map[string]bool, len(files))
-	for _, file := range files {
-		present[file.UploadID] = true
-		for _, id := range file.PreviousUploadIDs {
-			present[id] = true
-		}
-	}
-	missingKinds := make(map[string]bool)
-	for _, installed := range e.Files {
-		if installed.UploadID == "" || present[installed.UploadID] || slices.Contains(e.LeftoverFiles, installed.DestPath) {
-			continue
-		}
-		name := installed.OriginalUpload
-		if name == "" {
-			name = installed.Filename
-		}
-		if kind := uploadKind(name); kind != "" {
-			missingKinds[kind] = true
-		}
-	}
-	if len(missingKinds) == 0 {
+	markReplacementsLocked(e, files, func(index int) bool { return !knownByID[index] }, now)
+}
+
+// markReplacementsLocked flags as new each eligible listed upload that can
+// replace an installed upload missing from files: one of the same kind that
+// you have not installed and that is not a desktop or web build. A kind you
+// still have a listed install of needs no replacement.
+func markReplacementsLocked(e *Entry, files []UpstreamFile, eligible func(int) bool, now time.Time) {
+	kinds := replaceableKindsLocked(e, files)
+	if len(kinds) == 0 {
 		return
 	}
-	for i := range files {
-		file := &files[i]
-		if knownByID[i] || file.UploadID == "" || !missingKinds[uploadKind(file.Filename)] {
+	for index := range files {
+		file := &files[index]
+		if !eligible(index) || file.UploadID == "" || file.DesktopOrWebOnly || file.IsNew || !kinds[uploadKind(file.Filename)] {
 			continue
 		}
-		installed := slices.ContainsFunc(e.Files, func(installed DownloadedFile) bool { return fileInstalledFrom(installed, *file) })
-		if !installed && !file.IsNew {
+		if !installedFromAnyLocked(e, *file) {
 			file.IsNew, file.SeenAt = true, now
 		}
 	}
 }
 
-// uploadKind groups uploads that can replace one another: the same system
-// extension, or any archive for an archive.
+// missingUploadsLocked returns the installed files whose upload, by ID or a
+// replaced ID, files no longer lists. Files without an upload ID cannot be
+// matched by ID, and left over files belong to an upload already handled.
+func missingUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
+	var missing []DownloadedFile
+	for _, installed := range e.Files {
+		if installed.UploadID == "" || slices.Contains(e.LeftoverFiles, installed.DestPath) {
+			continue
+		}
+		if !slices.ContainsFunc(files, func(file UpstreamFile) bool { return fileInstalledFrom(installed, file) }) {
+			missing = append(missing, installed)
+		}
+	}
+	return missing
+}
+
+// replaceableKindsLocked returns the kinds of missing installed uploads that
+// files offers no installed upload of: a listed upload of that kind would
+// replace them.
+func replaceableKindsLocked(e *Entry, files []UpstreamFile) map[string]bool {
+	kinds := make(map[string]bool)
+	for _, installed := range missingUploadsLocked(e, files) {
+		if kind := installedUploadKind(installed); kind != "" {
+			kinds[kind] = true
+		}
+	}
+	for _, file := range files {
+		kind := uploadKind(file.Filename)
+		if kinds[kind] && !file.DesktopOrWebOnly && installedFromAnyLocked(e, file) {
+			delete(kinds, kind)
+		}
+	}
+	return kinds
+}
+
+// unreplacedUploadsLocked returns the installed files whose upload files no
+// longer lists and that no listed upload of the same kind replaces. Desktop
+// and web builds replace nothing. From a complete API listing this proves the
+// game removed (decision D8); from any other listing an empty result is
+// evidence that a removal no longer holds.
+func unreplacedUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
+	var unreplaced []DownloadedFile
+	for _, installed := range missingUploadsLocked(e, files) {
+		kind := installedUploadKind(installed)
+		replaced := kind != "" && slices.ContainsFunc(files, func(file UpstreamFile) bool {
+			return !file.DesktopOrWebOnly && uploadKind(file.Filename) == kind
+		})
+		if !replaced {
+			unreplaced = append(unreplaced, installed)
+		}
+	}
+	return unreplaced
+}
+
+func installedFromAnyLocked(e *Entry, upload UpstreamFile) bool {
+	return slices.ContainsFunc(e.Files, func(installed DownloadedFile) bool { return fileInstalledFrom(installed, upload) })
+}
+
+func installedUploadKind(installed DownloadedFile) string {
+	if installed.OriginalUpload != "" {
+		return uploadKind(installed.OriginalUpload)
+	}
+	return uploadKind(installed.Filename)
+}
+
+// uploadKind groups uploads that can replace one another: ROMs of the same
+// system, music for music, or any archive for an archive.
 func uploadKind(name string) string {
 	ext := strings.ToLower(romFileExt(name))
-	switch ext {
-	case ".zip", ".7z", ".rar":
+	switch {
+	case ext == ".zip" || ext == ".7z" || ext == ".rar":
 		return "archive"
+	case roms.ClassifyEntry(name) == roms.KindMusic:
+		return "music"
+	}
+	if system, ok := leaf.CanonicalSystemForExtension(ext); ok {
+		return "system:" + system
 	}
 	return ext
+}
+
+// markRemovedLocked records a removal and why; an earlier removal keeps its
+// time, so a dismissal stays in effect.
+func markRemovedLocked(e *Entry, cause string, now time.Time) {
+	if e.GameRemovedAt.IsZero() {
+		e.GameRemovedAt = now
+	}
+	e.RemovedBy = cause
+}
+
+func clearRemovalLocked(e *Entry) {
+	e.GameRemovedAt, e.RemovalDismissedAt, e.RemovedBy = time.Time{}, time.Time{}, ""
+}
+
+// applyRemovalEvidenceLocked settles an entry's removed state from a listing
+// (decision D8): only a complete API listing can prove a removal, and any
+// listing that shows the installed upload, or one that replaces it, clears
+// one. A listing reached at all also clears a removal by a missing page.
+func applyRemovalEvidenceLocked(e *Entry, source string, complete bool, files []UpstreamFile, now time.Time) {
+	if e.RemovedBy != RemovedByListing {
+		clearRemovalLocked(e)
+	}
+	if files == nil {
+		return
+	}
+	unreplaced := unreplacedUploadsLocked(e, files)
+	switch {
+	case source == SourceAPI && complete && (len(files) == 0 || len(unreplaced) > 0):
+		markRemovedLocked(e, RemovedByListing, now)
+	case len(unreplaced) == 0:
+		clearRemovalLocked(e)
+	}
 }
 
 // LatestCheckedAt returns the most recent UpdateCheckedAt across all entries,

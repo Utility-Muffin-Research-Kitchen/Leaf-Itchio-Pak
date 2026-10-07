@@ -356,7 +356,7 @@ func (s *UpdateService) runCheck(request checkRequest) {
 		if !exists {
 			continue
 		}
-		result, err := s.checkGame(gameURL, gameIDs[gameURL], token, keys[gameIDs[gameURL]])
+		result, err := s.checkGame(gameURL, gameIDs[gameURL], token, keys[gameIDs[gameURL]], entry.IsFree)
 		if err == nil {
 			result.installed = entry.Files
 			pending[gameURL] = result
@@ -387,18 +387,27 @@ func (s *UpdateService) runCheck(request checkRequest) {
 				staleInstall[gameURL] = true
 				continue
 			}
+			now := time.Now()
 			if result.removed {
-				if entry.GameRemovedAt.IsZero() {
-					entry.GameRemovedAt = time.Now()
-				}
-			} else {
-				entry.GameRemovedAt, entry.RemovalDismissedAt = time.Time{}, time.Time{}
+				markRemovedLocked(entry, RemovedByPage, now)
+				continue
 			}
 			if result.files != nil {
 				s.inv.setUpstreamFilesLocked(entry, result.source, result.files)
 			} else {
-				entry.UpdateCheckedAt = time.Now()
+				entry.UpdateCheckedAt = now
 			}
+			evidence := result.files
+			if result.source == SourceAPI && result.files != nil {
+				// The stored rows also carry replaced upload IDs.
+				evidence = entry.KnownUpstreamFiles
+				if result.complete {
+					// R18-3: the upload that replaces an installed one that
+					// is gone shows as an update.
+					markReplacementsLocked(entry, entry.KnownUpstreamFiles, func(int) bool { return true }, now)
+				}
+			}
+			applyRemovalEvidenceLocked(entry, result.source, result.complete, evidence, now)
 		}
 	})
 	if !applied {
@@ -530,12 +539,16 @@ type upstreamResult struct {
 	installed []DownloadedFile
 	source    string
 	files     []UpstreamFile
-	removed   bool
+	// complete marks an API listing of every upload: fetched with the
+	// account's download key, or for a game recorded as free. Only such a
+	// listing can prove that an installed upload is gone (decision D8).
+	complete bool
+	removed  bool // the game page itself is gone
 }
 
 // checkGame lists metadata only. No update path creates a download session,
 // resolves a CDN URL, or starts the browser download_url handshake.
-func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamResult, error) {
+func (s *UpdateService) checkGame(gameURL, gameID, token, key string, free bool) (upstreamResult, error) {
 	if token != "" && gameID != "" {
 		if !s.pace() {
 			return upstreamResult{}, errUpdateStopped
@@ -552,10 +565,10 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamR
 					DesktopOrWebOnly: upload.DesktopOrWebOnly()})
 			}
 			if len(files) > 0 || key != "" {
-				// A complete list you can access with no downloadable files
-				// confirms removal; a replaced upload with others present
-				// does not.
-				return upstreamResult{source: SourceAPI, files: files, removed: len(files) == 0}, nil
+				// The caller decides removal: a complete list that no longer
+				// offers an installed upload, or anything of its kind, proves
+				// it; a replaced upload shows as an update instead.
+				return upstreamResult{source: SourceAPI, files: files, complete: key != "" || free}, nil
 			}
 			// Without a download key, an empty list may only mean you cannot
 			// access a paid game, including one that started charging after
