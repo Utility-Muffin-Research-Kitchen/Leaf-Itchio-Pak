@@ -356,7 +356,10 @@ func (s *UpdateService) runCheck(request checkRequest) {
 		if !exists {
 			continue
 		}
-		result, err := s.checkGame(gameURL, gameIDs[gameURL], token, keys[gameIDs[gameURL]], entry.IsFree)
+		result, err := s.checkGame(gameURL, gameIDs[gameURL], token, keys[gameIDs[gameURL]])
+		if err == nil && result.source == SourceAPI && !result.complete {
+			result.complete = s.keylessListingComplete(gameURL, entry, result.files)
+		}
 		if err == nil {
 			result.installed = entry.Files
 			pending[gameURL] = result
@@ -530,6 +533,32 @@ func setOf(values []string) map[string]bool {
 	return set
 }
 
+// keylessListingComplete reports whether an upload list fetched without a
+// download key lists every upload, so it can prove a removal: only when the
+// game is free now, not just when it was installed (decision D8). It uses the
+// price data.json gave this session, and fetches it only when the list lacks
+// an installed upload, which is rare. Unknown pricing makes the list
+// incomplete: it can still clear a removal, never set one.
+func (s *UpdateService) keylessListingComplete(gameURL string, entry Entry, files []UpstreamFile) bool {
+	if data, ok := s.client.CachedPrice(gameURL); ok {
+		return data.Pricing() != itchio.PricingPaid
+	}
+	preview := entry // a deep copy from Lookup
+	s.inv.setUpstreamFilesLocked(&preview, SourceAPI, files)
+	if len(missingUploadsLocked(&preview, preview.KnownUpstreamFiles)) == 0 {
+		return false
+	}
+	if !s.pace() {
+		return false
+	}
+	data, err := s.client.FetchGameData(gameURL)
+	if err != nil {
+		logger.Warn("update-svc: current pricing unavailable, not treating the upload list as complete: %v", err)
+		return false
+	}
+	return data.Pricing() != itchio.PricingPaid
+}
+
 // isGameRemoved reports whether err indicates a 404 or 410 HTTP response.
 func isGameRemoved(err error) bool {
 	return errors.Is(err, itchio.ErrGameRemoved)
@@ -540,7 +569,7 @@ type upstreamResult struct {
 	source    string
 	files     []UpstreamFile
 	// complete marks an API listing of every upload: fetched with the
-	// account's download key, or for a game recorded as free. Only such a
+	// account's download key, or for a game that is free now. Only such a
 	// listing can prove that an installed upload is gone (decision D8).
 	complete bool
 	removed  bool // the game page itself is gone
@@ -548,7 +577,7 @@ type upstreamResult struct {
 
 // checkGame lists metadata only. No update path creates a download session,
 // resolves a CDN URL, or starts the browser download_url handshake.
-func (s *UpdateService) checkGame(gameURL, gameID, token, key string, free bool) (upstreamResult, error) {
+func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamResult, error) {
 	if token != "" && gameID != "" {
 		if !s.pace() {
 			return upstreamResult{}, errUpdateStopped
@@ -562,13 +591,13 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string, free bool)
 				}
 				files = append(files, UpstreamFile{Filename: upload.Filename, DisplayName: upload.DisplayName,
 					UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
-					DesktopOrWebOnly: upload.DesktopOrWebOnly()})
+					DesktopOrWebOnly: upload.DesktopOrWebOnly(), Soundtrack: upload.Type == "soundtrack"})
 			}
 			if len(files) > 0 || key != "" {
 				// The caller decides removal: a complete list that no longer
 				// offers an installed upload, or anything of its kind, proves
 				// it; a replaced upload shows as an update instead.
-				return upstreamResult{source: SourceAPI, files: files, complete: key != "" || free}, nil
+				return upstreamResult{source: SourceAPI, files: files, complete: key != ""}, nil
 			}
 			// Without a download key, an empty list may only mean you cannot
 			// access a paid game, including one that started charging after

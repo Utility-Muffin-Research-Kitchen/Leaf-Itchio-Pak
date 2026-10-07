@@ -99,6 +99,9 @@ type UpstreamFile struct {
 	// DesktopOrWebOnly marks an upload that only ships desktop or web
 	// builds. A new one never raises an update badge.
 	DesktopOrWebOnly bool `json:"desktop_or_web_only,omitempty"`
+	// Soundtrack marks an upload itch.io lists as a soundtrack. It is music
+	// whatever its file name, so it never replaces a ROM archive.
+	Soundtrack bool `json:"soundtrack,omitempty"`
 }
 
 const (
@@ -991,7 +994,7 @@ func markReplacementsLocked(e *Entry, files []UpstreamFile, eligible func(int) b
 	}
 	for index := range files {
 		file := &files[index]
-		if !eligible(index) || file.UploadID == "" || file.DesktopOrWebOnly || file.IsNew || !kinds[uploadKind(file.Filename)] {
+		if !eligible(index) || file.UploadID == "" || file.DesktopOrWebOnly || file.IsNew || !kinds[upstreamKind(*file)] {
 			continue
 		}
 		if !installedFromAnyLocked(e, *file) {
@@ -1027,7 +1030,7 @@ func replaceableKindsLocked(e *Entry, files []UpstreamFile) map[string]bool {
 		}
 	}
 	for _, file := range files {
-		kind := uploadKind(file.Filename)
+		kind := upstreamKind(file)
 		if kinds[kind] && !file.DesktopOrWebOnly && installedFromAnyLocked(e, file) {
 			delete(kinds, kind)
 		}
@@ -1045,7 +1048,7 @@ func unreplacedUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
 	for _, installed := range missingUploadsLocked(e, files) {
 		kind := installedUploadKind(installed)
 		replaced := kind != "" && slices.ContainsFunc(files, func(file UpstreamFile) bool {
-			return !file.DesktopOrWebOnly && uploadKind(file.Filename) == kind
+			return !file.DesktopOrWebOnly && upstreamKind(file) == kind
 		})
 		if !replaced {
 			unreplaced = append(unreplaced, installed)
@@ -1058,11 +1061,25 @@ func installedFromAnyLocked(e *Entry, upload UpstreamFile) bool {
 	return slices.ContainsFunc(e.Files, func(installed DownloadedFile) bool { return fileInstalledFrom(installed, upload) })
 }
 
+// installedUploadKind is the kind of upload an installed file came from:
+// music for a track, even one extracted from an archive.
 func installedUploadKind(installed DownloadedFile) string {
+	if installed.ContentKind == ContentKindMusic || installed.FileType == FileTypeMusic {
+		return "music"
+	}
 	if installed.OriginalUpload != "" {
 		return uploadKind(installed.OriginalUpload)
 	}
 	return uploadKind(installed.Filename)
+}
+
+// upstreamKind is uploadKind for a listed upload, which itch.io may mark as a
+// soundtrack whatever its file name.
+func upstreamKind(file UpstreamFile) string {
+	if file.Soundtrack {
+		return "music"
+	}
+	return uploadKind(file.Filename)
 }
 
 // uploadKind groups uploads that can replace one another: ROMs of the same

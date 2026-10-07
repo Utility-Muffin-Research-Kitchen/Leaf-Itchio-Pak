@@ -21,6 +21,9 @@ type removalSite struct {
 	uploads  string // upload list JSON, or "" for HTTP status uploadsStatus
 	status   int    // upload list status when uploads is ""
 	pageBody string
+	price    string // current data.json price; "" is free
+	dataDown bool   // data.json answers 503
+	dataHits int
 }
 
 func newRemovalSite(t *testing.T) *removalSite {
@@ -44,6 +47,13 @@ func newRemovalSite(t *testing.T) *removalSite {
 			fmt.Fprint(w, site.uploads)
 		case "/game":
 			fmt.Fprint(w, site.pageBody)
+		case "/game/data.json":
+			site.dataHits++
+			if site.dataDown {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			fmt.Fprintf(w, `{"id":42,"price":%q}`, site.price)
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -166,7 +176,7 @@ func TestOnlyACompleteAccessibleListingProvesRemoval(t *testing.T) {
 			site.pageBody = pageDesktopOnly
 		}},
 		{"no download key for a paid game", true, func(site *removalSite) {
-			site.owned, site.uploads, site.pageBody = false, listingDesktopOnly, pageDesktopOnly
+			site.owned, site.uploads, site.pageBody, site.price = false, listingDesktopOnly, pageDesktopOnly, "$5.00"
 		}},
 		{"upload list refused", true, func(site *removalSite) {
 			site.owned, site.uploads, site.status, site.pageBody = false, "", http.StatusForbidden, pageDesktopOnly
@@ -210,5 +220,69 @@ func TestPublicPageKeepsARemovalItCannotDisprove(t *testing.T) {
 	svc.runCheck(checkRequest{all: true})
 	if inv.IsRemoved(url) {
 		t.Fatal("the public page lists the file again but the game stays removed")
+	}
+}
+
+func TestKeylessListingProvesRemovalOnlyForAGameFreeNow(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		price    string
+		dataDown bool
+		removed  bool
+	}{
+		{"still free", "", false, true},
+		{"name your own price", "$0.00", false, true},
+		{"now paid", "$5.00", false, false},
+		{"pricing unavailable", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			site := newRemovalSite(t)
+			site.price, site.dataDown = tc.price, tc.dataDown
+			// Installed while free; the account holds no download key.
+			svc, inv, url := removalService(t, site, true, true, listingWithROM)
+			site.mu.Lock()
+			hits := site.dataHits
+			site.mu.Unlock()
+			if hits != 0 {
+				t.Fatalf("a check with nothing missing fetched data.json %d times", hits)
+			}
+			site.set(func(site *removalSite) { site.uploads = listingDesktopOnly })
+			svc.runCheck(checkRequest{all: true})
+			if inv.IsRemoved(url) != tc.removed {
+				t.Fatalf("removed = %v, want %v", inv.IsRemoved(url), tc.removed)
+			}
+		})
+	}
+}
+
+func TestSoundtrackDoesNotReplaceAROMArchive(t *testing.T) {
+	site := newRemovalSite(t)
+	site.owned = true
+	dir := t.TempDir()
+	rom := filepath.Join(dir, "game.gb")
+	if err := os.WriteFile(rom, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url := site.URL + "/game"
+	inv := emptyInventory()
+	inv.Add(url, Entry{GameID: "42", Title: "Game"}, DownloadedFile{Filename: "game.gb", OriginalUpload: "game-gb.zip",
+		SourceArchive: "game-gb.zip", UploadID: "1", UploadFingerprint: "build:1", DestPath: rom})
+	client := itchio.NewClientWithBase(site.URL)
+	client.HTTPClient().Transport = http.DefaultTransport
+	client.SetAuthToken("A")
+	svc := NewUpdateService(inv, filepath.Join(dir, "inventory.json"), client, nil)
+	site.set(func(site *removalSite) {
+		site.uploads = `{"uploads":[{"id":1,"filename":"game-gb.zip","build_id":1},{"id":5,"filename":"ost.zip","type":"soundtrack"}]}`
+	})
+	svc.runCheck(checkRequest{all: true})
+	site.set(func(site *removalSite) {
+		site.uploads = `{"uploads":[{"id":5,"filename":"ost.zip","type":"soundtrack"}]}`
+	})
+	svc.runCheck(checkRequest{all: true})
+	if !inv.IsRemoved(url) {
+		t.Fatal("a soundtrack counted as a replacement for the deleted ROM archive")
+	}
+	if pending := inv.PendingUpdateFiles(url); len(pending) != 0 {
+		t.Fatalf("pending = %+v, want the soundtrack not offered as the update", pending)
 	}
 }

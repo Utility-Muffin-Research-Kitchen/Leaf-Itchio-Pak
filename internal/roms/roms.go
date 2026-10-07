@@ -48,6 +48,8 @@ type ListedUpload struct {
 	// DesktopOrWebOnly marks an upload that only ships desktop or web
 	// builds; a new one never raises an update badge.
 	DesktopOrWebOnly bool
+	// Soundtrack marks an upload itch.io lists as a soundtrack.
+	Soundtrack bool
 }
 
 // ViaAPI reports whether the upload downloads through the itch.io API.

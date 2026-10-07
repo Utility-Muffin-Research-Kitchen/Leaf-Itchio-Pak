@@ -175,7 +175,7 @@ func uploadListing(api bool, uploads []itchio.Upload) *roms.UploadListing {
 		listing.Uploads = append(listing.Uploads, roms.ListedUpload{
 			Filename: upload.Filename, DisplayName: upload.DisplayName,
 			UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
-			DesktopOrWebOnly: upload.DesktopOrWebOnly(),
+			DesktopOrWebOnly: upload.DesktopOrWebOnly(), Soundtrack: upload.Type == "soundtrack",
 		})
 	}
 	return listing

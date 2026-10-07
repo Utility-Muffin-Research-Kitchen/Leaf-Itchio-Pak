@@ -206,6 +206,7 @@ func installListing(upload roms.Upload) ([]inventory.UpstreamFile, string) {
 		files = append(files, inventory.UpstreamFile{
 			Filename: listed.Filename, DisplayName: listed.DisplayName, UploadID: listed.UploadID,
 			Fingerprint: listed.Fingerprint, DesktopOrWebOnly: listed.DesktopOrWebOnly,
+			Soundtrack: listed.Soundtrack,
 		})
 	}
 	return files, source
