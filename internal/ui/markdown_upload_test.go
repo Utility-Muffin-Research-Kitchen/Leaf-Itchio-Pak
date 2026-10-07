@@ -105,3 +105,34 @@ func TestDownloadListingKeepsAMegaDriveUpload(t *testing.T) {
 		t.Fatalf("plan = %+v, want only sonic.md", plan)
 	}
 }
+
+// The API listings, for a free game and for a purchase, drop a text
+// README.md too. Its first bytes come through the same install session as
+// the download (review finding R23-4).
+func TestAPIListingsDropATextMarkdownUpload(t *testing.T) {
+	const uploads = `{"uploads":[{"id":1,"filename":"game.gb"},{"id":2,"filename":"README.md"}]}`
+	for _, listing := range []string{"free", "purchase"} {
+		t.Run(listing, func(t *testing.T) {
+			f := newInstallAPI(t, uploads, map[string][]byte{
+				"1": gbROM("MAIN"), "2": []byte("# Fixture\n\nPress A to jump.\n"),
+			})
+			flow := f.flow(t, &settings.Config{ROMLocation: "auto"})
+			var update catDownloadUpdate
+			if listing == "free" {
+				flow.game.IsFree = true
+				update = flow.fetchFree()
+			} else {
+				update = flow.fetchForKey(itchio.OwnedKey{ID: 7})
+			}
+			if update.err != nil {
+				t.Fatal(update.err)
+			}
+			if len(update.uploads) != 1 || update.uploads[0].Filename != "game.gb" {
+				t.Fatalf("uploads = %+v, want only game.gb", update.uploads)
+			}
+			if creates, resolves, _ := f.counts(); len(creates) != 1 || len(resolves) != 1 {
+				t.Fatalf("README.md probe: %d install sessions, %d resolves; want one of each", len(creates), len(resolves))
+			}
+		})
+	}
+}
