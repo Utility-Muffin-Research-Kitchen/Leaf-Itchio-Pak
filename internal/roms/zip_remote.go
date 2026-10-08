@@ -229,11 +229,11 @@ func inspectViaRange(client *http.Client, cdnURL string, size int64, onProgress 
 	if err != nil {
 		return ZIPManifest{}, fmt.Errorf("zip.NewReader: %w", err)
 	}
-	manifest := manifestFromZipReader(r)
+	manifest, err := manifestFromZipReader(r)
 	if rra.limited != nil {
 		return ZIPManifest{}, rra.limited
 	}
-	return manifest, nil
+	return manifest, err
 }
 
 func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, error) {
@@ -270,10 +270,13 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 		return ZIPManifest{}, fmt.Errorf("zip.OpenReader: %w", err)
 	}
 	defer r.Close()
-	return manifestFromZipReader(&r.Reader), nil
+	return manifestFromZipReader(&r.Reader)
 }
 
-func manifestFromZipReader(r *zip.Reader) ZIPManifest {
+// manifestFromZipReader classifies a ZIP's members. A ".md" member that
+// cannot be read fails the inspection instead of passing as Markdown; the
+// range inspection then falls back to a full download.
+func manifestFromZipReader(r *zip.Reader) (ZIPManifest, error) {
 	var m ZIPManifest
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -285,21 +288,15 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 		if IsInMacOSMetaDir(f.Name) {
 			continue
 		}
-		name := filepath.Base(f.Name)
-		kind := ClassifyEntry(name)
-
-		// For entries the extension-based classifier cannot identify, read the
-		// file header and attempt magic-byte detection. This handles uploads
-		// whose filenames carry no extension or a version-number suffix (e.g.
-		// "soulbound_v1_0" → detected as .p8 from the pico-8 text header).
-		// Skip magic detection for known image extensions: a .png is always
-		// artwork even if it is 128 px wide (e.g. raspi/linux Pico-8 exports).
-		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
-			if detected := classifyByMagic(f); detected != "" {
-				stem := strings.TrimSuffix(name, filepath.Ext(name))
-				name = stem + detected
-				kind = KindROM
-			}
+		// Entries the extension cannot identify are classified from their
+		// first bytes. This handles uploads whose filenames carry no
+		// extension or a version-number suffix (e.g. "soulbound_v1_0" is a
+		// .p8 by its pico-8 text header) and ".md", which is Markdown or a
+		// Mega Drive ROM. Known image extensions are never promoted: a .png
+		// is artwork even if it is 128 px wide (raspi/linux Pico-8 exports).
+		kind, name, err := ClassifyArchiveMember(filepath.Base(f.Name), f.Open)
+		if err != nil {
+			return ZIPManifest{}, fmt.Errorf("read %s: %w", filepath.Base(f.Name), err)
 		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
@@ -309,7 +306,7 @@ func manifestFromZipReader(r *zip.Reader) ZIPManifest {
 			CompressedSize: f.CompressedSize64,
 		})
 	}
-	return m
+	return m, nil
 }
 
 // IsImageExt reports whether ext is a common image format extension.
@@ -330,19 +327,4 @@ func IsImageExt(ext string) bool {
 func IsInMacOSMetaDir(name string) bool {
 	name = filepath.ToSlash(strings.ReplaceAll(name, "\\", "/"))
 	return strings.HasPrefix(name, "__MACOSX/") || strings.Contains(name, "/__MACOSX/")
-}
-
-// classifyByMagic opens a ZIP entry, reads the first DetectBufSize uncompressed
-// bytes, and returns the detected playable ROM extension. Returns "" on any
-// error or when no signature matches. Works for both local and remote ZIPs
-// (remote reads trigger HTTP Range requests via the underlying ReaderAt).
-func classifyByMagic(f *zip.File) string {
-	rc, err := f.Open()
-	if err != nil {
-		return ""
-	}
-	defer rc.Close()
-	buf := make([]byte, DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	return DetectPlayableROMExt(buf[:n])
 }

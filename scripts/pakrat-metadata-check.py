@@ -3,13 +3,23 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 import re
 
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 SHA_IMAGE = re.compile(r"^[a-z0-9./_-]+(?:\.[a-z0-9./_-]+)*@sha256:[a-f0-9]{64}$")
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--root",
+    type=pathlib.Path,
+    default=pathlib.Path(__file__).resolve().parent.parent,
+    help="directory holding pakrat.json, pak.json and release-lock.json",
+)
+ROOT = parser.parse_args().root
 
 
 def load(name: str) -> dict:
@@ -37,6 +47,12 @@ require(metadata.get("id") == "org.umrk.itchio", "unexpected app id")
 require(metadata.get("name") == "Itch.io", "unexpected app name")
 require(metadata.get("repo_url") == "https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak", "unexpected repo URL")
 require("compat" not in metadata, "NextUI compatibility metadata is not allowed")
+author = metadata.get("author")
+require(isinstance(author, str) and author != "", "pakrat.json author is required")
+require(
+    author == runtime.get("author"),
+    f"pakrat.json author {author!r} must match pak.json author {runtime.get('author')!r}",
+)
 
 packages = metadata.get("leaf", {}).get("packages", [])
 require(isinstance(packages, list) and len(packages) == 1, "exactly one Leaf package is required")

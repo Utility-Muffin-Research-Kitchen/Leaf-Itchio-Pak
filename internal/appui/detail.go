@@ -19,6 +19,19 @@ type DetailGame struct {
 	Title, Author, URL, Platform    string
 	Price                           float64
 	IsFree, Downloaded, CanDownload bool
+	// NeedsSignIn marks a paid game that can download once the user signs
+	// in with itch.io; A then opens sign-in instead.
+	NeedsSignIn bool
+	// Owned is set when the game is in the signed-in account's owned set.
+	// A paid game that is neither downloadable nor waiting for a sign-in is
+	// one that account does not own (NotOwned).
+	Owned bool
+}
+
+// NotOwned reports a paid game the signed-in account does not own: it has
+// no Download action, and the page points at the itch.io QR code instead.
+func (game DetailGame) NotOwned() bool {
+	return !game.IsFree && !game.CanDownload && !game.NeedsSignIn
 }
 
 type DetailModel struct {
@@ -42,6 +55,7 @@ const (
 	DetailIntentSettings
 	DetailIntentDownload
 	DetailIntentManage
+	DetailIntentSignIn
 )
 
 func NewDetailModel(game DetailGame) *DetailModel {
@@ -114,6 +128,9 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonA:
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
+		}
+		if m.Game.NeedsSignIn && !m.BrowserOnly {
+			return DetailIntentSignIn
 		}
 	}
 	return DetailIntentNone

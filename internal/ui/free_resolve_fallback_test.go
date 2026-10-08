@@ -86,7 +86,7 @@ func TestRefusedFreeAPIDownloadRetriesThroughTheWebFlow(t *testing.T) {
 	}
 	upload := roms.Upload{Filename: "api.gb", UploadID: "5", Install: roms.NewInstallSession("42", "")}
 	dest := filepath.Join(primary, "Roms", "GB", "api.gb")
-	worker := NewDirectDownloadWorker(itchio.NewClientWithBase(site.srv.URL), &settings.Config{APIKey: sessionTestKey},
+	worker := NewDirectDownloadWorker(itchio.NewClientWithBase(site.srv.URL), &settings.Config{AuthToken: sessionTestKey},
 		itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true}, &itchio.GameDetail{GameID: "42"},
 		upload, dest, inv, filepath.Join(t.TempDir(), "inventory.json"))
 	waitFor(t, func() bool { return worker.loadState() != dlDownloading })
@@ -104,7 +104,7 @@ func TestRefusedFreeAPIDownloadRetriesThroughTheWebFlow(t *testing.T) {
 func TestRefusedFreeAPIFormatProbeRetriesThroughTheWebFlow(t *testing.T) {
 	site := newRefusingSite(t, nesTestROM())
 	flow := &CatDownloadFlow{
-		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: sessionTestKey},
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{AuthToken: sessionTestKey},
 		game:    itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true},
 		detail:  &itchio.GameDetail{GameID: "42"},
 		updates: make(chan catDownloadUpdate, 1),
@@ -119,7 +119,7 @@ func TestRefusedFreeAPIFormatProbeRetriesThroughTheWebFlow(t *testing.T) {
 func TestRefusedPurchaseDownloadDoesNotTryTheWebFlow(t *testing.T) {
 	site := newRefusingSite(t, nesTestROM())
 	flow := &CatDownloadFlow{
-		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: sessionTestKey},
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{AuthToken: sessionTestKey},
 		game:    itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game"},
 		detail:  &itchio.GameDetail{GameID: "42"},
 		updates: make(chan catDownloadUpdate, 1),
@@ -139,7 +139,7 @@ func TestRefusedFreeAPIDownloadReportsAWebRateLimit(t *testing.T) {
 	site := newRefusingSite(t, nesTestROM())
 	site.webBusy = true
 	flow := &CatDownloadFlow{
-		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: sessionTestKey},
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{AuthToken: sessionTestKey},
 		game:    itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true},
 		detail:  &itchio.GameDetail{GameID: "42"},
 		updates: make(chan catDownloadUpdate, 1),

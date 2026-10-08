@@ -83,7 +83,7 @@ func TestBackStopsTheFreeGameAPILookup(t *testing.T) {
 		w.Header().Set("Retry-After", "20")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
-	flow := NewCatDownloadFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{APIKey: sessionTestKey},
+	flow := NewCatDownloadFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{AuthToken: sessionTestKey},
 		itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game", IsFree: true},
 		&itchio.GameDetail{GameID: "42"}, nil, nil)
 	select {
@@ -110,7 +110,7 @@ func TestBackStopsTheSignedOutWebLookup(t *testing.T) {
 
 func TestBackStopsThePurchaseLookup(t *testing.T) {
 	site := newStallingSite(t)
-	flow := NewCatDownloadFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{APIKey: sessionTestKey},
+	flow := NewCatDownloadFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{AuthToken: sessionTestKey},
 		itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game"},
 		&itchio.GameDetail{GameID: "42"}, nil, nil)
 	site.waitReached(t)
@@ -122,7 +122,7 @@ func TestBackStopsThePurchaseLookup(t *testing.T) {
 func TestBackStopsTheFormatProbeResolve(t *testing.T) {
 	site := newStallingSite(t)
 	flow := &CatDownloadFlow{
-		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{APIKey: sessionTestKey},
+		client: itchio.NewClientWithBase(site.srv.URL), cfg: &settings.Config{AuthToken: sessionTestKey},
 		game:    itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game"},
 		detail:  &itchio.GameDetail{GameID: "42"},
 		updates: make(chan catDownloadUpdate, 2),
@@ -138,7 +138,7 @@ func TestBackStopsTheFormatProbeResolve(t *testing.T) {
 // R17-2: Back on "Inspecting" stops the archive's resolve.
 func TestBackStopsTheArchiveInspectionResolve(t *testing.T) {
 	site := newStallingSite(t)
-	archive := NewCatArchiveFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{APIKey: sessionTestKey},
+	archive := NewCatArchiveFlow(itchio.NewClientWithBase(site.srv.URL), &settings.Config{AuthToken: sessionTestKey},
 		itchio.Game{Title: "Leafbound", URL: site.srv.URL + "/game"},
 		roms.Upload{Filename: "game.zip", UploadID: "5", Install: roms.NewInstallSession("42", "")}, nil, nil)
 	site.waitReached(t)

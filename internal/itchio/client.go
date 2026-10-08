@@ -158,7 +158,9 @@ func (t *h2FallbackTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, err
 }
 
-func productUserAgent(version string) string {
+// productToken is "Leaf-Itchio-Pak/<version>", with "dev" for an empty
+// version.
+func productToken(version string) string {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		version = "dev"
@@ -171,7 +173,11 @@ func productUserAgent(version string) string {
 		}
 		return value
 	}, version)
-	return fmt.Sprintf("%s/%s (+%s)", productName, version, productURL)
+	return productName + "/" + version
+}
+
+func productUserAgent(version string) string {
+	return fmt.Sprintf("%s (+%s)", productToken(version), productURL)
 }
 
 // safeRequestError keeps credential-bearing request URLs out of UI/crash
@@ -241,13 +247,10 @@ func newHTTPClient(version string, replayHosts ...string) *http.Client {
 }
 
 type Client struct {
-	http   *http.Client
-	base   string // itch.io web base URL (pages, feeds, free downloads)
-	butler string // api.itch.io base URL (API v2, bearer-authenticated)
-
-	// Background API key validation state (atomic, written once per session).
-	apiKeyStatus   int32 // stores APIKeyStatus constants
-	apiKeyChecking int32 // 0 = not started, 1 = started (CAS gate)
+	http    *http.Client
+	product string // productToken, also sent as sign-in device_info
+	base    string // itch.io web base URL (pages, feeds, free downloads)
+	butler  string // api.itch.io base URL (API v2, bearer-authenticated)
 
 	// keyGeneration changes whenever the API key is replaced or removed, so
 	// account-derived results computed under an older key are discarded.
@@ -270,9 +273,10 @@ func NewClient() *Client {
 // clients use "dev" as the version.
 func NewClientWithVersion(version string) *Client {
 	return &Client{
-		http:   newHTTPClient(version),
-		base:   "https://itch.io",
-		butler: apiItchIO,
+		http:    newHTTPClient(version),
+		product: productToken(version),
+		base:    "https://itch.io",
+		butler:  apiItchIO,
 	}
 }
 
@@ -285,9 +289,10 @@ func NewClientWithBase(base string) *Client {
 // NewClientWithBaseAndButler is used in tests to override both base URLs.
 func NewClientWithBaseAndButler(base, butler string) *Client {
 	return &Client{
-		http:   newHTTPClient("dev", urlHost(base), urlHost(butler)),
-		base:   base,
-		butler: butler,
+		http:    newHTTPClient("dev", urlHost(base), urlHost(butler)),
+		product: productToken("dev"),
+		base:    base,
+		butler:  butler,
 	}
 }
 
@@ -325,4 +330,19 @@ func (c *Client) HTTPClient() *http.Client {
 // Use when the CDN URL was already resolved by ResolveFreeURL or ResolveAuthURL.
 func (c *Client) DownloadURL(cdnURL, dest string, progress func(int64, int64)) error {
 	return c.streamToFile(cdnURL, dest, progress)
+}
+
+// DownloadURLContext is DownloadURL with caller cancellation. A cancelled
+// download leaves dest untouched and no partial file behind.
+func (c *Client) DownloadURLContext(ctx context.Context, cdnURL, dest string, progress func(int64, int64)) error {
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
+}
+
+// DownloadFreshURLContext streams the CDN URL that resolve returns to dest.
+// After a CDN 429 it waits out that host's cooldown, calls resolve once more
+// for a fresh signed URL and streams again, like DownloadFreeContext and
+// DownloadUploadContext; a second 429 is returned. ctx cancels the cooldown
+// wait too.
+func (c *Client) DownloadFreshURLContext(ctx context.Context, resolve func(context.Context) (string, error), dest string, progress func(int64, int64)) error {
+	return c.streamFreshURL(ctx, resolve, dest, progress)
 }

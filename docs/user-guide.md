@@ -35,7 +35,7 @@ usable if refresh fails.
 
 The supported categories are All, GB, GBC, GBA, NES, Mega Drive, Pico-8, and
 PlayStation. Sort choices are RSS, A-Z, Z-A, Newest, Free, Paid, Downloaded, and
-Owned. Owned requires a validated API key.
+Owned. Owned requires signing in with itch.io.
 
 ## Detail and gallery
 
@@ -43,6 +43,11 @@ Up/Down scrolls the description. Left/Right or L1/R1 moves through the cover,
 animated GIF, and screenshots. A begins the available download flow. X opens
 Manage when the game has installed files. Start opens Settings and B returns to
 the main list.
+
+On a paid game, A opens sign-in while you're signed out. Signed in, a paid game
+your account doesn't own says **Not owned** under the QR code and has no
+download; scan the code to buy it on itch.io. The page follows your account,
+so signing in or out from Settings updates it right away.
 
 A tag-based content warning must be acknowledged before flagged detail content
 is shown. Warning categories can be changed in Settings; they do not delete or
@@ -59,9 +64,22 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
-With an API key, the app can tell Windows, macOS, Linux, Android and browser
-builds from the files Leaf can play. It never picks those builds for you. When
+With **ROM Selection** on `auto`, the app downloads every supported upload
+together when each one is for a different system. A PlayStation game's CUE/BIN
+tracks or discs count as one set. When the game offers more than one build for
+the same system, such as an update and the original jam release, or offers an
+archive, the app lists every upload instead and downloads only the one you
+choose.
+
+Signed in, the app can tell Windows, macOS, Linux, Android and browser builds
+from the files Leaf can play. It never picks those builds for you. When
 you choose the file yourself, they're listed last, behind **Show all files**.
+
+If you later pick another build for the same system that the page still
+offers, the app keeps both: the first keeps the title name, such as
+`Glory Hunters.gba`, and the next gets its upload name added,
+`Glory Hunters (glory_ez4).gba`. An update that replaced the old upload on the
+page replaces the old file instead.
 
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
@@ -86,9 +104,16 @@ does not remove the installed ROM; use Leaf's Rescan action if needed.
 | PlayStation | `.cbn`, `.chd`, `.cue`/`.bin`, `.img`, `.iso`, `.mdf`, `.pbp`, `.toc`, `.m3u` |
 | Archives | `.zip`, `.7z` with inspected supported content |
 
+`.md` is also the extension of Markdown text. A `.md` file, inside an archive or
+as its own upload, is installed as a Mega Drive ROM only when it has a Mega
+Drive header or is not plain text, so `README.md` and `LICENSE.md` are left out.
+
 PlayStation support files such as BIN are installed with their descriptor but
-are not indexed as separate games. Descriptor/playlist names are preserved when
-renaming could break internal references.
+are not indexed as separate games. From an archive that has a CUE sheet, only
+the BIN files the sheet references are installed, so a BIOS image such as
+`openbios.bin` shipped next to the game stays out of your PlayStation folder.
+Descriptor/playlist names are preserved when renaming could break internal
+references.
 
 ## Dual-SD destinations
 
@@ -123,34 +148,58 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+A new version that replaces a file you downloaded, such as a new `.gb` build
+for your `.gb` or a new archive for your archive, shows as an update. A game is
+marked removed when its page is gone, when it offers no downloads the app can
+use, or when a file you downloaded is gone and nothing of the same kind
+replaces it. A network error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
-## API key
+## Sign in with itch.io
 
-Free browsing/downloads work without a key. Add a key to authenticate owned paid
-games. With a key, free and pay-what-you-want games are also listed through the
-itch.io API, which is quicker than the web download page. If the API fails or
-lists nothing, the app tries the web download page once, and it does the same
-if itch.io lists the game but refuses the download. If itch.io asks the app to
-slow down, it stops and asks you to try again later instead.
+Free browsing and downloads work without an account. Sign in to download paid
+games you own. Signed in, free and pay-what-you-want games are also listed
+through the itch.io API, which is quicker than the web download page. If the
+API fails or lists nothing, the app tries the web download page once, and it
+does the same if itch.io lists the game but refuses the download. If itch.io
+asks the app to slow down, it stops and asks you to try again later instead.
 
-1. Open Start > Settings > API Key.
-2. Accept the physical-access warning.
-3. Enter the complete key with the Catastrophe keyboard and confirm.
-4. Wait for validation and the owned-game count.
+1. Open Start > Settings > itch.io Account, or press A on a paid game.
+2. Accept the physical-access warning (first time only).
+3. Scan the QR code with your phone. The code expires after a few minutes;
+   press A for a new one.
+4. Check that itch.io shows the same short code as the handheld, then approve
+   Leaf. The app loads your owned games and shows your account name. You can
+   press B while they load; loading finishes on its own.
 
-The key is stored in `config.json`. FAT32 cannot enforce owner-only permissions
-against physical access, and the key is not encrypted. After saving, Settings
-shows only its suffix. Editing starts from a blank field and never prefills the
-saved key. Newly typed characters are visible. Removing/replacing the key clears
-credential-derived cache state but preserves downloads and inventory.
+If the screen says **Sign-in is unavailable**, itch.io could not start the
+sign-in. Free games still download.
+
+itch.io gives the app a key, stored in `config.json`. FAT32 cannot enforce
+owner-only permissions against physical access, and the key is not encrypted.
+It never appears on screen. **Sign Out** clears it and the owned-game cache but
+keeps downloads and inventory. The app cannot revoke the key on itch.io, so
+delete it from your itch.io account's API keys if you lose the card. If itch.io
+stops accepting the key, the app signs you out and says so on the game list
+until you press A.
+
+Earlier releases stored a typed API key. This release removes it, and the list
+of games that key owned, on first start and opens Settings so you can sign in.
 
 ## Soundtracks
 
 Music support is disabled by default. Enable `auto` or `ask` to include common
 audio files from an upload/archive. Mixed archives may install both ROM and music
 content in one transaction summary.
+
+A game's tracks go into one Music folder. When an archive holds tracks with the
+same name in different folders, such as `cd1/01 Theme.ogg` and
+`cd2/01 Theme.ogg`, every track of those folders keeps its folder as a
+subfolder (`cd1/01 Theme.ogg`, `cd1/02 Battle.ogg`, `cd2/01 Theme.ogg`), so
+both are installed and Disco Boy plays each disc in order. Tracks whose names
+differ only in letter case would be the same file on your SD card, so the later
+one gets a number: `Theme.ogg` and `theme (2).ogg`.
 
 Disco Boy is optional. This pak neither installs nor launches it. Open or relaunch
 Disco Boy after installing music so its normal scan reads the selected Music
@@ -160,6 +209,13 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+When you download an archive again, files of its earlier version that the new
+install no longer uses stay on your card. For example, an older version of this
+app put every soundtrack track in one folder, and the new install keeps
+same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
+**OLD** and offers **Delete left-over files**. Nothing is deleted until you
+choose it.
+
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
@@ -169,15 +225,26 @@ New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
-names when a rename could break references. Every committed ROM/artwork change
-requests one Jawaka rescan.
+names when a rename could break references. When two files from one download
+or archive would get the same title name, they keep their original names so
+neither replaces the other. FAT32 ignores letter case, so two names that
+differ only in case count as the same file: a download stops before writing
+anything, and an archive skips the later file and lists it on the
+**Download complete** screen. Every committed ROM/artwork change requests one
+Jawaka rescan.
+
+A download never replaces a file that another game installed, or a file the
+app did not install. It saves its own copy as `<Title> - <file name>` instead,
+and downloading the same game again later updates that copy. If two games
+already share a file from an earlier version, deleting one of them in Manage
+keeps the file for the other.
 
 ## Data and logs
 
 The Settings screen displays the resolved App Data directory. Under the normal
 Leaf contract it is `$USERDATA_PATH/Itch-io` and contains:
 
-- `config.json`: settings and optional API key;
+- `config.json`: settings and the itch.io sign-in key, when signed in;
 - `games_cache.json`: timestamped public catalogue;
 - `owned_cache.json`: owned-game URL cache;
 - `inventory.json`: installed-file and artwork ownership records.
@@ -186,7 +253,7 @@ The log is `$LOGS_PATH/itchio-pak.log`. On the stock primary card these normally
 appear under `.userdata/mlp1/Itch-io` and `.userdata/mlp1/logs`. No state is
 stored inside `.system/leaf` or the replaceable pak directory.
 
-Logs remain local. API keys, authorization/cookie values, signed URLs, account
+Logs remain local. itch.io keys, authorization/cookie values, signed URLs, account
 names, and known absolute runtime roots are redacted at Info and Debug levels.
 There is no telemetry and no UMRK network service.
 
@@ -212,11 +279,17 @@ The picker requires a real mounted filesystem, not merely the stock empty mount
 directory. Reinsert/mount the card and reopen the picker. The app intentionally
 does not guess between arbitrary mounts.
 
+### A README shows up as a Mega Drive game
+
+Earlier versions installed some `README.md` files from archives as Mega Drive
+ROMs, named after the game, such as `Roms/GENESIS/<Title>.md`. Open the game's
+Manage screen and delete that file.
+
 ### A paid/owned game is unavailable
 
-Validate the stored API key again from Settings. A successful validation reports
-the owned-game count. Replacing/removing a key invalidates the old owned cache by
-design.
+Select **itch.io Account** in Settings to check your sign-in again. A
+successful check reports the owned-game count. Signing out, or signing in to a
+different account, clears the old owned cache by design.
 
 ### A network or download request fails
 

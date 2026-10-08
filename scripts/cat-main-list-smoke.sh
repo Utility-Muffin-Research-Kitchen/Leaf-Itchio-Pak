@@ -35,6 +35,7 @@ capture loading-dark-hints-bump0 loading 960 720 1 0 '#141827' '#f7f2e8'
 capture error-dark-hints-bump0 error 960 720 1 0 '#141827' '#f7f2e8'
 capture empty-dark-hints-bump0 empty 960 720 1 0 '#141827' '#f7f2e8'
 capture ready-light-nohints-bump5 ready 1280 800 0 5 '#f2eadc' '#202536'
+capture signed-out-dark-hints-bump2 signed-out 960 720 1 2 '#141827' '#f7f2e8'
 
 python3 - "$OUT" <<'PY'
 import pathlib
@@ -49,6 +50,7 @@ expected = {
     "error-dark-hints-bump0.png": (960, 720),
     "empty-dark-hints-bump0.png": (960, 720),
     "ready-light-nohints-bump5.png": (1280, 800),
+    "signed-out-dark-hints-bump2.png": (960, 720),
 }
 for name, dimensions in expected.items():
     path = root / name

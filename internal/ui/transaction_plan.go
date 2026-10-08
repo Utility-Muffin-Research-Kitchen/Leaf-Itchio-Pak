@@ -69,8 +69,12 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 	if detail != nil {
 		transaction.GameID = detail.GameID
 	}
+	names := &roms.NameReservations{}
 	for index, upload := range sealed.Uploads {
 		dest := filepath.Clean(sealed.DestPaths[index])
+		if !names.Claim(dest) {
+			return nil, fmt.Errorf("two files in this download would be saved as %s", filepath.Base(dest))
+		}
 		identity, sourceRoot, err := validatePlannedPath(dest)
 		if err != nil {
 			return nil, err

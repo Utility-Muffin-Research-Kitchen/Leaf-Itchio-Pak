@@ -5,7 +5,7 @@ import "testing"
 func TestSettingsNavigationAndReadOnlyRows(t *testing.T) {
 	model := NewSettingsModel("Settings")
 	model.SetRows("Leaf", []SettingsRow{
-		{Key: SettingsAPIKey, Label: "API Key", ActionEnabled: true},
+		{Key: SettingsAccount, Label: "itch.io Account", ActionEnabled: true},
 		{Key: SettingsAppData, Label: "App Data", ActionEnabled: false},
 	})
 	model.Handle(InputEvent{Button: ButtonDown, Pressed: true})

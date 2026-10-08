@@ -5,6 +5,7 @@ import (
 	"image"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
@@ -114,7 +115,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-inhibit", "download-cancelled", "archive-inspect":
+	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled", "archive-inspect":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -126,10 +127,14 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "download-done":
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
+			model.Skipped = []string{"leafbound.GBC"}
 			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
 			model.Detail = "The signed download URL expired before the transfer completed. Return to Detail and try again."
+		case "download-stalled":
+			model.State = appui.DownloadProgressError
+			model.Detail = "Download stalled. Check the connection and try again."
 		case "download-inhibit":
 			model.State = appui.DownloadProgressInhibitBlocked
 			model.Detail = "Jawaka is unavailable, so Leaf cannot prevent suspend during this transfer. Continue without protection or cancel."
@@ -188,21 +193,26 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm", "manage-result":
+	case "manage-list", "manage-confirm", "manage-leftover", "manage-result":
 		model := appui.NewManageModel("Leafbound 葉")
-		model.SetItems("3 managed files · source-owned paths only", []appui.ManageItem{
+		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
 			{Kind: appui.ManageItemFile, Label: "bonus.gb", Badge: "UNAVAILABLE", Detail: "Secondary SD / Roms/GB/bonus.gb", Enabled: false},
-			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "MUSIC", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "MUSIC", Detail: "Primary SD / Music/Leafbound/cd1/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "OLD", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: "1 OLD", Detail: "Left over from an older version", Enabled: true},
 			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "2 ROM", Enabled: false},
-			{Kind: appui.ManageItemDeleteMusic, Label: "Delete soundtrack", Badge: "1 MUSIC", Enabled: true},
-			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "3 FILES", Enabled: false},
+			{Kind: appui.ManageItemDeleteMusic, Label: "Delete soundtrack", Badge: "2 MUSIC", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "4 FILES", Enabled: false},
 			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
 		})
 		if config.Screen == "manage-confirm" {
 			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+		} else if config.Screen == "manage-leftover" {
+			model.SetConfirm("Delete selected file?", []string{"Left over from an older version",
+				"forest-theme.ogg", "Primary SD / Music/Leafbound/forest-theme.ogg"})
 		} else if config.Screen == "manage-result" {
-			model.SetResult("Deleted 2 managed ROM files.")
+			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
@@ -240,9 +250,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "settings", "settings-confirm", "moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
-			{Key: appui.SettingsAPIKey, Label: "API Key", Value: "••••7f2a", ActionEnabled: true},
-			{Key: appui.SettingsEditAPIKey, Label: "Edit API Key", ActionEnabled: true},
-			{Key: appui.SettingsRemoveAPIKey, Label: "Remove API Key", ActionEnabled: true},
+			{Key: appui.SettingsAccount, Label: "itch.io Account", Value: "leafbound-player", ActionEnabled: true},
+			{Key: appui.SettingsSignOut, Label: "Sign Out", ActionEnabled: true},
 			{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: "auto", ActionEnabled: true},
@@ -274,12 +283,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		model := appui.NewSettingsModel(title)
 		model.SetRows(subtitle, rows)
 		if config.Screen == "settings-confirm" {
-			model.SetConfirm("Store an itch.io API key?", []string{
-				"The key is stored in App Data on the SD card.",
-				"FAT32 cannot protect it from someone with physical access to the card.",
-				"Settings shows only a suffix; editing starts blank and typed characters are visible.",
-				"The complete key is redacted from logs.",
-			})
+			// The sign-in warning moved to the sign-in screen (signin-warning).
+			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)
 		if screenErr != nil {
@@ -297,6 +302,51 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
+	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
+		model := &appui.SignInModel{
+			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
+			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
+			Expires: time.Now().Add(9*time.Minute + 42*time.Second),
+		}
+		switch config.Screen {
+		case "signin-error":
+			model.State, model.CanRetry = appui.SignInError, true
+			model.Heading, model.Detail = "The code expired", "Press A for a new code."
+		case "signin-done":
+			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
+		case "signin-checking":
+			model.State = appui.SignInChecking
+		case "signin-warning":
+			model.State = appui.SignInWarning
+		case "signin-qr-failed":
+			// Too long for any QR code, so drawing it fails for real.
+			model.QRURL = "https://itch.io/user/oauth/device?code=" + strings.Repeat("x", 5000)
+		}
+		if config.Screen == "detail-signin" || config.Screen == "detail-not-owned" {
+			// detail-not-owned: signed in, but the account does not own it.
+			detail := appui.NewDetailModel(appui.DetailGame{
+				Title: "Leafbound Deluxe", Author: "leafdev", URL: "https://leafdev.itch.io/leafbound-deluxe",
+				Platform: "GBA", Price: 4.99, NeedsSignIn: config.Screen == "detail-signin",
+			})
+			detail.SetReady(`<p>A paid Game Boy Advance release. Sign in with itch.io to download it once you own it.</p>`,
+				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, false)
+			screen, screenErr := NewDetailScreen(ctx, detail, cache)
+			if screenErr != nil {
+				return screenErr
+			}
+			draw, closeScreen = screen.Draw, screen.Close
+			handleIntent = func(event InputEvent) bool { return screen.HandleInput(event) != appui.DetailIntentBack }
+			break
+		}
+		screen, screenErr := NewSignInScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw, closeScreen = screen.Draw, screen.Close
+		handleIntent = func(event InputEvent) bool {
+			intent := screen.HandleInput(event)
+			return intent != appui.SignInIntentBack && intent != appui.SignInIntentCancel
+		}
 	case "refresh", "refresh-done":
 		model := appui.NewRefreshModel("Refreshing Game List")
 		model.Fetched = 184

@@ -30,6 +30,17 @@ type Upload struct {
 	// only test for an API download: free API downloads have no purchase ID.
 	// nil means the anonymous web flow.
 	Install *InstallSession
+	// Offered lists every upload the game's page offered when this one was
+	// chosen. An install uses it to tell an update, whose old upload is
+	// gone from the page, from another build the page still offers. Nil
+	// when the listing is unknown.
+	Offered []Offer
+}
+
+// Offer identifies one upload a game's page offered.
+type Offer struct {
+	Filename string
+	UploadID string
 }
 
 // ViaAPI reports whether the upload downloads through the itch.io API.

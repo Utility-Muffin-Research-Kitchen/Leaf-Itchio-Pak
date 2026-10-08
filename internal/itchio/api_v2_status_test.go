@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -54,14 +53,15 @@ func TestAPIV2StatusesBecomeScreenText(t *testing.T) {
 				}
 			}
 		}
+		noAccess := map[string]error{"upload list": ErrNoAccess, "resolve": ErrDownloadRefused}[name]
 		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)
 			}))
 			err := call(newClockedClient(srv, newFakeClock()))
 			srv.Close()
-			if err == nil || !strings.Contains(err.Error(), "does not grant access") {
-				t.Errorf("%s HTTP %d: err = %v, want the no-access error", name, status, err)
+			if !errors.Is(err, noAccess) || err.Error() != noAccess.Error() {
+				t.Errorf("%s HTTP %d: err = %v, want the no-access error %q", name, status, err, noAccess)
 			}
 		}
 	}

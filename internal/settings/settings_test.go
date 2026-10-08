@@ -2,8 +2,10 @@ package settings_test
 
 import (
 	"bytes"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
@@ -17,8 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.APIKey != "" {
-		t.Errorf("default APIKey = %q, want %q", cfg.APIKey, "")
+	if cfg.SignedIn() || cfg.Credential() != "" {
+		t.Errorf("default config is signed in")
 	}
 	if cfg.ROMSelection != "auto" {
 		t.Errorf("default ROMSelection = %q, want %q", cfg.ROMSelection, "auto")
@@ -32,7 +34,7 @@ func TestRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	cfg := &settings.Config{APIKey: "abc123", ROMSelection: "ask", ROMLocation: "ask"}
+	cfg := &settings.Config{AuthToken: "abc123", AuthUser: "someone", ROMSelection: "ask", ROMLocation: "ask"}
 	if err := cfg.Save(path); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -41,8 +43,8 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loaded.APIKey != "abc123" {
-		t.Errorf("APIKey = %q, want %q", loaded.APIKey, "abc123")
+	if loaded.Credential() != "abc123" || loaded.AuthUser != "someone" || !loaded.SignedIn() {
+		t.Errorf("sign-in = %q/%q, want abc123/someone", loaded.AuthToken, loaded.AuthUser)
 	}
 	if loaded.ROMSelection != "ask" {
 		t.Errorf("ROMSelection = %q, want %q", loaded.ROMSelection, "ask")
@@ -119,7 +121,6 @@ func TestContentFilterRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 
 	cfg := &settings.Config{
-		APIKey:      "",
 		ROMLocation: "auto",
 		Filter: settings.ContentFilter{
 			AdultContent: settings.CategoryFilter{Enabled: true, Disabled: []string{"ecchi", "suggestive"}},
@@ -418,7 +419,7 @@ func TestSave_IsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	cfg := &settings.Config{APIKey: "test-key", ROMLocation: "ask"}
+	cfg := &settings.Config{AuthToken: "test-key", ROMLocation: "ask"}
 	if err := cfg.Save(path); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -432,8 +433,8 @@ func TestSave_IsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load after Save: %v", err)
 	}
-	if loaded.APIKey != "test-key" {
-		t.Errorf("APIKey = %q, want %q", loaded.APIKey, "test-key")
+	if loaded.AuthToken != "test-key" {
+		t.Errorf("AuthToken = %q, want %q", loaded.AuthToken, "test-key")
 	}
 }
 
@@ -527,5 +528,51 @@ func TestPlatformFilterBackwardsCompatible(t *testing.T) {
 	}
 	if loaded.PlatformFilter != "" {
 		t.Errorf("old config PlatformFilter = %q, want empty string", loaded.PlatformFilter)
+	}
+}
+
+// QR sign-in replaces typed API keys: Load removes a stored key, flags the
+// removal once, never logs the key, and leaves every other setting alone.
+func TestLoadRemovesALegacyAPIKey(t *testing.T) {
+	const legacyKey = "legacy-api-key-5d2e"
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	inventory := filepath.Join(dir, "inventory.json")
+	os.WriteFile(inventory, []byte(`{"entries":{}}`), 0o644)
+	os.WriteFile(path, []byte(`{"api_key":"`+legacyKey+`","api_key_physical_warning_accepted":true,"rom_selection":"ask"}`), 0o644)
+
+	cfg, err := settings.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LegacyKeyRemoved || cfg.SignedIn() || cfg.ROMSelection != "ask" || !cfg.CredentialWarningAccepted {
+		t.Fatalf("config = %+v", cfg)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), legacyKey) || strings.Contains(string(data), `"api_key"`) {
+		t.Fatalf("config still holds the key:\n%s", data)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	if strings.Contains(logs.String(), legacyKey) {
+		t.Fatalf("log contains the key:\n%s", logs.String())
+	}
+	if data, _ := os.ReadFile(inventory); string(data) != `{"entries":{}}` {
+		t.Fatalf("inventory changed: %s", data)
+	}
+
+	// The flag survives until the app shows its notice, and an empty legacy
+	// field needs no notice.
+	if again, _ := settings.Load(path); !again.LegacyKeyRemoved {
+		t.Fatal("removal flag lost before the notice was shown")
+	}
+	os.WriteFile(path, []byte(`{"api_key":"","rom_selection":"ask"}`), 0o644)
+	if empty, _ := settings.Load(path); empty.LegacyKeyRemoved {
+		t.Fatal("an empty legacy key asked for a notice")
 	}
 }

@@ -147,3 +147,23 @@ func TestWrapTextPreservesParagraphBreaks(t *testing.T) {
 		t.Fatalf("lines = %#v, want %#v", lines, want)
 	}
 }
+
+func TestStateDetailWrapsAndEllipsizesOnlyWhatDoesNotFit(t *testing.T) {
+	measure := func(value string) int { return len(value) }
+	const detail = "Download stalled. Check the connection and try again."
+	lines := stateDetailLines(detail, 20, 4, measure)
+	want := []string{"Download stalled.", "Check the connection", "and try again."}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("lines = %#v, want %#v", lines, want)
+	}
+	// Too short for every line: the last one carries the rest, and the draw
+	// call ellipsizes it.
+	lines = stateDetailLines(detail, 20, 2, measure)
+	want = []string{"Download stalled.", "Check the connection and try again."}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("capped lines = %#v, want %#v", lines, want)
+	}
+	if lines := stateDetailLines("", 20, 2, measure); lines != nil {
+		t.Fatalf("empty detail = %#v, want no lines", lines)
+	}
+}
