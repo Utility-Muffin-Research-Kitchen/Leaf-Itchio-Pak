@@ -89,6 +89,7 @@ capture settings-confirm 960 720 1 0
 capture moderation 960 720 1 0
 capture moderation-tags 1280 800 0 5
 capture about 960 720 1 0
+capture about 960 720 1 2
 capture refresh 960 720 1 0
 capture refresh-done 1280 800 0 5
 capture power-wait 960 720 1 0
