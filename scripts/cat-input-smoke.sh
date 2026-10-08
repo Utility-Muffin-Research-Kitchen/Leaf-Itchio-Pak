@@ -48,6 +48,7 @@ capture download-select-hidden 960 720 1 2
 capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0
+capture download-done 960 720 1 2
 capture download-error 960 720 1 0
 capture download-inhibit 960 720 1 0
 capture download-cancelled 960 720 1 0
@@ -62,7 +63,10 @@ capture destination-confirm 960 720 1 0
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
+capture manage-list 960 720 1 2
+capture manage-leftover 960 720 1 2
 capture manage-result 960 720 1 0
+capture manage-result 960 720 1 2
 capture rename-saves 960 720 1 0
 capture rename-states 1280 800 0 5
 capture rename-done 960 720 1 0

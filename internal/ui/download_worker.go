@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -89,6 +88,14 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 				logger.Warn("download: continuing without Jawaka suspend protection by user request")
 			}
 			s.inhibitBlocked.Store(false)
+			targets, planErr := planInstallTargets(inv, cfg, game, []romDownload{{Upload: upload, DestPath: dest}})
+			if planErr != nil {
+				s.err = planErr
+				s.storeState(dlError)
+				return
+			}
+			target := targets[0]
+			dest := target.download
 			if _, _, preflightErr := validatePlannedPath(dest); preflightErr != nil {
 				s.err = fmt.Errorf("download destination changed before transfer: %w", preflightErr)
 				s.storeState(dlError)
@@ -116,27 +123,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			} else {
 				logger.Info("download: complete file=%s", upload.Filename)
 
-				// Apply unified naming if enabled for this game.
-				finalDest := dest
-				unifiedName := false
-				if cfg.UnifiedNaming && roms.SupportsUnifiedNaming(upload.Filename) {
-					entry, entryExists := inv.Lookup(game.URL)
-					disabled := entryExists && entry.UnifiedNamingDisabled
-					if !disabled {
-						newDest, didRename := roms.ResolveUnifiedDest(dest, game.Title, true)
-						if didRename {
-							if renameErr := os.Rename(dest, newDest); renameErr != nil {
-								logger.Warn("unified-naming: rename failed: %v", renameErr)
-							} else {
-								logger.Info("unified-naming: renamed %q → %q", filepath.Base(dest), filepath.Base(newDest))
-								finalDest = newDest
-								unifiedName = true
-							}
-						} else {
-							unifiedName = true // name already correct
-						}
-					}
-				}
+				finalDest, unifiedName := applyInstallTarget(target)
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{

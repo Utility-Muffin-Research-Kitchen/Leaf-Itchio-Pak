@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -46,11 +47,27 @@ type ArchiveDownloadWorker struct {
 	inv     *inventory.Inventory
 	invPath string
 
-	state          zipDLState
-	downloaded     int64
-	total          int64
-	extracted      []string
-	skipped        []string
+	state      zipDLState
+	downloaded int64
+	total      int64
+	extracted  []string
+	skipped    []string
+	// names holds every path this extraction has written, so a later entry
+	// (possibly re-classified by magic bytes) never replaces an earlier one.
+	names *roms.NameReservations
+	// keepNames holds the ROM destinations whose unified names would meet
+	// another file of this archive; they keep their original names.
+	keepNames *roms.NameReservations
+	// romPaths maps an archive entry to where it is extracted, chosen by
+	// planROMNames so no entry lands on another game's file.
+	romPaths map[string]string
+	// cueTracks holds the lower-case names of the files the archive's
+	// chosen .cue sheets reference; nil when the archive installs none.
+	cueTracks map[string]bool
+	// musicNames maps an archive entry path to its slash-separated path
+	// inside the game's Music folder, set by planMusicNames so same-named
+	// tracks from different folders both survive.
+	musicNames     map[string]string
 	musicFailed    bool
 	err            error
 	inhibitBlocked atomic.Bool
@@ -90,6 +107,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		logger.Warn("zip-download: continuing without Jawaka suspend protection by user request")
 	}
 	s.inhibitBlocked.Store(false)
+	s.names, s.keepNames, s.romPaths = &roms.NameReservations{}, nil, nil
 
 	tempDir, err := s.plan.preflight(s.cfg, s.plan.Manifest)
 	if err != nil {
@@ -166,8 +184,12 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	defer r.Close()
-	actualManifest := manifestFromZIP(r.File)
-	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+	entries := zipEntries(r.File)
+	actualManifest, err := classifyArchive(entries)
+	if err == nil {
+		_, err = s.plan.preflight(s.cfg, actualManifest)
+	}
+	if err != nil {
 		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
 		s.storeState(zipDLError)
 		return
@@ -207,7 +229,9 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			if len(p8Files) > 1 {
 				sort.Slice(p8Files, func(i, j int) bool { return naturalLess(p8Files[i], p8Files[j]) })
 				m3uPath := filepath.Join(gameDir, safe+".m3u")
-				if err := os.WriteFile(m3uPath, []byte(strings.Join(p8Files, "\n")+"\n"), 0644); err != nil {
+				if s.ownedByAnotherGame(m3uPath) {
+					logger.Warn("zip-download: pico8 m3u: another game's file is already saved as %s", filepath.Base(m3uPath))
+				} else if err := os.WriteFile(m3uPath, []byte(strings.Join(p8Files, "\n")+"\n"), 0644); err != nil {
 					logger.Warn("zip-download: pico8 m3u write: %v", err)
 				} else {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
@@ -237,52 +261,13 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("zip-download: save inventory: %v", err)
 		}
+		s.recordLeftOvers()
 		logger.Info("zip-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
 	}
 
-	now := time.Now()
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		baseName := filepath.Base(f.Name)
-		// macOS resource-fork stubs start with "._"; skip them.
-		if strings.HasPrefix(baseName, "._") {
-			continue
-		}
-		kind, baseName := classifyWithMagic(baseName, f.Open)
-
-		switch kind {
-		case roms.KindROM, roms.KindROMSupport:
-			if !s.shouldExtractROM(f.Name) {
-				continue
-			}
-			dest, err := s.extractROM(f, baseName, now)
-			if err != nil {
-				logger.Warn("zip-download: ROM %s: %v", baseName, err)
-				s.skipped = append(s.skipped, baseName)
-				continue
-			}
-			s.extracted = append(s.extracted, dest)
-
-		case roms.KindMusic:
-			if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
-				continue
-			}
-			dest, err := s.extractMusic(f, baseName, now)
-			if err != nil {
-				logger.Warn("zip-download: music %s: %v", baseName, err)
-				s.skipped = append(s.skipped, baseName)
-				continue
-			}
-			s.extracted = append(s.extracted, dest)
-		}
-	}
+	s.installEntries(entries, "zip-download")
 
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("zip-download: save inventory: %v", err)
@@ -294,6 +279,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		s.storeState(zipDLError)
 		return
 	}
+	s.recordLeftOvers()
 	logger.Info("zip-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
 }
@@ -308,8 +294,12 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		return
 	}
 	defer r.Close()
-	actualManifest := manifestFrom7z(r.File)
-	if _, err := s.plan.preflight(s.cfg, actualManifest); err != nil {
+	entries := sevenZipEntries(r.File)
+	actualManifest, err := classifyArchive(entries)
+	if err == nil {
+		_, err = s.plan.preflight(s.cfg, actualManifest)
+	}
+	if err != nil {
 		s.err = fmt.Errorf("downloaded archive preflight: %w", err)
 		s.storeState(zipDLError)
 		return
@@ -327,49 +317,13 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 			s.storeState(zipDLError)
 			return
 		}
+		s.recordLeftOvers()
 		logger.Info("7z-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
 	}
 
-	now := time.Now()
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		baseName := filepath.Base(strings.ReplaceAll(f.Name, "\\", "/"))
-		if strings.HasPrefix(baseName, "._") {
-			continue
-		}
-		kind, baseName := classifyWithMagic(baseName, f.Open)
-		switch kind {
-		case roms.KindROM, roms.KindROMSupport:
-			if !s.shouldExtractROM(filepath.ToSlash(strings.ReplaceAll(f.Name, "\\", "/"))) {
-				continue
-			}
-			dest, err := s.extractROMFromOpener(f.Open, f.FileInfo().Size(), baseName, now)
-			if err != nil {
-				logger.Warn("7z-download: ROM %s: %v", baseName, err)
-				s.skipped = append(s.skipped, baseName)
-				continue
-			}
-			s.extracted = append(s.extracted, dest)
-		case roms.KindMusic:
-			if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
-				continue
-			}
-			dest, err := s.extractMusicFromOpener(f.Open, f.FileInfo().Size(), baseName, now)
-			if err != nil {
-				logger.Warn("7z-download: music %s: %v", baseName, err)
-				s.skipped = append(s.skipped, baseName)
-				continue
-			}
-			s.extracted = append(s.extracted, dest)
-		}
-	}
+	s.installEntries(entries, "7z-download")
 
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("7z-download: save inventory: %v", err)
@@ -380,35 +334,102 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		s.storeState(zipDLError)
 		return
 	}
+	s.recordLeftOvers()
 	logger.Info("7z-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
 }
 
-func manifestFromZIP(files []*zip.File) roms.ZIPManifest {
-	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
-	for _, file := range files {
-		if file.FileInfo().IsDir() {
-			continue
-		}
-		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: file.Name, Kind: roms.ClassifyEntry(file.Name),
-			Size: file.UncompressedSize64, CompressedSize: file.CompressedSize64,
-		})
-	}
-	return manifest
+// manifestFromZIP classifies a downloaded ZIP's members; see classifyArchive.
+func manifestFromZIP(files []*zip.File) (roms.ZIPManifest, error) {
+	return classifyArchive(zipEntries(files))
 }
 
-func manifestFrom7z(files []*sevenzip.File) roms.ZIPManifest {
-	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(files))}
-	for _, file := range files {
-		if file.FileInfo().IsDir() {
+// manifestFrom7z classifies a downloaded 7z's members; see classifyArchive.
+func manifestFrom7z(files []*sevenzip.File) (roms.ZIPManifest, error) {
+	return classifyArchive(sevenZipEntries(files))
+}
+
+// classifyArchive validates the downloaded headers before opening any
+// member, then classifies each member once: by extension, or for names
+// that do not decide it by its first bytes. The result is kept on the
+// entries, and naming, preflight and extraction all read it, so no member
+// is opened again to sniff it. In a solid 7z every open decodes everything
+// before the member, so each repeated sniff was another decode of the
+// archive. Members extraction never installs (macOS metadata) are not
+// opened at all.
+func classifyArchive(entries []archiveEntry) (roms.ZIPManifest, error) {
+	manifest := roms.ZIPManifest{Entries: make([]roms.ZIPEntry, 0, len(entries))}
+	for _, entry := range entries {
+		if entry.isDir {
 			continue
 		}
 		manifest.Entries = append(manifest.Entries, roms.ZIPEntry{
-			Name: file.Name, Kind: roms.ClassifyEntry(file.Name), Size: file.UncompressedSize,
+			Name: entry.name, Kind: roms.ClassifyEntry(entry.name),
+			Size: entry.size, CompressedSize: entry.compressedSize,
 		})
 	}
-	return manifest
+	if err := ValidateArchiveManifest(manifest, DefaultArchiveLimits); err != nil {
+		return roms.ZIPManifest{}, err
+	}
+	index := 0
+	for position := range entries {
+		entry := &entries[position]
+		if entry.isDir {
+			continue
+		}
+		entry.kind, entry.base = manifest.Entries[index].Kind, path.Base(entry.name)
+		if entry.installable() {
+			kind, name, err := classifyWithMagic(entry.name, entry.open)
+			if err != nil {
+				// A .md member that cannot be read could be a ROM.
+				return roms.ZIPManifest{}, fmt.Errorf("read %s: %w", path.Base(entry.name), err)
+			}
+			entry.kind, entry.base = kind, path.Base(name)
+			manifest.Entries[index].Kind, manifest.Entries[index].Name = kind, name
+			if strings.EqualFold(roms.ROMExt(entry.base), ".cue") {
+				entry.cueFiles = readCueFiles(entry.open)
+			}
+		}
+		index++
+	}
+	return manifest, nil
+}
+
+// maxCueBytes bounds how much of a .cue sheet is read for its FILE lines.
+const maxCueBytes = 64 << 10
+
+// readCueFiles returns the base names of the files a .cue sheet references
+// in its FILE lines, such as "Game (Track 1).bin".
+func readCueFiles(open func() (io.ReadCloser, error)) []string {
+	rc, err := open()
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, maxCueBytes))
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 5 || !strings.EqualFold(line[:5], "FILE ") {
+			continue
+		}
+		rest := strings.TrimSpace(line[5:])
+		name := ""
+		if strings.HasPrefix(rest, "\"") {
+			if end := strings.Index(rest[1:], "\""); end >= 0 {
+				name = rest[1 : end+1]
+			}
+		} else if fields := strings.Fields(rest); len(fields) > 0 {
+			name = fields[0]
+		}
+		if name != "" {
+			files = append(files, path.Base(strings.ReplaceAll(name, "\\", "/")))
+		}
+	}
+	return files
 }
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
@@ -468,6 +489,16 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		}
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
+		if s.ownedByAnotherGame(dest) {
+			logger.Warn("7z-download: pico8 %s: another game's file is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
+		if !s.names.Claim(dest) {
+			logger.Warn("7z-download: pico8 %s: another file from this archive is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			s.skipped = append(s.skipped, base)
 			continue
@@ -481,16 +512,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		finalDest := dest
 		unifiedName := false
 		if ext == ".p8.png" && unifyP8PNG {
-			if newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true); didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("7z-download: pico8 unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download: pico8")
 		}
 
 		logger.Info("7z-download: pico8 extracted %s → %s", base, finalDest)
@@ -510,9 +532,53 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 	}
 }
 
-// extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
-// Used by run7z so the same inventory/naming logic applies to 7z entries.
-func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
+// unifyArchiveROM renames an extracted file to the game title unless that
+// name belongs to another file of this archive, in which case the file keeps
+// its original name. It returns the final path and whether that path is the
+// unified name. Every rename site shares it (upstream c346eb0).
+func (s *ArchiveDownloadWorker) unifyArchiveROM(dest, logPrefix string) (string, bool) {
+	if s.keepNames != nil && s.keepNames.Holds(dest) {
+		logger.Info("%s: keeping %q; its unified name belongs to another file of this archive", logPrefix, filepath.Base(dest))
+		return dest, false
+	}
+	newDest, unified := s.namer().unifiedName(dest)
+	if roms.SameFAT32Path(newDest, dest) {
+		return dest, unified
+	}
+	if err := os.Rename(dest, newDest); err != nil {
+		logger.Warn("%s: unified rename: %v", logPrefix, err)
+		return dest, false
+	}
+	s.names.Release(dest)
+	s.names.Claim(newDest)
+	return newDest, unified
+}
+
+// namer picks names for this archive's files: an earlier install of the same
+// archive for this game may be replaced, nothing else.
+func (s *ArchiveDownloadWorker) namer() *installNamer {
+	return newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, s.names).withListing(s.plan.Upload)
+}
+
+// ownedByAnotherGame reports whether dest holds another game's file or one
+// the app does not know. A Pico-8 game extracts by relative path into its
+// own folder, where its files cannot be renamed apart, so files from any
+// upload of the same game are replaced there.
+func (s *ArchiveDownloadWorker) ownedByAnotherGame(dest string) bool {
+	namer := s.namer()
+	namer.anyUpload = true
+	return !namer.replaceable(dest)
+}
+
+// ownedElsewhere reports whether dest holds a file this archive may not
+// replace: another game's, another build's, or one the app does not know.
+func (s *ArchiveDownloadWorker) ownedElsewhere(dest string) bool {
+	return !s.namer().replaceable(dest)
+}
+
+// romDest is where an archive ROM entry with baseName (after magic-byte
+// classification) is extracted before any unified rename.
+func (s *ArchiveDownloadWorker) romDest(baseName string) string {
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	destDir := s.plan.ROMDirs[ext]
 	if destDir == "" {
@@ -523,7 +589,184 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	if safeName == "" {
 		safeName = baseName
 	}
-	dest := archiveOutputPath(destDir, safeName)
+	return archiveOutputPath(destDir, safeName)
+}
+
+// planCueTracks records which files the .cue sheets this archive installs
+// reference. When there is one, only those .bin tracks install: a BIOS
+// image such as openbios.bin shipped next to the game is not a track.
+func (s *ArchiveDownloadWorker) planCueTracks(entries []archiveEntry) {
+	s.cueTracks = nil
+	for _, entry := range entries {
+		if !entry.installable() || !strings.EqualFold(roms.ROMExt(entry.base), ".cue") ||
+			!s.shouldExtractROM(entry.classifiedName()) {
+			continue
+		}
+		if s.cueTracks == nil {
+			s.cueTracks = map[string]bool{}
+		}
+		for _, file := range entry.cueFiles {
+			s.cueTracks[strings.ToLower(file)] = true
+		}
+	}
+}
+
+// unusedTrack reports whether entry is a .bin that no installed .cue uses.
+func (s *ArchiveDownloadWorker) unusedTrack(entry archiveEntry) bool {
+	return s.cueTracks != nil && roms.IsPSXSupportExt(roms.ROMExt(entry.base)) &&
+		!s.cueTracks[strings.ToLower(entry.base)]
+}
+
+// plannedROMDest is where planROMNames decided an entry is extracted.
+func (s *ArchiveDownloadWorker) plannedROMDest(entryName, baseName string) string {
+	if dest, ok := s.romPaths[strings.ReplaceAll(entryName, "\\", "/")]; ok {
+		return dest
+	}
+	return s.romDest(baseName)
+}
+
+// archiveEntry is one ZIP or 7z member. classifyArchive sets kind and base
+// once; every later pass reads them instead of opening the member again.
+type archiveEntry struct {
+	name           string // path inside the archive, with forward slashes
+	isDir          bool
+	size           uint64
+	compressedSize uint64
+	open           func() (io.ReadCloser, error)
+
+	kind roms.FileKind
+	base string // file name, with the extension its first bytes confirm
+	// cueFiles lists the base names a .cue member references.
+	cueFiles []string
+}
+
+// classifiedName is the entry's path with the extension classification
+// gave it. The ROM chooser and the preflight plan list members by it.
+func (entry archiveEntry) classifiedName() string {
+	return path.Join(path.Dir(entry.name), entry.base)
+}
+
+// installable reports whether extraction looks at the entry at all.
+// Directories and macOS metadata never install.
+func (entry archiveEntry) installable() bool {
+	return !entry.isDir && !roms.IsInMacOSMetaDir(entry.name) && !strings.HasPrefix(path.Base(entry.name), "._")
+}
+
+func zipEntries(files []*zip.File) []archiveEntry {
+	entries := make([]archiveEntry, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, archiveEntry{
+			name: strings.ReplaceAll(file.Name, "\\", "/"), isDir: file.FileInfo().IsDir(),
+			size: file.UncompressedSize64, compressedSize: file.CompressedSize64, open: file.Open,
+		})
+	}
+	return entries
+}
+
+func sevenZipEntries(files []*sevenzip.File) []archiveEntry {
+	entries := make([]archiveEntry, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, archiveEntry{
+			name: strings.ReplaceAll(file.Name, "\\", "/"), isDir: file.FileInfo().IsDir(),
+			size: file.UncompressedSize, open: file.Open,
+		})
+	}
+	return entries
+}
+
+// installEntries extracts the classified ROM and music entries of a
+// non-Pico-8 archive.
+func (s *ArchiveDownloadWorker) installEntries(entries []archiveEntry, logPrefix string) {
+	s.planCueTracks(entries)
+	s.planROMNames(entries)
+	s.planMusicNames(entries)
+	now := time.Now()
+	for _, entry := range entries {
+		if !entry.installable() {
+			continue
+		}
+		switch entry.kind {
+		case roms.KindROM, roms.KindROMSupport:
+			if !s.shouldExtractROM(entry.classifiedName()) {
+				continue
+			}
+			if s.unusedTrack(entry) {
+				logger.Info("%s: not installing %s; no .cue in this archive uses it", logPrefix, entry.base)
+				continue
+			}
+			dest, err := s.extractROMFromOpener(entry.open, int64(entry.size), entry.name, entry.base, now)
+			if err != nil {
+				logger.Warn("%s: ROM %s: %v", logPrefix, entry.base, err)
+				s.skipped = append(s.skipped, entry.base)
+				continue
+			}
+			s.extracted = append(s.extracted, dest)
+		case roms.KindMusic:
+			if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
+				continue
+			}
+			dest, err := s.extractMusicFromOpener(entry.open, int64(entry.size), entry.name, entry.base, now)
+			if err != nil {
+				logger.Warn("%s: music %s: %v", logPrefix, entry.base, err)
+				s.skipped = append(s.skipped, entry.base)
+				continue
+			}
+			s.extracted = append(s.extracted, dest)
+		}
+	}
+}
+
+// planROMNames classifies every ROM entry this extraction will write, the
+// same way extraction does (including magic bytes), and records which of
+// them must keep their original names because unified naming would give two
+// files of the archive one name. Deciding up front keeps both files whatever
+// order the entries come in.
+func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
+	var dests []string
+	s.romPaths = map[string]string{}
+	// Entries that FAT32 would store under one name share one plan, so the
+	// later one is still skipped when it is written.
+	owned := map[string]string{}
+	for _, entry := range entries {
+		name := entry.name
+		if !entry.installable() {
+			continue
+		}
+		if (entry.kind == roms.KindROM || entry.kind == roms.KindROMSupport) && s.shouldExtractROM(entry.classifiedName()) &&
+			!s.unusedTrack(entry) {
+			natural := s.romDest(entry.base)
+			key := strings.ToLower(filepath.Clean(natural))
+			dest, planned := owned[key]
+			if !planned {
+				var err error
+				if dest, err = newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, nil).withListing(s.plan.Upload).ownName(natural); err != nil {
+					dest = natural
+				} else if !roms.SameFAT32Path(dest, natural) {
+					logger.Info("archive: %s belongs to another game or upload; saving as %s", filepath.Base(natural), filepath.Base(dest))
+				}
+				owned[key] = dest
+			}
+			s.romPaths[name] = dest
+			dests = append(dests, dest)
+		}
+	}
+	s.keepNames = &roms.NameReservations{}
+	if !s.cfg.UnifiedNaming {
+		return
+	}
+	for index, keep := range roms.UnifiedCollisions(dests, s.game.Title) {
+		if keep {
+			s.keepNames.Claim(dests[index])
+		}
+	}
+}
+
+// extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
+// Used by run7z so the same inventory/naming logic applies to 7z entries.
+func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, entryName, baseName string, now time.Time) (string, error) {
+	ext := strings.ToLower(roms.ROMExt(baseName))
+	dest := s.plannedROMDest(entryName, baseName)
+	destDir := filepath.Dir(dest)
 
 	// Skip when an identical ROM already exists.
 	if existing := s.findIdenticalFromOpener(open, size, ext); existing != "" {
@@ -532,6 +775,12 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		return existing, nil
 	}
 
+	if s.ownedElsewhere(dest) {
+		return "", fmt.Errorf("another game's file is already saved as %s", filepath.Base(dest))
+	}
+	if !s.names.Claim(dest) {
+		return "", fmt.Errorf("another file from this archive is already saved as %s", filepath.Base(dest))
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdirall %s: %w", destDir, err)
 	}
@@ -545,17 +794,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
-			newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true)
-			if didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("7z-download: unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download")
 		}
 	}
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
@@ -577,19 +816,157 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	return finalDest, nil
 }
 
-// extractMusicFromOpener is like extractMusic but takes an opener func.
-func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), size int64, baseName string, now time.Time) (string, error) {
-	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
-		s.musicFailed = true
-		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
-	}
+// musicFileName is a track's file name in the game's Music folder.
+func musicFileName(baseName string) string {
 	ext := filepath.Ext(baseName)
-	stem := strings.TrimSuffix(baseName, ext)
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
+	if safeName := roms.SanitiseFilename(strings.TrimSuffix(baseName, ext), ext); safeName != "" {
+		return safeName
 	}
-	dest := archiveOutputPath(s.plan.MusicDir, safeName)
+	return baseName
+}
+
+// musicFolder turns archive folder components into a safe subfolder path,
+// dropping empty, dot and parent components.
+func musicFolder(dirs []string) string {
+	var parts []string
+	for _, dir := range dirs {
+		part := roms.SanitiseFilename(dir, "")
+		if part == "" || strings.HasPrefix(part, ".") {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "/")
+}
+
+// planMusicNames places every soundtrack track this extraction will write,
+// as a slash-separated path inside the game's Music folder. Tracks go in by
+// name. When tracks in different archive folders share a name
+// ("cd1/01 Theme.ogg", "cd2/01 Theme.ogg"), every track of those folders
+// keeps its folder as a subfolder ("cd1/01 Theme.ogg", "cd1/02 Battle.ogg"),
+// so each disc stays together and Disco Boy, which sorts by full path,
+// plays it in order. Leading folders all of them share ("Soundtrack/") are
+// dropped. Deciding up front keeps the layout independent of entry order.
+func (s *ArchiveDownloadWorker) planMusicNames(entries []archiveEntry) {
+	s.musicNames = map[string]string{}
+	if !s.plan.DownloadMusic || s.plan.MusicDir == "" {
+		return
+	}
+	type track struct {
+		entry, dir, name string
+	}
+	var tracks []*track
+	byName := map[string][]*track{}
+	for _, entry := range entries {
+		if !entry.installable() || entry.kind != roms.KindMusic {
+			continue
+		}
+		t := &track{entry: entry.name, dir: path.Dir(entry.name), name: musicFileName(entry.base)}
+		tracks = append(tracks, t)
+		key := strings.ToLower(t.name)
+		byName[key] = append(byName[key], t)
+	}
+	// Folders holding a track whose name a track in another folder has too.
+	colliding := map[string]bool{}
+	for _, group := range byName {
+		for _, t := range group[1:] {
+			if t.dir != group[0].dir {
+				for _, member := range group {
+					colliding[member.dir] = true
+				}
+				break
+			}
+		}
+	}
+	var shared []string
+	first := true
+	for dir := range colliding {
+		var parts []string
+		if dir != "." {
+			parts = strings.Split(dir, "/")
+		}
+		if first {
+			shared, first = parts, false
+			continue
+		}
+		if len(parts) < len(shared) {
+			shared = shared[:len(parts)]
+		}
+		for index := range shared {
+			if !strings.EqualFold(parts[index], shared[index]) {
+				shared = shared[:index]
+				break
+			}
+		}
+	}
+	// One reservation pass over every final name: a track that would still
+	// meet an earlier one (names or folders differing only in case) is
+	// numbered, "Theme (2).ogg", instead of skipped.
+	taken := map[string]bool{}
+	for _, t := range tracks {
+		rel := t.name
+		if colliding[t.dir] && t.dir != "." {
+			if folder := musicFolder(strings.Split(t.dir, "/")[len(shared):]); folder != "" {
+				rel = folder + "/" + t.name
+			}
+		}
+		if taken[strings.ToLower(rel)] {
+			folder, base := path.Split(rel)
+			ext := filepath.Ext(base)
+			for attempt := 2; attempt <= maxNameAttempts; attempt++ {
+				candidate := fmt.Sprintf("%s%s (%d)%s", folder, strings.TrimSuffix(base, ext), attempt, ext)
+				if !taken[strings.ToLower(candidate)] {
+					rel = candidate
+					break
+				}
+			}
+		}
+		taken[strings.ToLower(rel)] = true
+		s.musicNames[t.entry] = rel
+	}
+}
+
+// musicDest reserves the Music folder path for an archive entry. It fails,
+// writing nothing, when another file of this archive already holds that
+// name, so a track is skipped rather than written over another.
+func (s *ArchiveDownloadWorker) musicDest(entryName, baseName string) (string, error) {
+	rel, ok := s.musicNames[strings.ReplaceAll(entryName, "\\", "/")]
+	if !ok {
+		rel = musicFileName(baseName)
+	}
+	planned := archiveOutputPath(s.plan.MusicDir, filepath.FromSlash(rel))
+	if _, err := leaf.RelativeWithin(s.plan.MusicDir, planned); err != nil {
+		return "", fmt.Errorf("track %s escapes the Music folder", rel)
+	}
+	dest, err := s.ownMusicPath(planned)
+	if err != nil {
+		return "", err
+	}
+	if !s.names.Claim(dest) {
+		return "", fmt.Errorf("another file from this archive is already saved as %s", rel)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		s.musicFailed = true
+		return "", fmt.Errorf("mkdirall music dir %s: %w", filepath.Dir(dest), err)
+	}
+	return dest, nil
+}
+
+// musicRecordName is the inventory name of a track: its path inside the
+// Music folder, so tracks of one name in different subfolders stay apart.
+func (s *ArchiveDownloadWorker) musicRecordName(dest string) string {
+	if rel, err := filepath.Rel(filepath.Clean(s.plan.MusicDir), dest); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.Base(dest)
+}
+
+// extractMusicFromOpener is like extractMusic but takes an opener func.
+func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadCloser, error), size int64, entryName, baseName string, now time.Time) (string, error) {
+	dest, err := s.musicDest(entryName, baseName)
+	if err != nil {
+		return "", err
+	}
 	if err := extractEntry(open, size, dest); err != nil {
 		return "", err
 	}
@@ -597,13 +974,76 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		UploadID:     s.plan.Upload.UploadID,
-		Filename:     filepath.Base(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
+		UploadID:      s.plan.Upload.UploadID,
+		Filename:      s.musicRecordName(dest),
+		DestPath:      dest,
+		DownloadedAt:  now,
+		FileType:      inventory.FileTypeMusic,
+		SourceArchive: s.plan.Upload.Filename,
 	})
 	return dest, nil
+}
+
+// ownMusicPath keeps a track off a file this game does not own, naming it
+// "<Title> - <track>" instead. Music records do not say which upload they
+// came from, so any track of this game may be replaced.
+func (s *ArchiveDownloadWorker) ownMusicPath(dest string) (string, error) {
+	// Reservations are left to musicDest, so a track that meets another
+	// track of this archive is skipped rather than renamed.
+	namer := newInstallNamer(s.inv, s.game, s.plan.Upload.Filename, nil)
+	namer.anyUpload = true
+	path, err := namer.ownName(dest)
+	if err == nil && !roms.SameFAT32Path(path, dest) {
+		logger.Info("archive: %s belongs to another game; saving as %s", filepath.Base(dest), filepath.Base(path))
+	}
+	return path, err
+}
+
+// recordLeftOvers runs once this archive is installed. Every file the
+// inventory records from this archive, of the kinds this install wrote,
+// that the install did not write or keep is listed as left over from an
+// older version, for example a track an older version named differently.
+// Manage offers those files for deletion; nothing is deleted here.
+func (s *ArchiveDownloadWorker) recordLeftOvers() {
+	var kinds []string
+	if s.plan.DownloadROMs {
+		kinds = append(kinds, inventory.ContentKindROM)
+	}
+	if s.plan.DownloadMusic && s.plan.MusicDir != "" && !s.musicFailed {
+		s.adoptUnattributedMusic()
+		kinds = append(kinds, inventory.ContentKindMusic)
+	}
+	for _, kind := range kinds {
+		for _, file := range s.inv.MarkLeftOver(s.game.URL, s.plan.Upload.Filename, kind, s.extracted) {
+			logger.Info("archive: %s is left over from an older version of %s", filepath.Base(file.DestPath), s.plan.Upload.Filename)
+		}
+	}
+	if len(kinds) > 0 {
+		if err := s.inv.Save(s.invPath); err != nil {
+			logger.Warn("archive: save left-over files: %v", err)
+		}
+	}
+}
+
+// adoptUnattributedMusic attributes this game's tracks that older versions
+// recorded without their archive to this archive, when they sit in the
+// Music folder it installs to. Their archive is unknown otherwise, and the
+// game's soundtrack folder is the best evidence of where they came from.
+func (s *ArchiveDownloadWorker) adoptUnattributedMusic() {
+	entry, ok := s.inv.Lookup(s.game.URL)
+	if !ok {
+		return
+	}
+	for _, file := range entry.Files {
+		if managedContentKind(file) != inventory.ContentKindMusic || file.SourceArchive != "" {
+			continue
+		}
+		if _, err := leaf.RelativeWithin(s.plan.MusicDir, file.DestPath); err != nil {
+			continue
+		}
+		file.SourceArchive = s.plan.Upload.Filename
+		s.inv.UpdateFile(s.game.URL, file.DestPath, file)
+	}
 }
 
 // backfillSourceArchive patches SourceArchive into an existing inventory entry
@@ -636,10 +1076,9 @@ func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadClos
 	if !ok {
 		return ""
 	}
-	wantHash, err := entryMD5(open)
-	if err != nil {
-		return ""
-	}
+	// Hash the entry only when a same-sized ROM of its type exists: in a
+	// solid 7z reading it decodes everything before it.
+	wantHash := ""
 	for _, df := range entry.Files {
 		if df.FileType != inventory.FileTypeROM {
 			continue
@@ -651,6 +1090,12 @@ func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadClos
 		if err != nil || fi.Size() != size {
 			continue
 		}
+		if wantHash == "" {
+			if wantHash, err = entryMD5(open); err != nil {
+				logger.Warn("archive: identical-file check for %s: %v", filepath.Base(df.DestPath), err)
+				return ""
+			}
+		}
 		if hash, err := fileMD5(df.DestPath); err == nil && hash == wantHash {
 			return df.DestPath
 		}
@@ -658,145 +1103,18 @@ func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadClos
 	return ""
 }
 
-// classifyWithMagic calls ClassifyEntry on baseName; if the extension is
-// unrecognised (KindOther) it reads the first roms.DetectBufSize bytes via
-// open() and retries with magic-byte detection. Returns the resolved
-// FileKind and the (possibly extension-corrected) baseName.
-// This handles archive entries whose filename uses a generic extension such
-// as ".bin" for a Sega Genesis ROM — extension lookup fails but the ROM
-// header signature at 0x100 reliably identifies the format.
-func classifyWithMagic(baseName string, open func() (io.ReadCloser, error)) (roms.FileKind, string) {
-	kind := roms.ClassifyEntry(baseName)
-	if kind != roms.KindOther {
-		return kind, baseName
-	}
-	// Don't promote image files to ROMs via magic-byte detection: a .png
-	// named .png is artwork even if it is 128 px wide.
-	if roms.IsImageExt(strings.ToLower(filepath.Ext(baseName))) {
-		return kind, baseName
-	}
-	rc, err := open()
-	if err != nil {
-		return kind, baseName
-	}
-	buf := make([]byte, roms.DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	rc.Close()
-	detected := roms.DetectPlayableROMExt(buf[:n])
-	if detected == "" {
-		return kind, baseName
-	}
-	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-	return roms.KindROM, stem + detected
+// classifyWithMagic classifies an archive member by name and, when the
+// name does not decide it, by its first bytes; see roms.ClassifyArchiveMember.
+// This handles members whose name uses a generic extension, such as ".bin"
+// for a Mega Drive ROM, and ".md", which is Markdown or a Mega Drive ROM.
+func classifyWithMagic(name string, open func() (io.ReadCloser, error)) (roms.FileKind, string, error) {
+	return roms.ClassifyArchiveMember(name, open)
 }
 
+// shouldExtractROM reports whether the ROM member with the classified name
+// is one the user chose (or no choice applied to its type).
 func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
-	if !s.plan.DownloadROMs {
-		return false
-	}
-	if len(s.plan.SelectedROMs) == 0 {
-		return true
-	}
-	ext := strings.ToLower(roms.ROMExt(name))
-	chosen, ok := s.plan.SelectedROMs[ext]
-	if !ok {
-		return true
-	}
-	return chosen == name || chosen == filepath.Base(name)
-}
-
-func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now time.Time) (string, error) {
-	ext := strings.ToLower(roms.ROMExt(baseName))
-	destDir := s.plan.ROMDirs[ext]
-	if destDir == "" {
-		destDir = roms.DestinationDir(ext)
-	}
-	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
-	}
-	dest := archiveOutputPath(destDir, safeName)
-
-	// Skip extraction when the game already has an identical ROM on disk.
-	if existing := s.findIdenticalROMInInventory(f, ext); existing != "" {
-		logger.Info("zip-download: ROM %s: identical file already at %s, skipping", baseName, existing)
-		s.backfillSourceArchive(existing)
-		return existing, nil
-	}
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return "", fmt.Errorf("mkdirall %s: %w", destDir, err)
-	}
-	if err := extractZIPEntry(f, dest); err != nil {
-		return "", err
-	}
-
-	finalDest := dest
-	unifiedName := false
-	if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(baseName) {
-		entry, entryExists := s.inv.Lookup(s.game.URL)
-		disabled := entryExists && entry.UnifiedNamingDisabled
-		if !disabled {
-			newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true)
-			if didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("zip-download: unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
-		}
-	}
-
-	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
-	file := inventory.DownloadedFile{
-		UploadID:      s.plan.Upload.UploadID,
-		Filename:      filepath.Base(finalDest),
-		DestPath:      finalDest,
-		DownloadedAt:  now,
-		UnifiedName:   unifiedName,
-		FileType:      inventory.FileTypeROM,
-		SourceArchive: s.plan.Upload.Filename,
-	}
-	applyArtwork(&file, artwork)
-	s.inv.Add(s.game.URL, inventory.Entry{
-		GameURL: s.game.URL, Title: s.game.Title,
-		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-	}, file)
-	return finalDest, nil
-}
-
-func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now time.Time) (string, error) {
-	if err := os.MkdirAll(s.plan.MusicDir, 0755); err != nil {
-		s.musicFailed = true
-		return "", fmt.Errorf("mkdirall music dir %s: %w", s.plan.MusicDir, err)
-	}
-	ext := filepath.Ext(baseName)
-	stem := strings.TrimSuffix(baseName, ext)
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
-	}
-	dest := archiveOutputPath(s.plan.MusicDir, safeName)
-
-	if err := extractZIPEntry(f, dest); err != nil {
-		return "", err
-	}
-	s.inv.Add(s.game.URL, inventory.Entry{
-		GameURL: s.game.URL, Title: s.game.Title,
-		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-	}, inventory.DownloadedFile{
-		UploadID:     s.plan.Upload.UploadID,
-		Filename:     filepath.Base(dest),
-		DestPath:     dest,
-		DownloadedAt: now,
-		FileType:     inventory.FileTypeMusic,
-	})
-	return dest, nil
+	return s.plan.shouldExtractROM(name)
 }
 
 // extractPico8ZIP extracts all .p8, .p8.png, and .lua files from r into
@@ -868,6 +1186,16 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		relPath := strings.TrimPrefix(name, prefix)
 		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
 
+		if s.ownedByAnotherGame(dest) {
+			logger.Warn("zip-download: pico8 %s: another game's file is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
+		if !s.names.Claim(dest) {
+			logger.Warn("zip-download: pico8 %s: another file from this archive is already saved there", base)
+			s.skipped = append(s.skipped, base)
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			logger.Warn("zip-download: pico8 mkdir %s: %v", filepath.Dir(dest), err)
 			s.skipped = append(s.skipped, base)
@@ -882,16 +1210,7 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		finalDest := dest
 		unifiedName := false
 		if ext == ".p8.png" && unifyP8PNG {
-			if newDest, didRename := roms.ResolveUnifiedDest(dest, s.game.Title, true); didRename {
-				if err := os.Rename(dest, newDest); err != nil {
-					logger.Warn("zip-download: pico8 unified rename: %v", err)
-				} else {
-					finalDest = newDest
-					unifiedName = true
-				}
-			} else {
-				unifiedName = true
-			}
+			finalDest, unifiedName = s.unifyArchiveROM(dest, "zip-download: pico8")
 		}
 
 		logger.Info("zip-download: pico8 extracted %s → %s", base, finalDest)
@@ -912,43 +1231,6 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 	}
 }
 
-// findIdenticalROMInInventory returns the DestPath of an already-downloaded ROM
-// for this game that has byte-for-byte identical content to the ZIP entry f.
-// Size is checked first (cheap); MD5 is computed only when sizes match.
-// Returns "" when no identical file is found or the check cannot be performed.
-func (s *ArchiveDownloadWorker) findIdenticalROMInInventory(f *zip.File, ext string) string {
-	entry, ok := s.inv.Lookup(s.game.URL)
-	if !ok {
-		return ""
-	}
-	wantSize := f.FileInfo().Size()
-	wantHash, err := zipEntryMD5(f)
-	if err != nil {
-		logger.Warn("zip-download: dedup hash failed for %s: %v", f.Name, err)
-		return ""
-	}
-	for _, df := range entry.Files {
-		if df.FileType != inventory.FileTypeROM {
-			continue
-		}
-		if strings.ToLower(roms.ROMExt(df.DestPath)) != ext {
-			continue
-		}
-		fi, err := os.Stat(df.DestPath)
-		if err != nil || fi.Size() != wantSize {
-			continue
-		}
-		hash, err := fileMD5(df.DestPath)
-		if err != nil {
-			continue
-		}
-		if hash == wantHash {
-			return df.DestPath
-		}
-	}
-	return ""
-}
-
 // entryMD5 reads the uncompressed content via open() and returns its MD5 hex digest.
 func entryMD5(open func() (io.ReadCloser, error)) (string, error) {
 	rc, err := open()
@@ -962,9 +1244,6 @@ func entryMD5(open func() (io.ReadCloser, error)) (string, error) {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
-
-// zipEntryMD5 is a convenience wrapper around entryMD5 for zip.File.
-func zipEntryMD5(f *zip.File) (string, error) { return entryMD5(f.Open) }
 
 // fileMD5 returns the MD5 hex digest of the file at path.
 func fileMD5(path string) (string, error) {

@@ -119,6 +119,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "download-done":
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
+			model.Skipped = []string{"leafbound.GBC"}
 			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
@@ -181,21 +182,26 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm", "manage-result":
+	case "manage-list", "manage-confirm", "manage-leftover", "manage-result":
 		model := appui.NewManageModel("Leafbound 葉")
-		model.SetItems("3 managed files · source-owned paths only", []appui.ManageItem{
+		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
 			{Kind: appui.ManageItemFile, Label: "bonus.gb", Badge: "UNAVAILABLE", Detail: "Secondary SD / Roms/GB/bonus.gb", Enabled: false},
-			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "MUSIC", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "MUSIC", Detail: "Primary SD / Music/Leafbound/cd1/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "forest-theme.ogg", Badge: "OLD", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg", Enabled: true},
+			{Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: "1 OLD", Detail: "Left over from an older version", Enabled: true},
 			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "2 ROM", Enabled: false},
-			{Kind: appui.ManageItemDeleteMusic, Label: "Delete soundtrack", Badge: "1 MUSIC", Enabled: true},
-			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "3 FILES", Enabled: false},
+			{Kind: appui.ManageItemDeleteMusic, Label: "Delete soundtrack", Badge: "2 MUSIC", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "4 FILES", Enabled: false},
 			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
 		})
 		if config.Screen == "manage-confirm" {
 			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+		} else if config.Screen == "manage-leftover" {
+			model.SetConfirm("Delete selected file?", []string{"Left over from an older version",
+				"forest-theme.ogg", "Primary SD / Music/Leafbound/forest-theme.ogg"})
 		} else if config.Screen == "manage-result" {
-			model.SetResult("Deleted 2 managed ROM files.")
+			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
