@@ -78,7 +78,8 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 					s.storeState(dlCancelled)
 					return
 				}
-				s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+				logger.Warn("download: no suspend protection for %s: %v", upload.Filename, guardErr)
+				s.err = inhibitBlockedError(guardErr)
 				s.inhibitBlocked.Store(true)
 				s.storeState(dlError)
 				return
@@ -90,6 +91,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			s.inhibitBlocked.Store(false)
 			targets, planErr := planInstallTargets(inv, cfg, game, []romDownload{{Upload: upload, DestPath: dest}})
 			if planErr != nil {
+				logger.Error("download: plan %s: %v", upload.Filename, planErr)
 				s.err = planErr
 				s.storeState(dlError)
 				return
@@ -98,6 +100,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			dest := target.download
 			if _, _, preflightErr := validatePlannedPath(dest); preflightErr != nil {
 				s.err = fmt.Errorf("download destination changed before transfer: %w", preflightErr)
+				logger.Error("download: %s: %v", upload.Filename, s.err)
 				s.storeState(dlError)
 				return
 			}

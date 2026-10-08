@@ -14,6 +14,22 @@ var FilterPlatformLabels = []string{"All platforms", "GB", "GBC", "GBA", "NES", 
 var FilterSortValues = []string{"", "az", "za", "new", "free", "paid", "dl", "owned"}
 var FilterSortLabels = []string{"RSS", "A-Z", "Z-A", "Newest", "Free", "Paid", "Downloaded", "Owned"}
 
+// PlatformLabel names a platform filter code the way the filter screen does,
+// so the list header and the filter agree. A code the filter does not list
+// keeps its own name.
+func PlatformLabel(code string) string {
+	for index, platform := range FilterPlatforms {
+		if platform == code {
+			return FilterPlatformLabels[index]
+		}
+	}
+	return code
+}
+
+// SortLabel names a sort value the way the filter screen does. A value it
+// does not list is RSS, as in the sort cycle.
+func SortLabel(value string) string { return FilterSortLabels[indexOf(FilterSortValues, value)] }
+
 type FilterIntent uint8
 
 const (

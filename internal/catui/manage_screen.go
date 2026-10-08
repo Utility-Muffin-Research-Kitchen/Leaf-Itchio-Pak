@@ -127,11 +127,11 @@ func (screen *ManageScreen) drawNotedRow(rect Rect, label, note, secondary strin
 		}
 	}
 	return screen.ui.withClip(rect, func() error {
-		labelColor, noteColor := ctx.ThemeColor(RoleText), ctx.ThemeColor(RoleHint)
-		if selected {
-			labelColor = ctx.ThemeColor(RoleHighlightedText)
-			noteColor = labelColor
-		}
+		// The same colors as DrawListRow; the note takes the secondary
+		// text's color, which is the row's text color on the highlight.
+		labelRole, secondaryRole := listRowRoles(selected)
+		labelColor, secondaryColor := ctx.ThemeColor(labelRole), ctx.ThemeColor(secondaryRole)
+		noteColor := secondaryColor
 		pad := ctx.Scale(12)
 		maxWidth := rect.W - pad*2
 		if secondary != "" {
@@ -139,7 +139,7 @@ func (screen *ManageScreen) drawNotedRow(rect Rect, label, note, secondary strin
 			maxWidth -= secondaryWidth + pad
 			if secondaryWidth > 0 {
 				if _, err := ctx.DrawText(FontTiny, secondary, rect.X+rect.W-pad-secondaryWidth,
-					rect.Y+(rect.H-ctx.FontHeight(FontTiny))/2, ctx.ThemeColor(RoleHint), secondaryWidth, true); err != nil {
+					rect.Y+(rect.H-ctx.FontHeight(FontTiny))/2, secondaryColor, secondaryWidth, true); err != nil {
 					return err
 				}
 			}
@@ -149,7 +149,7 @@ func (screen *ManageScreen) drawNotedRow(rect Rect, label, note, secondary strin
 		}
 		labelHeight, gap := ctx.FontHeight(FontMedium), ctx.Scale(2)
 		y := rect.Y + (rect.H-labelHeight-gap-ctx.FontHeight(FontTiny))/2
-		if _, err := ctx.DrawFallbackText(FontMedium, label, rect.X+pad, y, labelColor, maxWidth); err != nil {
+		if _, err := screen.ui.DrawEllipsizedText(FontMedium, label, rect.X+pad, y, labelColor, maxWidth); err != nil {
 			return err
 		}
 		// The fallback fonts draw a member name in any script.

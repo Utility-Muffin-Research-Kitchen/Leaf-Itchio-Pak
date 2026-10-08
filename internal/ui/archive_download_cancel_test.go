@@ -269,9 +269,9 @@ func hasLogLine(logs string, parts ...string) bool {
 	return false
 }
 
-// The failed step stays in the log; the screen shows only the cause, which
-// starts a sentence.
-func TestArchiveDownloadErrorShowsTheCauseWithoutTheStep(t *testing.T) {
+// The failed step and its cause stay in the log; the screen shows a
+// sentence instead of either.
+func TestArchiveDownloadErrorKeepsTheStepAndCauseInTheLog(t *testing.T) {
 	f := newArchiveTransfer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -279,10 +279,10 @@ func TestArchiveDownloadErrorShowsTheCauseWithoutTheStep(t *testing.T) {
 	worker := f.start()
 	waitFor(t, func() bool { return worker.loadState() != zipDLDownloading })
 	model := worker.CatSnapshot()
-	if model.State != appui.DownloadProgressError || model.Detail == "" || strings.Contains(model.Detail, "download ZIP") {
-		t.Fatalf("snapshot = %v %q, want the cause without the step", model.State, model.Detail)
+	if model.State != appui.DownloadProgressError || model.Detail != "Something went wrong. Try again." {
+		t.Fatalf("snapshot = %v %q, want the generic sentence", model.State, model.Detail)
 	}
-	waitFor(t, func() bool { return hasLogLine(logs.String(), "[WARN]", "download ZIP: "+model.Detail) })
+	waitFor(t, func() bool { return hasLogLine(logs.String(), "[WARN]", "download ZIP: file download status 500") })
 }
 
 // rateLimitingCDN answers HTTP 429 to its first `limited` requests, then

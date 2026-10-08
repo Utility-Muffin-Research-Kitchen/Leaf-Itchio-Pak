@@ -1,6 +1,7 @@
 package leaf_test
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -21,5 +22,13 @@ func TestAvailableBytesUsesExistingAncestor(t *testing.T) {
 func TestRequireFreeSpaceRejectsImpossibleTransfer(t *testing.T) {
 	if err := leaf.RequireFreeSpace(t.TempDir(), int64(^uint64(0)>>1)); err == nil {
 		t.Fatal("impossible transfer passed free-space preflight")
+	}
+}
+
+// The screens tell a full card from other storage failures by ErrNoSpace.
+func TestRequireFreeSpaceReportsErrNoSpace(t *testing.T) {
+	err := leaf.RequireFreeSpace(t.TempDir(), int64(^uint64(0)>>2))
+	if !errors.Is(err, leaf.ErrNoSpace) {
+		t.Fatalf("error = %v, want ErrNoSpace", err)
 	}
 }

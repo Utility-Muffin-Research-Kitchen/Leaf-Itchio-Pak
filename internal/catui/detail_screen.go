@@ -42,40 +42,42 @@ func (screen *DetailScreen) HandleInput(event InputEvent) appui.DetailIntent {
 	})
 }
 
-func (screen *DetailScreen) Draw() error {
-	screen.cache.BeginFrame()
+// detailFooter lists the Detail hints. B Back is always shown. A downloaded
+// game needs five hints, which do not fit the 960-wide MLP1 display at
+// larger font bumps, so Settings and then the image hint carry a DropRank:
+// the composer leaves them out before Cat would collapse the footer into a
+// synthetic +1 item. Start and L1/R1 keep working when their hint is hidden.
+func detailFooter(model *appui.DetailModel) []FooterHint {
 	footer := []FooterHint{{Button: ButtonB, Label: "Back"}}
-	if screen.model.State == appui.DetailReady {
-		// A downloaded game needs five active hints once Settings is available.
-		// Keep B fully functional but omit its hint here so Cat never collapses
-		// this footer into a synthetic +1 item on the 960-wide MLP1 display.
-		if screen.model.Game.Downloaded {
-			footer = footer[:0]
-		}
+	if model.State == appui.DetailReady {
 		// D-pad scrolling remains fully functional. It is conventional enough to
 		// omit from this width-constrained footer so Settings stays visible.
-		footer = append(footer, FooterHint{Button: ButtonL1, ButtonText: "L1/R1", Label: "Img."})
-		if screen.model.Game.CanDownload && !screen.model.BrowserOnly {
+		footer = append(footer, FooterHint{Button: ButtonL1, ButtonText: "L1/R1", Label: "Img.", DropRank: 2})
+		if model.Game.CanDownload && !model.BrowserOnly {
 			label := "Download"
-			if screen.model.Game.Downloaded {
+			if model.Game.Downloaded {
 				label = "Again"
 			}
 			// Keep this with the left group. Splitting a GIF-backed Detail frame
 			// across Cat's left/right footer groups can retain queued shared-sprite
 			// state on MLP1; the action and visual label remain unchanged.
 			footer = append(footer, FooterHint{Button: ButtonA, Label: label})
-		} else if screen.model.Game.NeedsSignIn && !screen.model.BrowserOnly {
+		} else if model.Game.NeedsSignIn && !model.BrowserOnly {
 			footer = append(footer, FooterHint{Button: ButtonA, Label: "Sign in"})
 		}
 	}
-	if (screen.model.State == appui.DetailReady || screen.model.State == appui.DetailError) && screen.model.Game.Downloaded {
+	if (model.State == appui.DetailReady || model.State == appui.DetailError) && model.Game.Downloaded {
 		footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
 	}
-	footer = append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set"})
+	return append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set", DropRank: 1})
+}
+
+func (screen *DetailScreen) Draw() error {
+	screen.cache.BeginFrame()
 	frame, err := screen.ui.BeginScreen(ScreenSpec{
 		Title:           screen.model.Game.Title,
 		SubHeaderHeight: screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(10),
-		Footer:          footer,
+		Footer:          detailFooter(screen.model),
 	})
 	if err != nil {
 		return err

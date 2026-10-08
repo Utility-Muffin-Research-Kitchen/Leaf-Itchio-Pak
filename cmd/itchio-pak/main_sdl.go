@@ -20,6 +20,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
 )
@@ -301,6 +302,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	downloadScanStarted := false
+	downloadScansPending := 0
 	downloadLibraryStatus := ""
 	type managementScanResult struct {
 		manage  *appui.ManageModel
@@ -585,6 +587,36 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		route = catRouteDownloadProgress
 		return nil
 	}
+	// syncDownloadScans collects rescan answers on every pass, not only on
+	// the progress screen, so an answer that arrives after you leave it still
+	// ends the wait that keeps the loop polling and holds sleep.
+	syncDownloadScans := func() bool {
+		changed := false
+		for {
+			select {
+			case result := <-libraryScanResults:
+				if downloadScansPending > 0 {
+					downloadScansPending--
+				}
+				if result.generation != downloadGeneration {
+					continue
+				}
+				if result.err != nil {
+					logger.Warn("download: automatic library rescan failed: %v", result.err)
+					downloadLibraryStatus = "ROM installed · automatic rescan failed; use Rescan in Leaf."
+				} else if strings.Contains(strings.ToLower(result.message), "queued") {
+					logger.Info("download: Leaf library rescan queued")
+					downloadLibraryStatus = "Leaf library rescan queued."
+				} else {
+					logger.Info("download: Leaf library rescan requested")
+					downloadLibraryStatus = "Leaf library rescan requested."
+				}
+				changed = true
+			default:
+				return changed
+			}
+		}
+	}
 	syncDownloadProgress := func() {
 		if route != catRouteDownloadProgress || downloadBackend == nil || downloadProgressModel == nil {
 			return
@@ -600,6 +632,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		if downloadBackend.CatNeedsLibraryScan() && len(titleGroups) > 0 && !downloadScanStarted {
 			downloadScanStarted = true
+			downloadScansPending++
 			downloadLibraryStatus = "Requesting Leaf library rescan…"
 			generation := downloadGeneration
 			go func() {
@@ -610,28 +643,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				_ = ctx.Wake()
 			}()
 		}
-		for {
-			select {
-			case result := <-libraryScanResults:
-				if result.generation != downloadGeneration {
-					continue
-				}
-				if result.err != nil {
-					logger.Warn("download: automatic library rescan failed: %v", result.err)
-					downloadLibraryStatus = "ROM installed · automatic rescan failed; use Rescan in Leaf."
-				} else if strings.Contains(strings.ToLower(result.message), "queued") {
-					logger.Info("download: Leaf library rescan queued")
-					downloadLibraryStatus = "Leaf library rescan queued."
-				} else {
-					logger.Info("download: Leaf library rescan requested")
-					downloadLibraryStatus = "Leaf library rescan requested."
-				}
-			default:
-				snapshot.LibraryStatus = downloadLibraryStatus
-				*downloadProgressModel = snapshot
-				return
-			}
-		}
+		snapshot.LibraryStatus = downloadLibraryStatus
+		*downloadProgressModel = snapshot
 	}
 	var startDownloadPlan func(*ui.CatDownloadPlan) error
 	var handleArchiveAction func(ui.CatArchiveAction) error
@@ -643,7 +656,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			sealed, sealErr := plan.Seal(activeGame, activeDetail)
 			if sealErr != nil {
 				if downloadSelectModel != nil {
-					downloadSelectModel.SetError(sealErr.Error())
+					downloadSelectModel.SetError(screenError("cat download plan", sealErr))
 					route = catRouteDownloadSelect
 					return nil
 				}
@@ -674,7 +687,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
 			}
 			if flowErr != nil {
-				downloadSelectModel.SetError(flowErr.Error())
+				downloadSelectModel.SetError(screenError("cat download destination", flowErr))
 				return nil
 			}
 			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
@@ -719,7 +732,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				sources, catalog, cfg, cfgPath, activeGame.Title, archiveFlow.ROMExtensions())
 			if flowErr != nil {
 				archiveInspectModel.State = appui.DownloadProgressError
-				archiveInspectModel.Detail = flowErr.Error()
+				archiveInspectModel.Detail = screenError("cat archive destination", flowErr)
 				route = catRouteArchiveInspect
 				return nil
 			}
@@ -735,7 +748,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				sources, cfg, cfgPath, activeGame.Title)
 			if flowErr != nil {
 				archiveInspectModel.State = appui.DownloadProgressError
-				archiveInspectModel.Detail = flowErr.Error()
+				archiveInspectModel.Detail = screenError("cat archive destination", flowErr)
 				route = catRouteArchiveInspect
 				return nil
 			}
@@ -892,6 +905,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				redraw = true
 			}
 		}
+		if syncDownloadScans() {
+			redraw = true
+		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			syncDownloadProgress()
 			redraw = true
@@ -913,6 +929,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				break
 			}
 			if event.Wake {
+				// A worker posted a result, maybe after this pass synced.
+				// Come straight back to collect it rather than idle in
+				// Present: this event was the only signal that it is there.
+				ctx.RequestFrame()
 				redraw = true
 				continue
 			}
@@ -1013,7 +1033,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DestinationIntentActivate:
 					complete, destinationErr := destinationFlow.Activate(destinationModel)
 					if destinationErr != nil {
-						destinationModel.SetError(destinationErr.Error())
+						destinationModel.SetError(screenError("cat destination", destinationErr))
 						break
 					}
 					if complete {
@@ -1088,7 +1108,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					var flowErr error
 					renameFlow, renameModel, flowErr = manageFlow.Activate(manageModel)
 					if flowErr != nil {
-						manageModel.SetError(flowErr.Error())
+						manageModel.SetError(screenError("cat manage", flowErr))
 						break
 					}
 					if renameFlow != nil {
@@ -1100,7 +1120,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					}
 				case appui.ManageIntentConfirm:
 					if _, flowErr := manageFlow.Confirm(manageModel); flowErr != nil {
-						manageModel.SetError(flowErr.Error())
+						manageModel.SetError(screenError("cat manage", flowErr))
 					} else if manageFlow.TakeLibraryScanRequest() {
 						requestManagementScan(manageModel, nil, nil)
 					}
@@ -1119,14 +1139,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					list.ScheduleRebuild()
 				case appui.RenameIntentConfirm:
 					if flowErr := renameFlow.Confirm(renameModel); flowErr != nil {
-						renameModel.SetError(flowErr.Error())
+						renameModel.SetError(screenError("cat rename", flowErr))
 					} else if renameFlow.TakeLibraryScanRequest() {
 						requestManagementScan(nil, renameModel,
 							renameFlow.LibraryTitleGroups())
 					}
 				case appui.RenameIntentSkip:
 					if flowErr := renameFlow.Skip(renameModel); flowErr != nil {
-						renameModel.SetError(flowErr.Error())
+						renameModel.SetError(screenError("cat rename", flowErr))
 					} else if renameFlow.TakeLibraryScanRequest() {
 						requestManagementScan(nil, renameModel,
 							renameFlow.LibraryTitleGroups())
@@ -1144,14 +1164,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.SettingsIntentActivate:
 					action, flowErr := settingsFlow.Activate(settingsModel)
 					if flowErr != nil {
-						settingsModel.SetError(flowErr.Error())
+						settingsModel.SetError(screenError("cat settings", flowErr))
 					} else if err := handleSettingsAction(action); err != nil {
 						return err
 					}
 				case appui.SettingsIntentConfirm:
 					action, flowErr := settingsFlow.Confirm(settingsModel)
 					if flowErr != nil {
-						settingsModel.SetError(flowErr.Error())
+						settingsModel.SetError(screenError("cat settings", flowErr))
 					} else if err := handleSettingsAction(action); err != nil {
 						return err
 					}
@@ -1168,7 +1188,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					var flowErr error
 					tagFlow, tagModel, flowErr = moderationFlow.Activate(moderationModel)
 					if flowErr != nil {
-						moderationModel.SetError(flowErr.Error())
+						moderationModel.SetError(screenError("cat moderation", flowErr))
 					} else if tagFlow != nil {
 						tagScreen, flowErr = catui.NewSettingsScreen(ctx, tagModel)
 						if flowErr != nil {
@@ -1185,7 +1205,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					route = catRouteModeration
 				case appui.SettingsIntentActivate:
 					if flowErr := tagFlow.Activate(tagModel); flowErr != nil {
-						tagModel.SetError(flowErr.Error())
+						tagModel.SetError(screenError("cat moderation", flowErr))
 					}
 				}
 			case catRouteAbout:
@@ -1297,6 +1317,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				redraw = true
 			}
 		}
+		if syncDownloadScans() {
+			redraw = true
+		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			syncDownloadProgress()
 			redraw = true
@@ -1313,7 +1336,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			busy = busy || downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading
 			busy = busy || archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning
 			busy = busy || downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning
-			busy = busy || downloadLibraryStatus == "Requesting Leaf library rescan…"
+			busy = busy || downloadScansPending > 0
 			busy = busy || managementScansPending > 0
 			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
 			busy = busy || settingsFlow != nil && settingsFlow.Busy()
@@ -1381,44 +1404,28 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			ctx.RequestFrame()
 			redraw = true
 		}
-		if delay, animated := imageCache.NextFrameIn(); animated {
-			milliseconds := delay.Milliseconds()
-			if milliseconds < 1 {
-				milliseconds = 1
-			}
-			ctx.RequestFrameIn(uint32(milliseconds))
-			redraw = true
-		} else if imageCache.Busy() {
-			ctx.RequestFrameIn(50)
-			redraw = true
-		} else if route == catRouteList && model.State == appui.ListLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDownloadSelect && downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteArchiveInspect && archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDownloadProgress && downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning {
-			ctx.RequestFrameIn(50)
-			redraw = true
-		} else if route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy() {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting {
-			// The code's countdown changes once a second.
-			ctx.RequestFrameIn(1000)
-			redraw = true
-		} else if route == catRouteSignIn && signInModel != nil &&
-			(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking) {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if list.IsBusy() {
-			ctx.RequestFrameIn(250)
+		delay, animated := imageCache.NextFrameIn()
+		if milliseconds, poll := catPollDelay(catPollState{
+			AnimationIn:   delay,
+			Animated:      animated,
+			ImagesLoading: imageCache.Busy(),
+			ListLoading:   route == catRouteList && model.State == appui.ListLoading,
+			DetailLoading: route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading,
+			FilesLoading: route == catRouteDownloadSelect && downloadSelectModel != nil &&
+				downloadSelectModel.State == appui.DownloadSelectLoading,
+			ArchiveInspecting: route == catRouteArchiveInspect && archiveInspectModel != nil &&
+				archiveInspectModel.State == appui.DownloadProgressRunning,
+			Downloading: route == catRouteDownloadProgress && downloadProgressModel != nil &&
+				downloadProgressModel.State == appui.DownloadProgressRunning,
+			CacheRefreshing: route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy(),
+			SignInWaiting:   route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting,
+			SignInChecking: route == catRouteSignIn && signInModel != nil &&
+				(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking),
+			CatalogBuilding:      list.IsBusy(),
+			LibraryScanRequested: downloadScansPending > 0 || managementScansPending > 0,
+			AccountChecking:      settingsFlow.Busy(),
+		}); poll {
+			ctx.RequestFrameIn(milliseconds)
 			redraw = true
 		}
 		if err := ctx.Present(); err != nil {
@@ -1426,4 +1433,11 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	return nil
+}
+
+// screenError logs err in full under scope and returns the sentence the
+// screen shows for it: never the error's own text.
+func screenError(scope string, err error) string {
+	logger.Warn("%s: %v", scope, err)
+	return screentext.FromError(err)
 }

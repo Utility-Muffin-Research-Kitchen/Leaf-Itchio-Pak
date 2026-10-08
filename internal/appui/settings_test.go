@@ -38,3 +38,19 @@ func TestSettingsWorkingCanReturnWithoutWaitingForNetwork(t *testing.T) {
 		t.Fatalf("working B = %v", got)
 	}
 }
+
+// F10: stored choices such as "auto" show in sentence case, like the On/Off
+// and Info/Debug values next to them.
+func TestChoiceLabelUsesSentenceCase(t *testing.T) {
+	for value, want := range map[string]string{
+		"auto": "Auto",
+		"ask":  "Ask",
+		"off":  "Off",
+		"On":   "On",
+		"":     "",
+	} {
+		if got := ChoiceLabel(value); got != want {
+			t.Errorf("ChoiceLabel(%q) = %q, want %q", value, got, want)
+		}
+	}
+}

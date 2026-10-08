@@ -25,29 +25,6 @@ var SortModes = []SortMode{
 	SortModeDL, SortModeFree, SortModePaid, SortModeOwned,
 }
 
-// SortModeBadge returns the display label shown in the UI header for m.
-// An unrecognised mode is treated as SortModeRSS.
-func SortModeBadge(m SortMode) string {
-	switch m {
-	case SortModeAZ:
-		return "A-Z"
-	case SortModeZA:
-		return "Z-A"
-	case SortModeNew:
-		return "NEW"
-	case SortModeDL:
-		return "DL"
-	case SortModeFree:
-		return "FREE"
-	case SortModePaid:
-		return "PAID"
-	case SortModeOwned:
-		return "OWNED"
-	default:
-		return "RSS"
-	}
-}
-
 // NextSortMode returns the mode that follows current in the SortModes cycle.
 // If current is not a recognised mode it returns SortModeRSS.
 func NextSortMode(current SortMode) SortMode {

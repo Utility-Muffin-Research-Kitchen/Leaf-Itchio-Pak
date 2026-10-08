@@ -105,7 +105,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	defer s.logFailure()
 	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
 	if guardErr != nil {
-		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+		s.err = inhibitBlockedError(guardErr)
 		s.inhibitBlocked.Store(true)
 		s.storeState(zipDLError)
 		return
@@ -182,7 +182,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	if err != nil {
-		s.err = stepError{step: "download ZIP", err: err}
+		s.err = fmt.Errorf("download ZIP: %w", err)
 		s.storeState(zipDLError)
 		return
 	}

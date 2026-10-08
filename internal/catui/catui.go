@@ -261,18 +261,47 @@ func (c *Context) Present() error {
 	return statusError(C.catui_present())
 }
 
+// DrawTitleIn draws a screen title, often a game's, with the fallback fonts
+// list rows use, so emoji and CJK titles the theme font lacks are not blank.
 func (c *Context) DrawTitleIn(rect Rect, title string) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
 	}
 	titleC, freeTitle := cString(title)
 	defer freeTitle()
-	return statusError(C.catui_draw_title_in(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), titleC))
+	tier := titleTier(title, rect.W, c.MeasureFallbackText)
+	return statusError(C.catui_draw_title_in(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H),
+		titleC, C.int(tier)))
+}
+
+// titleTier picks the largest title size whose width fits, or the smallest
+// size, which the draw clips. measure must be the fallback-font measure the
+// title draws with.
+func titleTier(title string, width int, measure func(FontTier, string) int) FontTier {
+	tiers := []FontTier{FontExtraLarge, FontLarge, FontMedium}
+	for _, tier := range tiers {
+		if measure(tier, title) <= width {
+			return tier
+		}
+	}
+	return tiers[len(tiers)-1]
 }
 
 func (c *Context) TitleHeight() int   { return int(C.catui_title_height()) }
 func (c *Context) HintsEnabled() bool { return C.catui_hints_enabled() != 0 }
 func (c *Context) FooterHeight() int  { return int(C.catui_footer_height()) }
+
+// FooterMetrics is cat_draw_footer's geometry in final pixels.
+func (c *Context) FooterMetrics() (available, badge, margin int) {
+	var availableC, badgeC, marginC C.int
+	C.catui_footer_metrics(&availableC, &badgeC, &marginC)
+	return int(availableC), int(badgeC), int(marginC)
+}
+
+// ButtonName is the badge text Cat draws for a footer item without ButtonText.
+func (c *Context) ButtonName(button Button) string {
+	return C.GoString(C.catui_button_name(C.int(button)))
+}
 
 type FooterItem struct {
 	Button     Button
