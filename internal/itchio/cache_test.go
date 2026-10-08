@@ -119,7 +119,8 @@ func TestLoadGamesCache_CorruptFile(t *testing.T) {
 
 func TestLoadGamesCache_repairsTitlesOnLoad(t *testing.T) {
 	// Caches written before the slug-fallback fix may contain games with empty
-	// or emoji-only titles. LoadGamesCache must repair them on load.
+	// or undrawable titles. LoadGamesCache must repair them on load, and keep
+	// titles without letters that still draw.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "games_cache.json")
 
@@ -127,6 +128,8 @@ func TestLoadGamesCache_repairsTitlesOnLoad(t *testing.T) {
 		{Title: "", URL: "https://soyouz.itch.io/spread"},
 		{Title: "🔴", URL: "https://iansundstrom.itch.io/redcircle"},
 		{Title: "Normal Game", URL: "https://dev.itch.io/normal-game"},
+		{Title: "35!", URL: "https://dev.itch.io/thirty-five"},
+		{Title: "\u200b\ue000", URL: "https://dev.itch.io/garbage-title"},
 	}
 	if err := itchio.SaveGamesCache(path, stale); err != nil {
 		t.Fatalf("SaveGamesCache: %v", err)
@@ -139,11 +142,17 @@ func TestLoadGamesCache_repairsTitlesOnLoad(t *testing.T) {
 	if cache.Games[0].Title != "Spread" {
 		t.Errorf("empty title: got %q, want %q", cache.Games[0].Title, "Spread")
 	}
-	if cache.Games[1].Title != "Redcircle" {
-		t.Errorf("emoji title: got %q, want %q", cache.Games[1].Title, "Redcircle")
+	if cache.Games[1].Title != "🔴" {
+		t.Errorf("emoji title: got %q, want %q", cache.Games[1].Title, "🔴")
 	}
 	if cache.Games[2].Title != "Normal Game" {
 		t.Errorf("normal title: got %q, want %q", cache.Games[2].Title, "Normal Game")
+	}
+	if cache.Games[3].Title != "35!" {
+		t.Errorf("letterless title: got %q, want %q", cache.Games[3].Title, "35!")
+	}
+	if cache.Games[4].Title != "Garbage Title" {
+		t.Errorf("undrawable title: got %q, want %q", cache.Games[4].Title, "Garbage Title")
 	}
 }
 
