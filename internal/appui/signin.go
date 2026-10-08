@@ -44,9 +44,12 @@ type SignInModel struct {
 
 func NewSignInModel() *SignInModel { return &SignInModel{State: SignInStarting} }
 
-// Remaining is the time left on the code, never negative.
+// Remaining is the time left on the code at now, never negative. It
+// compares wall-clock times: Go subtracts two time.Now readings with their
+// monotonic clock, which stops while the device sleeps, and itch.io's
+// expiry does not wait for the device.
 func (m *SignInModel) Remaining(now time.Time) time.Duration {
-	return max(m.Expires.Sub(now), 0)
+	return max(m.Expires.Round(0).Sub(now.Round(0)), 0)
 }
 
 // Handle maps input to an intent. B on the account check after approval only

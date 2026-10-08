@@ -1,8 +1,10 @@
 package appui
 
 import (
+	"reflect"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestSignInModelInput(t *testing.T) {
@@ -36,6 +38,39 @@ func TestSignInModelRemainingNeverNegative(t *testing.T) {
 	model := &SignInModel{Expires: now.Add(90 * time.Second)}
 	if model.Remaining(now) != 90*time.Second || model.Remaining(now.Add(time.Hour)) != 0 {
 		t.Fatal("remaining time is wrong")
+	}
+}
+
+// afterSuspend returns the clock reading taken awake after start when the
+// device also slept for slept in between. The wall clock counts the sleep.
+// The monotonic clock that a time.Now reading also carries stops during
+// suspend on Linux, so it does not. Go has no API to build such a reading,
+// so this lowers the reading's unexported monotonic field.
+func afterSuspend(t *testing.T, start time.Time, awake, slept time.Duration) time.Time {
+	t.Helper()
+	woke := start.Add(awake + slept)
+	field := reflect.ValueOf(&woke).Elem().FieldByName("ext")
+	if !field.IsValid() || field.Kind() != reflect.Int64 {
+		t.Fatal("cannot simulate a suspend: time.Time has no int64 ext field")
+	}
+	ext := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+	ext.SetInt(ext.Int() - int64(slept))
+	if woke.Sub(start) != awake || woke.Round(0).Sub(start.Round(0)) != awake+slept {
+		t.Fatal("cannot simulate a suspend: time.Time no longer keeps its monotonic reading in ext")
+	}
+	return woke
+}
+
+// The countdown follows the wall clock. Go subtracts two time.Now readings
+// with their monotonic clock, which stops while the device sleeps, so after
+// a suspend the countdown showed the sleep's length more than itch.io's own
+// expiry.
+func TestSignInModelRemainingCountsTimeAsleep(t *testing.T) {
+	issued := time.Now() // like the code's expiry, a reading with a monotonic clock
+	model := &SignInModel{Expires: issued.Add(10 * time.Minute)}
+	woke := afterSuspend(t, issued, time.Minute, 3*time.Minute)
+	if got := model.Remaining(woke); got != 6*time.Minute {
+		t.Fatalf("remaining after a 3-minute sleep = %v, want 6m0s", got)
 	}
 }
 
