@@ -85,15 +85,20 @@ case ${1:-} in
     mlp1)
         runtime=$(detect_runtime)
         test -n "$runtime" || { echo "docker or podman is required for make mlp1" >&2; exit 1; }
+        test -f "$CATASTROPHE_DIR/include/catastrophe.h" || { echo "missing Catastrophe: $CATASTROPHE_DIR" >&2; exit 1; }
         mkdir -p .go_cache/build-cache .go_cache/mod-cache
         "$runtime" build \
             --build-arg "TOOLCHAIN_IMAGE=$MLP1_TOOLCHAIN_IMAGE" \
             --build-arg "GO_IMAGE=$GO_IMAGE" \
             -t "$MLP1_BUILD_IMAGE" \
             -f docker/Dockerfile.mlp1 .
+        # Mount this checkout and CATASTROPHE_DIR at fixed container paths, so
+        # the build works from a checkout with any directory name and the
+        # build paths stay the same for every checkout.
         "$runtime" run --rm \
             --user "$(id -u):$(id -g)" \
-            -v "$WORKSPACE_ROOT:/workspace" \
+            -v "$REPO_DIR:/workspace/Leaf-Itchio-Pak" \
+            -v "$CATASTROPHE_DIR:/workspace/Catastrophe:ro" \
             -v "$REPO_DIR/.go_cache:/go-cache" \
             -w /workspace/Leaf-Itchio-Pak \
             -e "APP_VERSION=$APP_VERSION" \

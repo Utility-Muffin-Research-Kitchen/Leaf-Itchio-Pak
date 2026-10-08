@@ -79,12 +79,11 @@ def runtime() -> str:
 
 
 def readelf(package: pathlib.Path, image: str) -> str:
-    repo = pathlib.Path(__file__).resolve().parent.parent
-    workspace = repo.parent
-    binary = pathlib.PurePosixPath("/workspace/Leaf-Itchio-Pak") / package.relative_to(repo) / "bin/itchio-pak"
+    # Mount only the package, so the check works from a checkout with any
+    # directory name.
     command = [
-        runtime(), "run", "--rm", "-v", f"{workspace}:/workspace", image,
-        "sh", "-c", f'"$READELF" -l -d "{binary}"',
+        runtime(), "run", "--rm", "-v", f"{package}:/package:ro", image,
+        "sh", "-c", '"$READELF" -l -d /package/bin/itchio-pak',
     ]
     result = subprocess.run(command, text=True, capture_output=True)
     if result.returncode:
