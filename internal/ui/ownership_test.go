@@ -172,13 +172,17 @@ func runArchiveFor(t *testing.T, primary string, game itchio.Game, inv *inventor
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest = manifestFrom7z(reader.File)
+		if manifest, err = manifestFrom7z(reader.File); err != nil {
+			t.Fatal(err)
+		}
 	} else {
 		reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest = manifestFromZIP(reader.File)
+		if manifest, err = manifestFromZIP(reader.File); err != nil {
+			t.Fatal(err)
+		}
 	}
 	plan := ZIPPlan{
 		Upload: freeUpload(srv, "9", filename), CDNURL: srv.URL + "/cdn/9",

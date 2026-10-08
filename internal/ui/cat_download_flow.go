@@ -148,6 +148,7 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 			UploadID: upload.UploadID,
 		})
 	}
+	update.uploads = flow.dropTextMarkdown(update.uploads)
 	return update
 }
 
@@ -175,6 +176,7 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 				DesktopOrWeb: upload.DesktopOrWebOnly(),
 			})
 		}
+		update.uploads = flow.dropTextMarkdown(update.uploads)
 		return update
 	case errors.Is(err, itchio.ErrRateLimited) || errors.Is(err, context.Canceled):
 		return catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
@@ -205,7 +207,40 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 			DesktopOrWeb: upload.DesktopOrWebOnly(),
 		})
 	}
+	update.uploads = flow.dropTextMarkdown(update.uploads)
 	return update
+}
+
+// mdProbeBytes is how much of a ".md" upload is read to tell a Mega Drive
+// ROM from Markdown; roms.MDIsROM checks the first 4 KB for text.
+const mdProbeBytes = 4096
+
+// dropTextMarkdown removes ".md" uploads that are text, such as a README
+// published next to the game. ".md" is also the Mega Drive extension, so
+// each one is checked by its first bytes with the same rule as archive
+// members. An upload that cannot be checked stays offered.
+func (flow *CatDownloadFlow) dropTextMarkdown(uploads []roms.Upload) []roms.Upload {
+	kept := make([]roms.Upload, 0, len(uploads))
+	for _, upload := range uploads {
+		if strings.EqualFold(roms.ROMExt(upload.Filename), ".md") && flow.uploadIsText(upload) {
+			logger.Info("download: not offering %s; it is text, not a Mega Drive ROM", upload.Filename)
+			continue
+		}
+		kept = append(kept, upload)
+	}
+	return kept
+}
+
+func (flow *CatDownloadFlow) uploadIsText(upload roms.Upload) bool {
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, upload)
+	if err == nil {
+		var header []byte
+		if header, err = flow.client.FetchFileHeader(cdnURL, mdProbeBytes); err == nil {
+			return !roms.MDIsROM(header)
+		}
+	}
+	logger.Warn("download: could not check %s for Markdown, offering it: %v", upload.Filename, err)
+	return false
 }
 
 func (flow *CatDownloadFlow) publish(update catDownloadUpdate) {

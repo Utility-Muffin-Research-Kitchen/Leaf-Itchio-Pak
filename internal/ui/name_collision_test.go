@@ -202,13 +202,19 @@ func runArchive(t *testing.T, filename string, data []byte, cfg *settings.Config
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest = manifestFrom7z(reader.File)
+		manifest, err = manifestFrom7z(reader.File)
+		if err != nil {
+			t.Fatal(err)
+		}
 	} else {
 		reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest = manifestFromZIP(reader.File)
+		manifest, err = manifestFromZIP(reader.File)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	inv, invPath := collisionInventory(t)
 	plan := ZIPPlan{
