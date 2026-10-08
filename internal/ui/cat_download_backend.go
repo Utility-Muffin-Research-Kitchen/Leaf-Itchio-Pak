@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"sort"
 	"sync/atomic"
 
@@ -25,6 +26,10 @@ type CatDownloadBackend interface {
 
 const itchioLibraryTitleProvider = "org.umrk.itchio"
 
+// libraryTitleGroups sends one title group per system. Jawaka adds each
+// match's scanned name when one group matches several games: that tells the
+// discs of one set apart, but a game with a GB and a GBA build would show
+// "Title — Title" twice. Files of one system stay in one group.
 func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPaths []string) []leaf.LibraryTitleGroup {
 	if inv == nil || title == "" || len(savedPaths) == 0 {
 		return nil
@@ -39,7 +44,7 @@ func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPa
 			wanted[path] = struct{}{}
 		}
 	}
-	seen := make(map[string]struct{})
+	systems := make(map[string]string)
 	paths := make([]string, 0, len(wanted))
 	for _, file := range entry.Files {
 		if _, ok := wanted[file.DestPath]; !ok {
@@ -50,21 +55,43 @@ func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPa
 		if !isROM || file.DestPath == "" {
 			continue
 		}
-		if _, duplicate := seen[file.DestPath]; duplicate {
+		if _, duplicate := systems[file.DestPath]; duplicate {
 			continue
 		}
-		seen[file.DestPath] = struct{}{}
+		systems[file.DestPath] = titleGroupSystem(file)
 		paths = append(paths, file.DestPath)
 	}
 	if len(paths) == 0 {
 		return nil
 	}
 	sort.Strings(paths)
-	return []leaf.LibraryTitleGroup{{
-		Provider: itchioLibraryTitleProvider,
-		Title:    title,
-		ROMPaths: paths,
-	}}
+	var groups []leaf.LibraryTitleGroup
+	groupIndex := make(map[string]int)
+	for _, path := range paths {
+		index, ok := groupIndex[systems[path]]
+		if !ok {
+			index = len(groups)
+			groupIndex[systems[path]] = index
+			groups = append(groups, leaf.LibraryTitleGroup{
+				Provider: itchioLibraryTitleProvider,
+				Title:    title,
+			})
+		}
+		groups[index].ROMPaths = append(groups[index].ROMPaths, path)
+	}
+	return groups
+}
+
+// titleGroupSystem is the library system a ROM is listed under: its canonical
+// system, or its folder when it sits outside every system folder.
+func titleGroupSystem(file inventory.DownloadedFile) string {
+	if identity, ok := roms.DescribeDestination(file.DestPath); ok && identity.CanonicalSystem != "" {
+		return identity.CanonicalSystem
+	}
+	if file.CanonicalSystem != "" {
+		return file.CanonicalSystem
+	}
+	return filepath.Dir(file.DestPath)
 }
 
 func NewCatDirectDownloadBackend(client *itchio.Client, cfg *settings.Config,
