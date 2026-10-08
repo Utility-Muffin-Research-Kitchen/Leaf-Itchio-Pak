@@ -66,7 +66,7 @@ The CSRF token extracted here is used in the free download flow (Step 2 below).
 
 **Source:** `download.go` — `FetchUploads` + `DownloadFree`
 
-With an API key and a known game ID, a free or name-your-own-price game is
+When signed in and with a known game ID, a free or name-your-own-price game is
 listed through `GET api.itch.io/games/{GAME_ID}/uploads` without a
 `download_key_id`, and downloads through an install session with no purchase
 ID (see the paid flow below). That skips this web flow and its
@@ -198,21 +198,107 @@ header is used to track progress.
 
 ---
 
-## Paid game download (API key path)
+## Sign in with itch.io (QR device login)
+
+**Source:** `oauth.go`, `ui/cat_signin_flow.go`, `ui/account.go`
+
+The app gets its key through itch.io's [device authorization grant with PKCE](https://itch.io/docs/api/oauth).
+itch.io enables this flow per OAuth
+application; Leaf's own client ID is `OAuthClientID` in `oauth.go`. There is no
+client secret. Leaf's client approval was confirmed on 2026-10-03, its registered
+redirect URI is `urn:itchio:poll`, and a live `POST /oauth/device` returned
+HTTP 200 with the required fields, a 600-second expiry and a 5-second poll
+interval. No returned codes or credentials were logged. Phone approval and
+the live token exchange still need a full device sign-in check.
+
+Every way into sign-in (Settings, or A on a paid game's detail page) opens
+the same screen, which shows the physical-access warning first until it is
+accepted (`CatSignInFlow.Open`; the acceptance is stored as
+`api_key_physical_warning_accepted` in `config.json`).
+
+1. `POST https://api.itch.io/oauth/device` with `client_id`,
+   `scope=profile:me profile:owned game:view:uploads`, `code_challenge`
+   (S256 of a random 32-byte verifier) and `code_challenge_method=S256`.
+   The answer carries `device_code`, `user_code`, `verification_uri`,
+   `verification_uri_complete`, `expires_in` and `interval`. The QR code uses
+   the complete URI unchanged, and only an HTTPS address on `itch.io` or a
+   subdomain, without credentials or a port, is accepted
+   (`ErrSignInUnavailable` otherwise). The bare `verification_uri` has no
+   manual code entry, so if the QR code cannot be drawn the screen says so and
+   A asks for a new code. The short `user_code` is shown beside the QR so the user can
+   match it to the phone's approval page.
+2. `POST /oauth/device/poll` with `client_id` and `device_code`, waiting
+   `interval` after each answer. `pending` continues (adopting a new interval),
+   `approved` carries a single-use `code`, `denied` and `expired` end the
+   attempt, 400 `invalid_grant` means the code is gone, and 429 doubles the
+   interval. No request outlives the code's expiry; B cancels.
+3. `POST /oauth/token` with `grant_type=authorization_code`, `code`,
+   `code_verifier`, `redirect_uri=urn:itchio:poll`, `client_id` and
+   `device_info` ("MINILOONG Pocket 1, Leaf-Itchio-Pak <version>"). The
+   `access_token` is an itch.io API key that does not expire and has no
+   refresh token. itch.io issues it in this request and the app cannot
+   revoke it, so B no longer stops the exchange once approval arrived (it is
+   bounded to 30 seconds instead), and a key that arrives after you left the
+   screen is still saved and checked: the app keeps the flow until it is
+   idle.
+
+A power action (sleep or shutdown) waits only for that exchange and for its
+key to be saved (`CatSignInFlow.Busy`). A sign-in still getting a code or
+waiting for approval is cancelled and its screen closed
+(`CatSignInFlow.YieldToPower`); the account check after the key is saved is
+not protected either.
+
+Errors are reported by cause: 400 `invalid_grant` is an expired code, any
+other 400 or a 404 on these three endpoints is `ErrSignInUnavailable` (sign-in
+is set up wrong, such as an invalid scope), and 429 on the code request or the
+exchange is `ErrRateLimited`. Only network failures read "Can't reach itch.io".
+
+`Account` stores the key in `config.json` (0600 where the filesystem allows),
+registers it for log redaction as `[TOKEN]`, and resets account-derived state:
+the client's key generation and bundle-size cache, the live owned list, and
+`owned_cache.json`. A profile check then loads the account name and owned
+games (`ValidateAPIKeyContext`, bounded to 2 minutes). B leaves that screen:
+the check finishes in the background and is applied only if its key is still
+the stored one. Signing out clears the same state; itch.io has no revoke endpoint, so
+the key stays valid on the website until the user deletes it. A 401 from
+`/profile`, or a 403 carrying itch.io's JSON `errors` list
+(`ErrSignInRejected`), signs out, at startup or when checking the account;
+network errors and a 403 page from anything in between (a proxy or
+Cloudflare) never do. A startup sign-out sets `signed_out_notice` in
+`config.json`, and the main list shows "itch.io signed you out. Sign in again
+from Settings." until you close it; signing in again clears it. The device code, verifier,
+approval code and key are never logged.
+
+Typed API keys are gone: `settings.Load` removes a stored `api_key`, sets
+`legacy_key_removed`, and the app opens Settings once with an explanation.
+Signed out, the catalogue never loads `owned_cache.json` and deletes it, so the
+removed key's OWNED badges and Owned sort go with it.
+
+---
+
+## Paid game download (signed in)
+
+The detail page's action follows the current account on every frame
+(`CatalogController.ApplyDetailAccess`): signed out, a paid game offers sign-in;
+signed in, it offers Download when the owned set lists it, or while that set is
+not known yet (right after a sign-in, or when the check could not run), in which
+case the purchase lookup below decides. A paid game the account does not own
+offers no Download and says **Not owned**. The not-owned error
+(`ErrNotOwned`) never shows the game ID; it is only logged.
 
 **Source:** `download_auth.go`, `roms/install_session.go`
 
 For paid games the user already owns, every request goes to itch.io API v2 on
-`api.itch.io` with `Authorization: Bearer {API_KEY}`. The key is never placed
+`api.itch.io` with `Authorization: Bearer {KEY}`, the key from sign-in. The key is never placed
 in a URL, and the header only reaches `api.itch.io`: download redirects are
 read rather than followed, and the CDN request is separate. This path is taken
 automatically when all three conditions are true:
 
 - `game.IsFree == false`
-- `cfg.APIKey != ""`
+- `cfg.SignedIn()`
 - `detail.GameID != ""`
 
-The v1 endpoints (`itch.io/api/1/{API_KEY}/...`) are no longer used. There is
+The v1 endpoints (`itch.io/api/1/{KEY}/...`) are no longer used. There is
 no automatic fallback to them: a v2 failure is reported, and rolling back
 means reinstalling the previous package.
 
@@ -245,7 +331,7 @@ Normal page response (JSON):
 value and only unmarshals it when it is an array, so earlier pages survive.
 
 The `id` field is the buyer's **download key ID**, tied to one purchase and
-distinct from the API key. A game can have several: one per individual
+distinct from the sign-in key. A game can have several: one per individual
 purchase and one per bundle that includes it.
 
 **Bundle or individual purchase.** Telling them apart needs the number of
@@ -386,11 +472,10 @@ signed download page each issue their own token.
   so this is not normally an issue, but a very slow or stalled connection could
   cause it to expire mid-transfer.
 
-- **API keys are physical secrets.** In-app entry uses the Catastrophe keyboard.
-  The saved value is never prefilled or shown in full after saving, but newly
-  typed characters are visible. FAT32 cannot protect `config.json` from someone
-  with physical access to the SD card; see the user guide before enabling owned
-  downloads.
+- **Sign-in keys are physical secrets.** QR sign-in stores the key in
+  `config.json`; it is never shown or typed. FAT32 cannot protect the file
+  from someone with physical access to the SD card; see the user guide before
+  signing in.
 
 - **Retries are intentionally narrow.** Only idempotent metadata requests retry
   selected transient failures. User-started downloads are not automatically

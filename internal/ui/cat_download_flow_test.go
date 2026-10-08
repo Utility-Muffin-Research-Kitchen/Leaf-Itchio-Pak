@@ -276,3 +276,48 @@ func TestLibraryTitleGroupsUseOnlyCurrentCommittedROMPaths(t *testing.T) {
 		t.Fatalf("partial worker title groups = %#v", got)
 	}
 }
+
+// Alternative builds for the same system are a choice, not a batch
+// (upstream dc94f66). Companions for different systems, and PlayStation file
+// sets, still download together.
+func TestCatDownloadFlowAsksBetweenAlternativeBuildsOfOneSystem(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.setUploads(model, []roms.Upload{{Filename: "Capybara Village Update1.gb"}, {Filename: "Capybara Village Jam.gb"}})
+	if plan := flow.TakePlan(); plan != nil || model.State != appui.DownloadSelectChoices || len(model.Choices) != 2 {
+		t.Fatalf("two Game Boy builds: plan=%#v model=%#v, want the picker", plan, model)
+	}
+	model.Cursor = 0
+	flow.Choose(model)
+	if plan := flow.TakePlan(); plan == nil || len(plan.Uploads) != 1 || plan.Uploads[0].Filename != "Capybara Village Update1.gb" {
+		t.Fatalf("chosen build plan = %#v", plan)
+	}
+
+	for name, uploads := range map[string][]roms.Upload{
+		"cross-system companions": {{Filename: "game.gb"}, {Filename: "game.nes"}},
+		"CUE/BIN set":             {{Filename: "disc.cue"}, {Filename: "disc.bin"}},
+		"multi-disc CHD set":      {{Filename: "disc1.chd"}, {Filename: "disc2.chd"}},
+	} {
+		flow, model = newCatDownloadFlowForTest(t)
+		flow.setUploads(model, uploads)
+		if plan := flow.TakePlan(); plan == nil || plan.Kind != CatDownloadPlanMulti || len(plan.Uploads) != 2 {
+			t.Errorf("%s: plan = %#v, want one batch", name, plan)
+		}
+	}
+}
+
+// Each planned upload carries the listing it was chosen from, so the install
+// can tell an update from another build (review finding R18-2).
+func TestCatDownloadFlowRecordsTheListingOnEachUpload(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.setUploads(model, []roms.Upload{{Filename: "one.gb", UploadID: "11"}, {Filename: "two.gbc", UploadID: "12"}})
+	plan := flow.TakePlan()
+	if plan == nil || len(plan.Uploads) != 2 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	for _, upload := range plan.Uploads {
+		if len(upload.Offered) != 2 || upload.Offered[0] != (roms.Offer{Filename: "one.gb", UploadID: "11"}) ||
+			upload.Offered[1] != (roms.Offer{Filename: "two.gbc", UploadID: "12"}) {
+			t.Fatalf("%s offered = %+v", upload.Filename, upload.Offered)
+		}
+	}
+}

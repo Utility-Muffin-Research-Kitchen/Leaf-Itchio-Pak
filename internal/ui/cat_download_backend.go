@@ -209,6 +209,7 @@ func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	case zipDLDone:
 		model.State = appui.DownloadProgressDone
 		model.SavedPaths = append([]string(nil), s.extracted...)
+		model.Skipped = append([]string(nil), s.skipped...)
 	case zipDLError:
 		model.State = appui.DownloadProgressError
 		if s.err != nil {

@@ -28,6 +28,15 @@ capture() {
 }
 
 capture filter 960 720 1 0
+capture signin 960 720 1 0
+capture signin 1280 800 0 5
+capture signin-error 960 720 1 0
+capture signin-done 960 720 1 0
+capture signin-qr-failed 960 720 1 2
+capture signin-checking 960 720 1 2
+capture signin-warning 960 720 1 2
+capture detail-signin 960 720 1 0
+capture detail-not-owned 960 720 1 2
 capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0
 capture detail 960 720 1 0
@@ -39,6 +48,7 @@ capture download-select-hidden 960 720 1 2
 capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0
+capture download-done 960 720 1 2
 capture download-error 960 720 1 0
 capture download-error 960 720 1 2
 capture download-stalled 960 720 1 2
@@ -55,7 +65,10 @@ capture destination-confirm 960 720 1 0
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
+capture manage-list 960 720 1 2
+capture manage-leftover 960 720 1 2
 capture manage-result 960 720 1 0
+capture manage-result 960 720 1 2
 capture rename-saves 960 720 1 0
 capture rename-states 1280 800 0 5
 capture rename-done 960 720 1 0

@@ -38,3 +38,19 @@ func TestDownloadProgressLockedTransactionIgnoresCancel(t *testing.T) {
 		t.Fatalf("locked B intent = %v", got)
 	}
 }
+
+// The archive done screen names the files it skipped (review finding R18-5).
+func TestSkippedFilesLine(t *testing.T) {
+	for _, tc := range []struct {
+		names []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"game.gb"}, "Skipped 1 file: game.gb"},
+		{[]string{"game.gb", "Game.GB"}, "Skipped 2 files: game.gb, Game.GB"},
+	} {
+		if got := SkippedFilesLine(tc.names); got != tc.want {
+			t.Errorf("SkippedFilesLine(%q) = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+}

@@ -20,13 +20,17 @@ var ErrRateLimited = netlimit.ErrRateLimited
 // download. Its text is shown on screen as is.
 var ErrUploadGone = errors.New("This file is no longer on itch.io.")
 
-// ErrNoAccess is returned when the API refuses a game's upload list: the game
-// is not owned, or the key does not grant access. Its text is safe for the UI.
-var ErrNoAccess = errors.New("Game not owned or API key does not grant access to this game's downloads")
+// ErrNoAccess is returned when the API refuses a game's upload list: the
+// signed-in account does not own the game. Its text is safe for the UI.
+var ErrNoAccess = errors.New("your itch.io account doesn't have access to this game's downloads")
+
+// ErrNotOwned is returned when the signed-in account has no purchase of a
+// paid game. Its text is safe for the UI; the game ID is only logged.
+var ErrNotOwned = errors.New("your itch.io account doesn't own this game")
 
 // ErrDownloadRefused is returned when itch.io refuses to resolve an upload
 // with HTTP 401 or 403. Its text is safe for the UI.
-var ErrDownloadRefused = errors.New("Game not owned or API key does not grant access to this download")
+var ErrDownloadRefused = errors.New("your itch.io account doesn't have access to this download")
 
 // ErrNoWebDownload is returned by the anonymous web flow when itch.io offers
 // no download link: the game is paid or needs a signed-in account.

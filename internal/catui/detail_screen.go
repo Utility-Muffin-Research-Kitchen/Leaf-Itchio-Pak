@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
-	"github.com/skip2/go-qrcode"
 )
 
 type DetailScreen struct {
@@ -23,11 +22,7 @@ func NewDetailScreen(ctx *Context, model *appui.DetailModel, cache *ImageCache) 
 		return nil, err
 	}
 	screen := &DetailScreen{ctx: ctx, ui: ui, model: model, cache: cache}
-	if model.Game.URL != "" {
-		if code, qrErr := qrcode.New(model.Game.URL, qrcode.Medium); qrErr == nil {
-			screen.qr, _ = ctx.TextureFromImage(code.Image(256))
-		}
-	}
+	screen.qr = newQRTexture(ctx, model.Game.URL)
 	return screen, nil
 }
 
@@ -69,6 +64,8 @@ func (screen *DetailScreen) Draw() error {
 			// across Cat's left/right footer groups can retain queued shared-sprite
 			// state on MLP1; the action and visual label remain unchanged.
 			footer = append(footer, FooterHint{Button: ButtonA, Label: label})
+		} else if screen.model.Game.NeedsSignIn && !screen.model.BrowserOnly {
+			footer = append(footer, FooterHint{Button: ButtonA, Label: "Sign in"})
 		}
 		if screen.model.Game.Downloaded {
 			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
@@ -175,7 +172,11 @@ func (screen *DetailScreen) drawReady(content Box) error {
 		}
 	}
 	y := qrRect.Y + qrRect.H + screen.ctx.Scale(5)
-	if _, err := screen.ctx.DrawText(FontTiny, "Scan to open on itch.io", panel.X, y,
+	caption := "Scan to open on itch.io"
+	if screen.model.Game.NotOwned() && !screen.model.BrowserOnly {
+		caption = "Not owned. Scan to buy."
+	}
+	if _, err := screen.ctx.DrawText(FontTiny, caption, panel.X, y,
 		screen.ctx.ThemeColor(RoleHint), panel.W, true); err != nil {
 		return err
 	}

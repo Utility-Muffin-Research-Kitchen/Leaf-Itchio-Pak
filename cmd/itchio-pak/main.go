@@ -35,7 +35,7 @@ func main() {
 	catFixtureFrames := flag.Int("cat-fixture-frames", 0, "exit Catastrophe fixture after N frames")
 	catFixtureScreenshot := flag.String("cat-fixture-screenshot", "", "save the final Catastrophe fixture frame as PNG")
 	catMainList := flag.Bool("cat-main-list", false, "run the offline Catastrophe main-list migration slice")
-	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, or empty")
+	catMainListState := flag.String("cat-main-list-state", "ready", "main-list fixture state: ready, loading, error, empty, or signed-out")
 	catMainListFrames := flag.Int("cat-main-list-frames", 0, "exit Catastrophe main-list fixture after N frames")
 	catMainListScreenshot := flag.String("cat-main-list-screenshot", "", "save the final Catastrophe main-list frame as PNG")
 	catInput := flag.String("cat-input", "", "run an offline Catastrophe input fixture (filter/detail/download/destination states)")

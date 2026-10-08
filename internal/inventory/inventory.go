@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +81,41 @@ type DownloadedFile struct {
 	UnifiedName   bool      `json:"unified_name,omitempty"`
 	FileType      string    `json:"file_type,omitempty"`
 	SourceArchive string    `json:"source_archive,omitempty"`
+
+	// LeftOver marks a file of an upload that its latest reinstall did not
+	// write, such as a track an older version named differently. Manage
+	// offers it for deletion; nothing deletes it automatically.
+	LeftOver bool `json:"left_over,omitempty"`
+}
+
+// UploadName is the itch.io upload a file was installed from: the archive
+// for an extracted file, otherwise the downloaded upload itself.
+func (f DownloadedFile) UploadName() string {
+	if f.SourceArchive != "" {
+		return f.SourceArchive
+	}
+	if f.OriginalUpload != "" {
+		return f.OriginalUpload
+	}
+	return f.Filename
+}
+
+// contentKind is a file's content kind, also for rows written before
+// content_kind existed.
+func (f DownloadedFile) contentKind() string {
+	if f.ContentKind == ContentKindMusic || f.FileType == FileTypeMusic {
+		return ContentKindMusic
+	}
+	if f.ContentKind != "" {
+		return f.ContentKind
+	}
+	return ContentKindROM
+}
+
+// FileOwner is one inventory record of a file on a content source.
+type FileOwner struct {
+	GameURL string
+	File    DownloadedFile
 }
 
 type UpstreamFile struct {
@@ -169,7 +206,87 @@ func Load(path string) (*Inventory, error) {
 		inv.Entries = make(map[string]*Entry)
 	}
 	logger.Debug("inventory: loaded %d entries from %s", len(inv.Entries), path)
+	inv.warnSharedPaths()
 	return &inv, nil
+}
+
+// fileIdentity returns the source and source-relative path of a recorded
+// file, keyed the way FAT32 compares names.
+func fileIdentity(file DownloadedFile) (string, string, bool) {
+	sourceID, rel := file.SourceID, file.RelativePath
+	if sourceID == "" || rel == "" {
+		identity, ok := roms.DescribeDestination(file.DestPath)
+		if !ok {
+			return "", "", false
+		}
+		sourceID, rel = identity.SourceID, identity.RelativePath
+	}
+	return sourceID, strings.ToLower(path.Clean(filepath.ToSlash(rel))), true
+}
+
+// OwnerOf returns every inventory record of the file at relativePath on
+// sourceID. Names are compared case-insensitively, as FAT32 does. More than
+// one owner means two records share the file; downloads never create that,
+// but inventories written before the check could.
+func (inv *Inventory) OwnerOf(sourceID, relativePath string) []FileOwner {
+	want := strings.ToLower(path.Clean(filepath.ToSlash(relativePath)))
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	var owners []FileOwner
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			if source, rel, ok := fileIdentity(file); ok && source == sourceID && rel == want {
+				owners = append(owners, FileOwner{GameURL: gameURL, File: file})
+			}
+		}
+	}
+	sort.Slice(owners, func(i, j int) bool { return owners[i].GameURL < owners[j].GameURL })
+	return owners
+}
+
+// warnSharedPaths reports files that more than one game records. It changes
+// nothing: deleting either game keeps the file (see Manage), and the user
+// decides what to remove.
+func (inv *Inventory) warnSharedPaths() {
+	games := make(map[string][]string)
+	shown := make(map[string]string)
+	var keys []string
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			source, rel, ok := fileIdentity(file)
+			if !ok {
+				continue
+			}
+			key := source + ":" + rel
+			if len(games[key]) == 0 {
+				keys = append(keys, key)
+				shown[key] = source + ":" + filepath.ToSlash(file.RelativePath)
+				if file.RelativePath == "" {
+					shown[key] = key
+				}
+			}
+			if !containsString(games[key], gameURL) {
+				games[key] = append(games[key], gameURL)
+			}
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if owners := games[key]; len(owners) > 1 {
+			sort.Strings(owners)
+			logger.Warn("inventory: %s is recorded by %d games (%s); deleting one keeps the file",
+				shown[key], len(owners), strings.Join(owners, ", "))
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes the inventory to path atomically (write to .tmp then rename).
@@ -264,6 +381,37 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 		}
 	}
 	existing.Files = append(existing.Files, file)
+}
+
+// MarkLeftOver records which files of one upload a reinstall left behind.
+// Call it after the reinstall commits, with every path it wrote or kept.
+// Each file gameURL recorded from upload, of contentKind ("" for every
+// kind), is flagged LeftOver when written does not hold it and cleared when
+// it does. Paths compare case-insensitively, as FAT32 does. It returns the
+// flagged files. Nothing is deleted.
+func (inv *Inventory) MarkLeftOver(gameURL, upload, contentKind string, written []string) []DownloadedFile {
+	keep := make(map[string]bool, len(written))
+	for _, path := range written {
+		keep[strings.ToLower(filepath.Clean(path))] = true
+	}
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	entry, ok := inv.Entries[gameURL]
+	if !ok || upload == "" {
+		return nil
+	}
+	var flagged []DownloadedFile
+	for index := range entry.Files {
+		file := &entry.Files[index]
+		if file.UploadName() != upload || contentKind != "" && file.contentKind() != contentKind {
+			continue
+		}
+		file.LeftOver = !keep[strings.ToLower(filepath.Clean(file.DestPath))]
+		if file.LeftOver {
+			flagged = append(flagged, *file)
+		}
+	}
+	return flagged
 }
 
 // Remove deletes the entry for gameURL.
@@ -631,7 +779,12 @@ func (inv *Inventory) SetUpstreamFiles(gameURL string, files []UpstreamFile) {
 	for i := range files {
 		if p, ok := prior[files[i].Filename]; ok {
 			files[i].SeenAt = p.seenAt // preserve original first-seen time
-			files[i].IsNew = p.isNew   // preserve new-upload flag
+			if files[i].IsNew && !p.isNew {
+				// The check found this known upload replacing a downloaded
+				// file; it is new from now on.
+				files[i].SeenAt = time.Now()
+			}
+			files[i].IsNew = files[i].IsNew || p.isNew // preserve new-upload flag
 		} else if !isFirstCheck {
 			// Genuinely new file appearing after the first check — flag it.
 			files[i].IsNew = true
@@ -639,7 +792,12 @@ func (inv *Inventory) SetUpstreamFiles(gameURL string, files []UpstreamFile) {
 				files[i].SeenAt = time.Now()
 			}
 		}
-		// if isFirstCheck: IsNew stays false (zero value); file was already present at download time
+		// if isFirstCheck: IsNew stays as the caller set it. Files already
+		// present at download time are false; an upload found replacing a
+		// downloaded file is true.
+		if files[i].IsNew && files[i].SeenAt.IsZero() {
+			files[i].SeenAt = time.Now()
+		}
 	}
 	e.KnownUpstreamFiles = files
 	e.UpdateCheckedAt = time.Now()

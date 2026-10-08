@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -697,5 +698,59 @@ func TestUploadTraitsMarkDesktopAndWebBuilds(t *testing.T) {
 	}
 	if (itchio.Upload{Filename: "web.gb", URL: "https://dev.itch.io/game/file/1"}).DesktopOrWebOnly() {
 		t.Error("a web-flow upload carries no traits and is never a desktop or web build")
+	}
+}
+
+// R21-5: only an authentication answer signs you out. A 403 without
+// itch.io's JSON errors (a proxy or Cloudflare page) is a transient failure.
+func TestProfileCheckRejectsTheSignInOnlyForAuthErrors(t *testing.T) {
+	for name, test := range map[string]struct {
+		status   int
+		body     string
+		rejected bool
+	}{
+		"401":                     {http.StatusUnauthorized, `{"errors":["invalid key"]}`, true},
+		"401 without a body":      {http.StatusUnauthorized, "", true},
+		"403 with itch.io errors": {http.StatusForbidden, `{"errors":["invalid key"]}`, true},
+		"403 from a proxy":        {http.StatusForbidden, `<html><body>Access denied</body></html>`, false},
+		"403 with no errors":      {http.StatusForbidden, `{"errors":[]}`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(test.status)
+			fmt.Fprint(w, test.body)
+		}))
+		_, _, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).ValidateAPIKey(v2Key)
+		srv.Close()
+		if err == nil || errors.Is(err, itchio.ErrSignInRejected) != test.rejected {
+			t.Errorf("%s: err = %v, want rejected=%v", name, err, test.rejected)
+		}
+	}
+}
+
+// R21-7: the account check stops when its context ends.
+func TestValidateAPIKeyContextStopsWhenCancelled(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).ValidateAPIKeyContext(ctx, v2Key)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the account check ignored its context")
 	}
 }

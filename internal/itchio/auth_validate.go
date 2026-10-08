@@ -4,39 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
-// APIKeyStatus is the result of the background API key validation.
-type APIKeyStatus int32
-
-const (
-	APIKeyStatusUnknown  APIKeyStatus = 0 // not yet tested, or network unavailable
-	APIKeyStatusWorking  APIKeyStatus = 1 // accepted by itch.io
-	APIKeyStatusRejected APIKeyStatus = 2 // explicitly rejected by itch.io
-)
-
-// GetAPIKeyStatus returns the cached result of the most recent key check.
-func (c *Client) GetAPIKeyStatus() APIKeyStatus {
-	return APIKeyStatus(atomic.LoadInt32(&c.apiKeyStatus))
-}
-
-// StoreAPIKeyStatus saves the result of a completed key check.
-func (c *Client) StoreAPIKeyStatus(s APIKeyStatus) {
-	atomic.StoreInt32(&c.apiKeyStatus, int32(s))
-}
-
-// MarkAPIKeyCheckStarted atomically marks the background check as started.
-// Returns true only on the first call — the caller should then launch the check.
-func (c *Client) MarkAPIKeyCheckStarted() bool {
-	return atomic.CompareAndSwapInt32(&c.apiKeyChecking, 0, 1)
-}
-
-// ResetAPIKeyState clears cached validation state after a key is replaced or
-// removed. It never logs or retains the previous credential.
+// ResetAPIKeyState clears account-derived state after the sign-in changes.
+// It never logs or retains the previous credential.
 // Validations and owned-library scans already running under the old key
 // discard their account-derived results instead of storing them.
 func (c *Client) ResetAPIKeyState() {
@@ -44,41 +19,16 @@ func (c *Client) ResetAPIKeyState() {
 	c.ownedMu.Lock()
 	c.purchaseCounts = nil
 	c.ownedMu.Unlock()
-	atomic.StoreInt32(&c.apiKeyStatus, int32(APIKeyStatusUnknown))
-	atomic.StoreInt32(&c.apiKeyChecking, 0)
 }
 
-// CheckAPIKey does a lightweight /profile fetch to determine whether apiKey is
-// accepted. Returns APIKeyStatusWorking on success, APIKeyStatusRejected when
-// the server explicitly rejects the key, and APIKeyStatusUnknown on network or
-// other transient errors (so the UI can show "PRESENT" rather than "REJECTED").
-func (c *Client) CheckAPIKey(apiKey string) APIKeyStatus {
-	logger.Debug("validate: background API key check starting")
-	req, err := http.NewRequest("GET", c.butler+"/profile", nil)
-	if err != nil {
-		logger.Error("validate: build profile request: %v", err)
-		return APIKeyStatusUnknown
+// hasItchIOErrors reports whether body is itch.io's JSON error answer, a
+// non-empty "errors" list, as opposed to a page from something in between.
+func hasItchIOErrors(body io.Reader) bool {
+	var answer struct {
+		Errors []string `json:"errors"`
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		logger.Debug("validate: background key check network error (device may be offline): %v", err)
-		return APIKeyStatusUnknown
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		logger.Info("validate: API key valid")
-		return APIKeyStatusWorking
-	case http.StatusUnauthorized, http.StatusForbidden:
-		logger.Warn("validate: API key rejected by itch.io (HTTP %d)", resp.StatusCode)
-		return APIKeyStatusRejected
-	default:
-		logger.Warn("validate: background key check unexpected HTTP %d", resp.StatusCode)
-		return APIKeyStatusUnknown
-	}
+	data, err := io.ReadAll(io.LimitReader(body, 64<<10))
+	return err == nil && json.Unmarshal(data, &answer) == nil && len(answer.Errors) > 0
 }
 
 // OwnedGame is a public summary of a game the user owns.
@@ -99,10 +49,16 @@ type OwnedGame struct {
 // Each owned game title and public game ID are logged at DEBUG level.
 // Download key IDs are never logged.
 func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGame, err error) {
+	return c.ValidateAPIKeyContext(context.Background(), apiKey)
+}
+
+// ValidateAPIKeyContext is ValidateAPIKey bounded by ctx, including the
+// owned-keys scan and any wait before a rate-limit retry.
+func (c *Client) ValidateAPIKeyContext(ctx context.Context, apiKey string) (username string, owned []OwnedGame, err error) {
 	generation := c.keyGeneration.Load()
 
 	// Step 1: verify key and fetch username.
-	req, err := http.NewRequest("GET", c.butler+"/profile", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.butler+"/profile", nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("build profile request: %w", err)
 	}
@@ -114,8 +70,16 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return "", nil, fmt.Errorf("API key invalid or expired (HTTP %d)", resp.StatusCode)
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		return "", nil, fmt.Errorf("fetch profile (HTTP 401): %w", ErrSignInRejected)
+	case resp.StatusCode == http.StatusForbidden && hasItchIOErrors(resp.Body):
+		return "", nil, fmt.Errorf("fetch profile (HTTP 403): %w", ErrSignInRejected)
+	case resp.StatusCode == http.StatusForbidden:
+		// Not itch.io's own answer (a proxy or Cloudflare page): keep the
+		// sign-in, as for any other transient failure.
+		logger.Warn("validate: profile HTTP 403 without itch.io errors; keeping the sign-in")
+		return "", nil, fmt.Errorf("fetch profile: HTTP 403")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf("fetch profile: HTTP %d", resp.StatusCode)
@@ -140,7 +104,10 @@ func (c *Client) ValidateAPIKey(apiKey string) (username string, owned []OwnedGa
 
 	// Step 2: page through all owned-game keys. A failed page keeps the games
 	// found so far, as before, but only a complete scan seeds bundle sizes.
-	keys, complete, scanErr := c.scanOwnedKeys(context.Background(), apiKey, nil)
+	keys, complete, scanErr := c.scanOwnedKeys(ctx, apiKey, nil)
+	if ctx.Err() != nil {
+		return "", nil, safeRequestError("scan owned keys", ctx.Err())
+	}
 	if scanErr != nil {
 		logger.Warn("validate: owned-keys scan stopped early: %v", scanErr)
 	}

@@ -4,6 +4,8 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -64,6 +66,9 @@ type CatalogController struct {
 	// ownedMu makes a validation's generation check and its owned-cache
 	// write atomic with respect to a key change bumping the generation.
 	ownedMu sync.Mutex
+	// signInRejected is set when itch.io rejected the stored key at startup;
+	// the UI goroutine signs out when it takes the flag.
+	signInRejected atomic.Bool
 
 	sortMode       itchio.SortMode
 	platformFilter string
@@ -80,12 +85,21 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		client: client, cfg: cfg, cfgPath: cfgPath, cachePath: cachePath,
 		inv: inv, inventoryPath: inventoryPath, updateSvc: updateSvc,
 		pageUpdateCh: make(chan pageResult, 1), cacheUpdateCh: make(chan []itchio.Game, 1),
-		ownedUpdateCh: make(chan map[string]bool, 1), ownedURLs: make(map[string]bool),
+		ownedUpdateCh:  make(chan map[string]bool, 1),
 		ownedCachePath: ownedCachePath, sortMode: itchio.SortMode(cfg.SortMode),
 		platformFilter: cfg.PlatformFilter,
 	}
 
-	if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && len(urls) > 0 {
+	if !cfg.SignedIn() {
+		// Signed out, an owned-game cache can only be a previous account's,
+		// such as a typed API key that the upgrade removed: drop it.
+		if err := os.Remove(ownedCachePath); err == nil {
+			logger.Info("owned: removed the owned-game cache of a previous sign-in")
+		} else if !os.IsNotExist(err) {
+			logger.Warn("owned: could not remove a stale owned-game cache: %v", err)
+		}
+	} else if urls, err := itchio.LoadOwnedCache(ownedCachePath); err == nil && urls != nil {
+		controller.ownedURLs = make(map[string]bool, len(urls))
 		for _, url := range urls {
 			controller.ownedURLs[url] = true
 		}
@@ -94,13 +108,18 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		logger.Warn("owned: failed to load owned cache: %v", err)
 	}
 
-	if cfg.APIKey != "" {
-		key := cfg.APIKey
+	if cfg.SignedIn() {
+		key := cfg.Credential()
 		generation := controller.ownedGeneration.Load()
 		go func() {
 			_, owned, err := client.ValidateAPIKey(key)
+			if errors.Is(err, itchio.ErrSignInRejected) {
+				controller.rejectSignInIfCurrent(generation)
+				return
+			}
 			if err != nil {
-				logger.Warn("owned: startup key validation failed: %v", err)
+				// Offline or a transient failure: stay signed in.
+				logger.Warn("owned: startup sign-in check failed: %v", err)
 				return
 			}
 			controller.publishOwnedIfCurrent(generation, owned)
@@ -135,7 +154,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 	return controller
 }
 
-// publishOwnedIfCurrent stores a validation result unless the API key
+// publishOwnedIfCurrent stores a validation result unless the sign-in
 // changed after the validation started.
 func (controller *CatalogController) publishOwnedIfCurrent(generation uint64, owned []itchio.OwnedGame) bool {
 	controller.ownedMu.Lock()
@@ -146,6 +165,25 @@ func (controller *CatalogController) publishOwnedIfCurrent(generation uint64, ow
 	}
 	controller.publishOwned(owned)
 	return true
+}
+
+// rejectSignInIfCurrent flags a startup rejection of the stored key, unless
+// the key changed after the check started.
+func (controller *CatalogController) rejectSignInIfCurrent(generation uint64) {
+	controller.ownedMu.Lock()
+	defer controller.ownedMu.Unlock()
+	if generation != controller.ownedGeneration.Load() {
+		return
+	}
+	logger.Warn("owned: itch.io rejected the stored sign-in")
+	controller.signInRejected.Store(true)
+	controller.wakeUI()
+}
+
+// TakeSignInRejected reports, once, that itch.io rejected the stored key at
+// startup. The caller signs out through Account on the UI goroutine.
+func (controller *CatalogController) TakeSignInRejected() bool {
+	return controller.signInRejected.Swap(false)
 }
 
 func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
@@ -171,11 +209,17 @@ func (controller *CatalogController) publishOwned(owned []itchio.OwnedGame) {
 
 // ReplaceOwnedGames updates the live catalogue's credential-derived state.
 // It does not persist: CatSettingsFlow owns the matching cache transaction.
+// nil clears the owned set and marks it unknown (after a sign-in or sign-out
+// and until a check of the new account finishes); an empty slice is an
+// account that owns nothing.
 func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame) {
 	controller.ownedMu.Lock()
 	controller.ownedGeneration.Add(1)
 	controller.ownedMu.Unlock()
-	ownedURLs := make(map[string]bool, len(owned))
+	var ownedURLs map[string]bool
+	if owned != nil {
+		ownedURLs = make(map[string]bool, len(owned))
+	}
 	for _, game := range owned {
 		ownedURLs[game.URL] = true
 	}
@@ -185,6 +229,26 @@ func (controller *CatalogController) ReplaceOwnedGames(owned []itchio.OwnedGame)
 	}
 	controller.ownedUpdateCh <- ownedURLs
 	controller.wakeUI()
+}
+
+// Owned reports whether url is in the current account's owned set.
+func (controller *CatalogController) Owned(url string) bool { return controller.ownedURLs[url] }
+
+// ownedKnown reports whether the owned set belongs to the current sign-in:
+// loaded from its cache or from a check. It is not known right after a
+// sign-in, or when the check could not run.
+func (controller *CatalogController) ownedKnown() bool { return controller.ownedURLs != nil }
+
+// ApplyDetailAccess sets the detail page's action from the current sign-in
+// and owned set, so signing in or out anywhere, or an owned list that arrives
+// while the page is open, updates it. A paid game downloads when you own it,
+// or while the owned set is unknown (the purchase lookup then decides). A
+// paid game you do not own offers no Download (DetailGame.NotOwned).
+func (controller *CatalogController) ApplyDetailAccess(game *appui.DetailGame) {
+	signedIn := controller.cfg.SignedIn()
+	game.Owned = controller.Owned(game.URL)
+	game.NeedsSignIn = !game.IsFree && !signedIn
+	game.CanDownload = game.IsFree || signedIn && (game.Owned || !controller.ownedKnown())
 }
 
 func (controller *CatalogController) loadPage(page int, query string) {
