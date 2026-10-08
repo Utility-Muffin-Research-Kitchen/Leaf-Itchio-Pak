@@ -170,6 +170,14 @@ Music support is disabled by default. Enable `auto` or `ask` to include common
 audio files from an upload/archive. Mixed archives may install both ROM and music
 content in one transaction summary.
 
+A game's tracks go into one Music folder. When an archive holds tracks with the
+same name in different folders, such as `cd1/01 Theme.ogg` and
+`cd2/01 Theme.ogg`, every track of those folders keeps its folder as a
+subfolder (`cd1/01 Theme.ogg`, `cd1/02 Battle.ogg`, `cd2/01 Theme.ogg`), so
+both are installed and Disco Boy plays each disc in order. Tracks whose names
+differ only in letter case would be the same file on your SD card, so the later
+one gets a number: `Theme.ogg` and `theme (2).ogg`.
+
 Disco Boy is optional. This pak neither installs nor launches it. Open or relaunch
 Disco Boy after installing music so its normal scan reads the selected Music
 root on either card.
@@ -178,6 +186,13 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+When you download an archive again, files of its earlier version that the new
+install no longer uses stay on your card. For example, an older version of this
+app put every soundtrack track in one folder, and the new install keeps
+same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
+**OLD** and offers **Delete left-over files**. Nothing is deleted until you
+choose it.
+
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.

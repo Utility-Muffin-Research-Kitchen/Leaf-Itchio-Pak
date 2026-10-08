@@ -54,6 +54,8 @@ capture destination-confirm 960 720 1 0
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
+capture manage-list 960 720 1 2
+capture manage-leftover 960 720 1 2
 capture manage-result 960 720 1 0
 capture manage-result 960 720 1 2
 capture rename-saves 960 720 1 0

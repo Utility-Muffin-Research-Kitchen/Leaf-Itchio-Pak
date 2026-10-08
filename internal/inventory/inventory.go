@@ -81,6 +81,11 @@ type DownloadedFile struct {
 	UnifiedName   bool      `json:"unified_name,omitempty"`
 	FileType      string    `json:"file_type,omitempty"`
 	SourceArchive string    `json:"source_archive,omitempty"`
+
+	// LeftOver marks a file of an upload that its latest reinstall did not
+	// write, such as a track an older version named differently. Manage
+	// offers it for deletion; nothing deletes it automatically.
+	LeftOver bool `json:"left_over,omitempty"`
 }
 
 // UploadName is the itch.io upload a file was installed from: the archive
@@ -93,6 +98,18 @@ func (f DownloadedFile) UploadName() string {
 		return f.OriginalUpload
 	}
 	return f.Filename
+}
+
+// contentKind is a file's content kind, also for rows written before
+// content_kind existed.
+func (f DownloadedFile) contentKind() string {
+	if f.ContentKind == ContentKindMusic || f.FileType == FileTypeMusic {
+		return ContentKindMusic
+	}
+	if f.ContentKind != "" {
+		return f.ContentKind
+	}
+	return ContentKindROM
 }
 
 // FileOwner is one inventory record of a file on a content source.
@@ -364,6 +381,37 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 		}
 	}
 	existing.Files = append(existing.Files, file)
+}
+
+// MarkLeftOver records which files of one upload a reinstall left behind.
+// Call it after the reinstall commits, with every path it wrote or kept.
+// Each file gameURL recorded from upload, of contentKind ("" for every
+// kind), is flagged LeftOver when written does not hold it and cleared when
+// it does. Paths compare case-insensitively, as FAT32 does. It returns the
+// flagged files. Nothing is deleted.
+func (inv *Inventory) MarkLeftOver(gameURL, upload, contentKind string, written []string) []DownloadedFile {
+	keep := make(map[string]bool, len(written))
+	for _, path := range written {
+		keep[strings.ToLower(filepath.Clean(path))] = true
+	}
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	entry, ok := inv.Entries[gameURL]
+	if !ok || upload == "" {
+		return nil
+	}
+	var flagged []DownloadedFile
+	for index := range entry.Files {
+		file := &entry.Files[index]
+		if file.UploadName() != upload || contentKind != "" && file.contentKind() != contentKind {
+			continue
+		}
+		file.LeftOver = !keep[strings.ToLower(filepath.Clean(file.DestPath))]
+		if file.LeftOver {
+			flagged = append(flagged, *file)
+		}
+	}
+	return flagged
 }
 
 // Remove deletes the entry for gameURL.
