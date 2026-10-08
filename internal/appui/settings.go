@@ -13,9 +13,8 @@ const (
 type SettingsKey uint16
 
 const (
-	SettingsAPIKey SettingsKey = iota
-	SettingsEditAPIKey
-	SettingsRemoveAPIKey
+	SettingsAccount SettingsKey = iota
+	SettingsSignOut
 	SettingsROMSelection
 	SettingsROMLocation
 	SettingsMusicDownload

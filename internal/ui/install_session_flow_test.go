@@ -86,7 +86,7 @@ func (f *installAPI) flow(t *testing.T, cfg *settings.Config) *CatDownloadFlow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.APIKey = sessionTestKey
+	cfg.AuthToken = sessionTestKey
 	return &CatDownloadFlow{
 		client: itchio.NewClientWithBase(f.api.URL), cfg: cfg,
 		game:   itchio.Game{Title: "Leafbound", URL: "https://dev.itch.io/leafbound"},

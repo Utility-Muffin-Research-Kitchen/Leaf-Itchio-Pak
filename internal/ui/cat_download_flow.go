@@ -117,8 +117,8 @@ func (flow *CatDownloadFlow) requestContext() context.Context {
 func (flow *CatDownloadFlow) discover() {
 	go func() {
 		update := catDownloadUpdate{}
-		if !flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
-			keys, err := flow.client.FetchOwnedKeysContext(flow.requestContext(), flow.cfg.APIKey, flow.detail.GameID)
+		if !flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
+			keys, err := flow.client.FetchOwnedKeysContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID)
 			if err != nil {
 				update.err = err
 			} else if len(keys) > 1 {
@@ -127,9 +127,9 @@ func (flow *CatDownloadFlow) discover() {
 			} else if len(keys) == 1 {
 				update = flow.fetchForKey(keys[0])
 			} else {
-				update.err = fmt.Errorf("game is not owned by the configured itch.io account")
+				update.err = itchio.ErrNotOwned
 			}
-		} else if flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
+		} else if flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
 			update = flow.fetchFree()
 		} else {
 			update = flow.fetchWeb()
@@ -163,7 +163,7 @@ func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 // access error is the one reported; any other web failure, such as being
 // offline, is reported as is.
 func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
-	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.APIKey, flow.detail.GameID, "")
+	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, "")
 	switch {
 	case err == nil && len(uploads) > 0:
 		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
@@ -197,7 +197,7 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 // URLs, and every file downloaded.
 func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate {
 	downloadKeyID := strconv.FormatInt(key.ID, 10)
-	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.APIKey, flow.detail.GameID, downloadKeyID)
+	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, downloadKeyID)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
 	for _, upload := range uploads {
@@ -232,7 +232,7 @@ func (flow *CatDownloadFlow) dropTextMarkdown(uploads []roms.Upload) []roms.Uplo
 }
 
 func (flow *CatDownloadFlow) uploadIsText(upload roms.Upload) bool {
-	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, upload)
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, upload)
 	if err == nil {
 		var header []byte
 		if header, err = flow.client.FetchFileHeader(cdnURL, mdProbeBytes); err == nil {
@@ -343,7 +343,7 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 }
 
 func (flow *CatDownloadFlow) detect(upload roms.Upload) {
-	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, upload)
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, upload)
 	if err != nil {
 		flow.publish(catDownloadUpdate{kind: catDownloadUpdateDetected, upload: upload, err: err})
 		return

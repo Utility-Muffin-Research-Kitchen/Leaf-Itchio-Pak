@@ -9,7 +9,7 @@ runtime or layout compatibility target.
 - Target only Miniloong Pocket 1 (`PLATFORM=mlp1`, aarch64 RK3566).
 - Package as `Apps/mlp1/Itch-io.pak`; do not add it to Leaf's default apps.
 - Publish through Pak Rat only after every verification gate passes.
-- Keep the Go catalogue, download, inventory, content-filter, GIF, API-key, and
+- Keep the Go catalogue, download, inventory, content-filter, GIF, sign-in, and
   music behavior unless the port plan explicitly replaces it.
 - Keep the single app-local CGo bridge to Catastrophe's box-model GUI; do not
   restore the removed Go/SDL renderer.

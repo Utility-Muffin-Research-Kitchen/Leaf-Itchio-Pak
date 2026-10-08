@@ -5,6 +5,7 @@ import (
 	"image"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
@@ -238,9 +239,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "settings", "settings-confirm", "moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
-			{Key: appui.SettingsAPIKey, Label: "API Key", Value: "••••7f2a", ActionEnabled: true},
-			{Key: appui.SettingsEditAPIKey, Label: "Edit API Key", ActionEnabled: true},
-			{Key: appui.SettingsRemoveAPIKey, Label: "Remove API Key", ActionEnabled: true},
+			{Key: appui.SettingsAccount, Label: "itch.io Account", Value: "leafbound-player", ActionEnabled: true},
+			{Key: appui.SettingsSignOut, Label: "Sign Out", ActionEnabled: true},
 			{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: "ask", ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: "auto", ActionEnabled: true},
@@ -272,12 +272,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		model := appui.NewSettingsModel(title)
 		model.SetRows(subtitle, rows)
 		if config.Screen == "settings-confirm" {
-			model.SetConfirm("Store an itch.io API key?", []string{
-				"The key is stored in App Data on the SD card.",
-				"FAT32 cannot protect it from someone with physical access to the card.",
-				"Settings shows only a suffix; editing starts blank and typed characters are visible.",
-				"The complete key is redacted from logs.",
-			})
+			// The sign-in warning moved to the sign-in screen (signin-warning).
+			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)
 		if screenErr != nil {
@@ -295,6 +291,51 @@ func RunInputFixture(config InputFixtureConfig) error {
 		draw = screen.Draw
 		closeScreen = screen.Close
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
+	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
+		model := &appui.SignInModel{
+			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
+			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
+			Expires: time.Now().Add(9*time.Minute + 42*time.Second),
+		}
+		switch config.Screen {
+		case "signin-error":
+			model.State, model.CanRetry = appui.SignInError, true
+			model.Heading, model.Detail = "The code expired", "Press A for a new code."
+		case "signin-done":
+			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
+		case "signin-checking":
+			model.State = appui.SignInChecking
+		case "signin-warning":
+			model.State = appui.SignInWarning
+		case "signin-qr-failed":
+			// Too long for any QR code, so drawing it fails for real.
+			model.QRURL = "https://itch.io/user/oauth/device?code=" + strings.Repeat("x", 5000)
+		}
+		if config.Screen == "detail-signin" || config.Screen == "detail-not-owned" {
+			// detail-not-owned: signed in, but the account does not own it.
+			detail := appui.NewDetailModel(appui.DetailGame{
+				Title: "Leafbound Deluxe", Author: "leafdev", URL: "https://leafdev.itch.io/leafbound-deluxe",
+				Platform: "GBA", Price: 4.99, NeedsSignIn: config.Screen == "detail-signin",
+			})
+			detail.SetReady(`<p>A paid Game Boy Advance release. Sign in with itch.io to download it once you own it.</p>`,
+				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, false)
+			screen, screenErr := NewDetailScreen(ctx, detail, cache)
+			if screenErr != nil {
+				return screenErr
+			}
+			draw, closeScreen = screen.Draw, screen.Close
+			handleIntent = func(event InputEvent) bool { return screen.HandleInput(event) != appui.DetailIntentBack }
+			break
+		}
+		screen, screenErr := NewSignInScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw, closeScreen = screen.Draw, screen.Close
+		handleIntent = func(event InputEvent) bool {
+			intent := screen.HandleInput(event)
+			return intent != appui.SignInIntentBack && intent != appui.SignInIntentCancel
+		}
 	case "refresh", "refresh-done":
 		model := appui.NewRefreshModel("Refreshing Game List")
 		model.Fetched = 184

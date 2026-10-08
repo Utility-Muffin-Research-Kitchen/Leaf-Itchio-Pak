@@ -136,7 +136,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		logger.Info("multi-download: [%d/%d] starting %s → %s api=%v",
 			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, dl.Upload.ViaAPI())
 
-		err := downloadUpload(ctx, s.client, s.cfg.APIKey, s.game.URL, dl.Upload, dl.DestPath, progress)
+		err := downloadUpload(ctx, s.client, s.cfg.Credential(), s.game.URL, dl.Upload, dl.DestPath, progress)
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

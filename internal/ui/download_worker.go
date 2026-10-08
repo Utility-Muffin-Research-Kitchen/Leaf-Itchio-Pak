@@ -109,7 +109,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			logger.Info("download: starting %q file=%s dest=%s api=%v",
 				game.Title, upload.Filename, dest, upload.ViaAPI())
 
-			err := downloadUpload(ctx, client, cfg.APIKey, game.URL, upload, dest, progress)
+			err := downloadUpload(ctx, client, cfg.Credential(), game.URL, upload, dest, progress)
 
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
