@@ -36,12 +36,7 @@ func LoadEnvironment() (Environment, error) {
 }
 
 func loadEnvironment(getenv getenvFunc) (Environment, error) {
-	value := func(name, fallback string) string {
-		if v, ok := getenv(name); ok && v != "" {
-			return v
-		}
-		return fallback
-	}
+	value := func(name, fallback string) string { return envValue(getenv, name, fallback) }
 
 	platform := value("PLATFORM", DefaultPlatform)
 	if platform != DefaultPlatform {
@@ -73,9 +68,25 @@ func loadEnvironment(getenv getenvFunc) (Environment, error) {
 		UserdataPath:     userdataPath,
 		LogsPath:         cleanPath(value("LOGS_PATH", filepath.Join(userdataPath, "logs"))),
 		RuntimePath:      cleanPath(value("UMRK_RUNTIME_PATH", filepath.Join(os.TempDir(), "jawaka-runtime"))),
-		InternalDataPath: cleanPath(value("UMRK_INTERNAL_DATA_PATH", filepath.Join(primary, ".umrk", platform))),
+		InternalDataPath: internalDataPath(getenv),
 		Sources:          sources,
 	}, nil
+}
+
+func envValue(getenv getenvFunc, name, fallback string) string {
+	if v, ok := getenv(name); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// internalDataPath resolves UMRK_INTERNAL_DATA_PATH with its documented
+// default, $SDCARD_PATH/.umrk/$PLATFORM. It needs no other part of the
+// environment, so a version lookup never fails over an unrelated path list.
+func internalDataPath(getenv getenvFunc) string {
+	primary := cleanPath(envValue(getenv, "SDCARD_PATH", defaultPrimaryRoot))
+	platform := envValue(getenv, "PLATFORM", DefaultPlatform)
+	return cleanPath(envValue(getenv, "UMRK_INTERNAL_DATA_PATH", filepath.Join(primary, ".umrk", platform)))
 }
 
 func (e Environment) StateDir() string {
