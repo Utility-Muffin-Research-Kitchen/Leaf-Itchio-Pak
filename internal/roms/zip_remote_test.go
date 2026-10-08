@@ -3,13 +3,16 @@ package roms_test
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
@@ -299,5 +302,30 @@ func TestInspectRemoteZIP_PSXCueBinBundle(t *testing.T) {
 	}
 	if len(wantExts) != 0 {
 		t.Fatalf("InstallROMExts missing extensions: %v", wantExts)
+	}
+}
+
+// A file that is not a ZIP is reported as unreadable, so the screen can say
+// so instead of showing zip's own error text.
+func TestInspectRemoteZIPReportsAnUnreadableArchive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "test.zip", time.Time{}, bytes.NewReader(bytes.Repeat([]byte("not a zip "), 200)))
+	}))
+	defer srv.Close()
+	_, err := roms.InspectRemoteZIP(srv.Client(), srv.URL+"/test.zip", nil)
+	if !errors.Is(err, roms.ErrUnreadableArchive) {
+		t.Fatalf("error = %v, want ErrUnreadableArchive", err)
+	}
+}
+
+// A request that never got an answer is marked as a network failure, and its
+// text keeps the URL out.
+func TestInspectRemoteZIPMarksNetworkFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL + "/test.zip?signature=secret"
+	srv.Close()
+	_, err := roms.InspectRemoteZIP(srv.Client(), url, nil)
+	if !errors.Is(err, netlimit.ErrNetwork) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error = %v, want a URL-free ErrNetwork", err)
 	}
 }

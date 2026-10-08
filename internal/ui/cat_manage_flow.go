@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 )
 
 type CatManageFlow struct {
@@ -28,12 +30,25 @@ type CatManageFlow struct {
 	libraryScanPending bool
 }
 
+// Sentences for manage and rename failures you can act on. Other failures
+// get screentext's sentence for their class.
+const (
+	filesChanged  = "Your files changed in the meantime. Go back and try again."
+	notOnLeafCard = "This file isn't on an SD card Leaf uses."
+)
+
+// nameTakenError stops a rename onto a name another file has.
+func nameTakenError(path string) error {
+	return screentext.Wrap(fmt.Errorf("rename target already exists: %s", filepath.Base(path)),
+		fmt.Sprintf("A file named %s already exists.", filepath.Base(path)))
+}
+
 func NewCatManageFlow(inv *inventory.Inventory, inventoryPath, gameURL string,
 	sources leaf.SourceList, catalog *leaf.Catalog) (*CatManageFlow, *appui.ManageModel, error) {
 	flow := &CatManageFlow{inv: inv, inventoryPath: inventoryPath, gameURL: gameURL, sources: sources, catalog: catalog}
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || len(entry.Files) == 0 {
-		return nil, nil, fmt.Errorf("downloaded files are no longer present in the inventory")
+		return nil, nil, screentext.Wrap(fmt.Errorf("downloaded files are no longer present in the inventory"), filesChanged)
 	}
 	model := appui.NewManageModel(entry.Title)
 	flow.refresh(model)
@@ -72,7 +87,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 		}
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemFile, Label: label, Detail: rel, Badge: badge,
-			FileIndex: index, Enabled: enabled,
+			Note: memberNote(file.SourceMember, label), FileIndex: index, Enabled: enabled,
 		})
 	}
 	if leftOver := flow.leftOverIndices(); len(leftOver) > 0 {
@@ -114,6 +129,18 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	model.SetItems(fmt.Sprintf("%d managed file(s) · source-owned paths only", len(entry.Files)), items)
 }
 
+// memberNote names the archive member a file came from, when its name on the
+// card does not already say so: two builds in one archive can install under
+// one title name. It names the member by its file name, as the member picker
+// does; archive folders can be long enough to push the name off the row.
+func memberNote(member, installedName string) string {
+	base := path.Base(strings.ReplaceAll(member, "\\", "/"))
+	if member == "" || strings.EqualFold(base, installedName) {
+		return ""
+	}
+	return "From " + base
+}
+
 func (flow *CatManageFlow) indicesAvailable(indices []int) bool {
 	for _, index := range indices {
 		if index < 0 || index >= len(flow.entry.Files) {
@@ -133,7 +160,8 @@ func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *
 	item := model.Items[model.Cursor]
 	if !item.Enabled {
 		err := flow.itemUnavailableError(item)
-		model.SetError(err.Error())
+		logger.Info("manage: %s unavailable: %v", item.Label, err)
+		model.SetError(screentext.FromError(err))
 		return nil, nil, nil
 	}
 	if item.Kind == appui.ManageItemRename {
@@ -188,13 +216,13 @@ func (flow *CatManageFlow) itemUnavailableError(item appui.ManageItem) error {
 	}
 	for _, index := range indices {
 		if index < 0 || index >= len(flow.entry.Files) {
-			return fmt.Errorf("inventory changed before this action")
+			return screentext.Wrap(fmt.Errorf("inventory changed before this action"), filesChanged)
 		}
 		if _, _, err := flow.resolveFile(flow.entry.Files[index], false); err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("this action is currently unavailable")
+	return screentext.New("There are no files for this action.")
 }
 
 func (flow *CatManageFlow) Cancel(model *appui.ManageModel) { flow.pending = nil; flow.refresh(model) }
@@ -222,7 +250,7 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 	files := make([]inventory.DownloadedFile, 0, len(flow.pending))
 	for _, index := range flow.pending {
 		if index < 0 || index >= len(flow.entry.Files) {
-			return false, fmt.Errorf("inventory changed before deletion")
+			return false, screentext.Wrap(fmt.Errorf("inventory changed before deletion"), filesChanged)
 		}
 		file := flow.entry.Files[index]
 		if _, _, err := flow.resolveFile(file, true); err != nil {
@@ -248,7 +276,8 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 			continue
 		}
 		if err := os.Remove(file.DestPath); err != nil && !os.IsNotExist(err) {
-			deleteErr = fmt.Errorf("delete %s: %w", filepath.Base(file.DestPath), err)
+			deleteErr = screentext.Wrap(fmt.Errorf("delete %s: %w", filepath.Base(file.DestPath), err),
+				fmt.Sprintf("Couldn't delete %s. Check the SD card, then try again.", filepath.Base(file.DestPath)))
 			break
 		}
 		deleted = append(deleted, file)
@@ -269,7 +298,7 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 	_, stillPresent := flow.inv.Lookup(flow.gameURL)
 	if deleteErr != nil {
 		flow.refresh(model)
-		model.SetError(deleteErr.Error())
+		model.SetError(screentext.FromError(deleteErr))
 		return !stillPresent, deleteErr
 	}
 	result := fmt.Sprintf("Deleted %d managed file(s).", len(deleted))
@@ -341,16 +370,19 @@ func (flow *CatManageFlow) resolveFile(file inventory.DownloadedFile, requireFil
 		var ok bool
 		identity, ok = roms.DescribeDestination(file.DestPath)
 		if !ok {
-			return leaf.Source{}, "Outside configured sources", fmt.Errorf("%s is outside configured Leaf sources", filepath.Base(file.DestPath))
+			return leaf.Source{}, "Outside configured sources", screentext.Wrap(
+				fmt.Errorf("%s is outside configured Leaf sources", filepath.Base(file.DestPath)), notOnLeafCard)
 		}
 	}
 	source, ok := flow.sources.ByID(identity.SourceID)
 	if !ok {
-		return leaf.Source{}, identity.RelativePath, fmt.Errorf("storage source %q is unknown", identity.SourceID)
+		return leaf.Source{}, identity.RelativePath, screentext.Wrap(
+			fmt.Errorf("storage source %q is unknown", identity.SourceID), notOnLeafCard)
 	}
 	label := destinationSourceLabel(source) + " / " + filepath.ToSlash(identity.RelativePath)
 	if !source.Available() {
-		return source, label, fmt.Errorf("%s is not mounted", destinationSourceLabel(source))
+		return source, label, screentext.Wrap(fmt.Errorf("%s is not mounted", destinationSourceLabel(source)),
+			destinationSourceLabel(source)+" isn't available. Insert the card, then try again.")
 	}
 	expected, err := leaf.JoinWithin(source.Root, identity.RelativePath)
 	if err != nil || filepath.Clean(expected) != filepath.Clean(file.DestPath) {
@@ -361,6 +393,10 @@ func (flow *CatManageFlow) resolveFile(file inventory.DownloadedFile, requireFil
 	}
 	if requireFile {
 		info, err := os.Lstat(file.DestPath)
+		if os.IsNotExist(err) {
+			return source, label, screentext.Wrap(fmt.Errorf("managed file is unavailable: %w", err),
+				fmt.Sprintf("%s is missing from the SD card.", filepath.Base(file.DestPath)))
+		}
 		if err != nil {
 			return source, label, fmt.Errorf("managed file is unavailable: %w", err)
 		}
@@ -449,26 +485,27 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 	sources leaf.SourceList) (*CatRenameFlow, *appui.RenameModel, error) {
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || fileIndex < 0 || fileIndex >= len(entry.Files) {
-		return nil, nil, fmt.Errorf("managed ROM is no longer in the inventory")
+		return nil, nil, screentext.Wrap(fmt.Errorf("managed ROM is no longer in the inventory"), filesChanged)
 	}
 	file := entry.Files[fileIndex]
 	if !roms.SupportsUnifiedNaming(file.DestPath) {
-		return nil, nil, fmt.Errorf("this PlayStation descriptor or companion file must keep its original name")
+		return nil, nil, screentext.New("PlayStation disc files keep their original names, so the game still finds them.")
 	}
 	if managedContentKind(file) != inventory.ContentKindROM {
-		return nil, nil, fmt.Errorf("only ROM files can be renamed")
+		return nil, nil, screentext.New("Only ROM files can be renamed.")
 	}
 	identity := roms.PathIdentity{SourceID: file.SourceID, RelativePath: file.RelativePath, CanonicalSystem: file.CanonicalSystem}
 	if identity.SourceID == "" || identity.RelativePath == "" {
 		var described bool
 		identity, described = roms.DescribeDestination(file.DestPath)
 		if !described {
-			return nil, nil, fmt.Errorf("ROM path is outside configured Leaf sources")
+			return nil, nil, screentext.Wrap(fmt.Errorf("ROM path is outside configured Leaf sources"), notOnLeafCard)
 		}
 	}
 	source, ok := sources.ByID(identity.SourceID)
 	if !ok || !source.Available() {
-		return nil, nil, fmt.Errorf("the ROM's storage card is not mounted")
+		return nil, nil, screentext.Wrap(fmt.Errorf("the ROM's storage card is not mounted"),
+			"The SD card with this ROM isn't available. Insert it, then try again.")
 	}
 	expected, err := leaf.JoinWithin(source.Root, identity.RelativePath)
 	if err != nil || filepath.Clean(expected) != filepath.Clean(file.DestPath) {
@@ -483,18 +520,19 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 	} else {
 		name := filepath.Base(file.Filename)
 		if name == "." || name == string(filepath.Separator) || name == "" {
-			return nil, nil, fmt.Errorf("original upload name is not safe")
+			return nil, nil, screentext.Wrap(fmt.Errorf("original upload name is not safe"),
+				"The original upload name can't be used as a file name.")
 		}
 		flow.targetPath = filepath.Join(filepath.Dir(file.DestPath), name)
 	}
 	if filepath.Clean(flow.targetPath) == filepath.Clean(file.DestPath) {
-		return nil, nil, fmt.Errorf("the ROM already has the requested filename")
+		return nil, nil, screentext.New("This ROM already has that name.")
 	}
 	if _, err := leaf.RelativeWithin(source.Root, flow.targetPath); err != nil {
 		return nil, nil, fmt.Errorf("rename target escapes the selected source: %w", err)
 	}
 	if _, err := os.Lstat(flow.targetPath); err == nil {
-		return nil, nil, fmt.Errorf("rename target already exists: %s", filepath.Base(flow.targetPath))
+		return nil, nil, nameTakenError(flow.targetPath)
 	} else if !os.IsNotExist(err) {
 		return nil, nil, err
 	}
@@ -550,7 +588,8 @@ func (flow *CatRenameFlow) advance(model *appui.RenameModel) error {
 
 func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	if !flow.source.Available() {
-		return fmt.Errorf("the ROM's storage card was removed")
+		return screentext.Wrap(fmt.Errorf("the ROM's storage card was removed"),
+			"The SD card with this ROM was removed. Insert it, then try again.")
 	}
 	pairs := []renamePair{{oldPath: flow.file.DestPath, newPath: flow.targetPath}}
 	if flow.renameSaves {
@@ -581,7 +620,7 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 			return fmt.Errorf("rename source is unavailable or unsafe: %s", filepath.Base(pair.oldPath))
 		}
 		if _, err := os.Lstat(pair.newPath); err == nil {
-			return fmt.Errorf("rename target already exists: %s", filepath.Base(pair.newPath))
+			return nameTakenError(pair.newPath)
 		} else if !os.IsNotExist(err) {
 			return err
 		}
@@ -600,7 +639,8 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	for _, pair := range pairs {
 		if err := os.Rename(pair.oldPath, pair.newPath); err != nil {
 			rollback()
-			return fmt.Errorf("rename %s: %w", filepath.Base(pair.oldPath), err)
+			return screentext.Wrap(fmt.Errorf("rename %s: %w", filepath.Base(pair.oldPath), err),
+				fmt.Sprintf("Couldn't rename %s. Check the SD card, then try again.", filepath.Base(pair.oldPath)))
 		}
 		completed = append(completed, pair)
 	}
@@ -616,7 +656,7 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	}
 	if !flow.inv.UpdateFile(flow.gameURL, flow.file.DestPath, updated) {
 		rollback()
-		return fmt.Errorf("inventory changed during rename")
+		return screentext.Wrap(fmt.Errorf("inventory changed during rename"), filesChanged)
 	}
 	flow.inv.SetUnifiedNamingDisabled(flow.gameURL, !flow.enable)
 	if err := flow.inv.Save(flow.inventoryPath); err != nil {
@@ -708,7 +748,7 @@ func discoverRenamePairs(root, oldBase, newBase string, states bool) ([]renamePa
 			}
 			seenTargets[key] = oldPath
 			if _, statErr := os.Lstat(newPath); statErr == nil && filepath.Clean(newPath) != filepath.Clean(oldPath) {
-				return nil, fmt.Errorf("related-file target already exists: %s", newName)
+				return nil, nameTakenError(newPath)
 			} else if statErr != nil && !os.IsNotExist(statErr) {
 				return nil, statErr
 			}

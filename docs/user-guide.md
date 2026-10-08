@@ -228,6 +228,9 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+A file from an archive that was saved under another name, such as the game's
+title, shows which archive file it came from, for example
+**From Glory Hunters 1.3 EZ IV Patched.gba** under `Glory Hunters.gba`.
 When you download an archive or file again, files of its earlier version that
 the new install no longer uses stay on your card. For example, an older version
 of this app put every soundtrack track in one folder, and the new install keeps

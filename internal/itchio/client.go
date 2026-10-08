@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 )
 
 const (
@@ -210,9 +211,9 @@ func safeRequestError(operation string, err error) error {
 	}
 	var networkErr net.Error
 	if errors.As(err, &networkErr) && networkErr.Timeout() {
-		return fmt.Errorf("%s: network timeout", operation)
+		return fmt.Errorf("%s: %w", operation, netlimit.ErrNetworkTimeout)
 	}
-	return fmt.Errorf("%s: network request failed", operation)
+	return fmt.Errorf("%s: %w", operation, netlimit.ErrNetwork)
 }
 
 // newHTTPClient builds the shared client. replayHosts names extra hosts

@@ -4,6 +4,7 @@ package ui
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -277,6 +278,94 @@ func TestLibraryTitleGroupsUseOnlyCurrentCommittedROMPaths(t *testing.T) {
 	}
 }
 
+// Jawaka adds each match's scanned name when one title group matches several
+// games. A game with builds for two systems therefore sends one group per
+// system, so each library entry keeps the plain title. Files of one system
+// (CUE/BIN, every disc of a multi-disc set) stay in one group, so the scanned
+// name still tells discs apart.
+func TestLibraryTitleGroupsSplitBySystem(t *testing.T) {
+	root := t.TempDir()
+	systemDirs := make(map[string]string)
+	imageDirs := make(map[string]string)
+	for _, id := range []string{"GB", "GBC", "GBA", "FC", "MD", "PICO8", "PS"} {
+		systemDirs[id] = filepath.Join(root, "Roms", id)
+		imageDirs[id] = filepath.Join(root, "Images", id)
+	}
+	if err := roms.ConfigurePaths(roms.PathConfig{
+		SystemDirs: systemDirs,
+		ImageDirs:  imageDirs,
+		SourceID:   "primary", PrimaryRoot: root,
+		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := inventory.Load(filepath.Join(root, "inventory.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rom := func(system, name string) string { return filepath.Join(root, "Roms", system, name) }
+	install := func(gameURL, title string, paths ...string) {
+		for _, path := range paths {
+			inv.Add(gameURL, inventory.Entry{GameURL: gameURL, Title: title}, inventory.DownloadedFile{
+				Filename: filepath.Base(path), DestPath: path,
+				ContentKind: inventory.ContentKindROM, FileType: inventory.FileTypeROM,
+			})
+		}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		title string
+		paths []string
+		want  [][]string
+	}{
+		{
+			name: "GB and GBA builds", title: "Glory Hunters",
+			paths: []string{rom("GBA", "Glory Hunters.gba"), rom("GB", "Glory Hunters.gb")},
+			want:  [][]string{{rom("GB", "Glory Hunters.gb")}, {rom("GBA", "Glory Hunters.gba")}},
+		},
+		{
+			name: "PlayStation CUE/BIN", title: "Yume Nikki",
+			paths: []string{rom("PS", "Yume Nikki.cue"), rom("PS", "Yume Nikki.bin")},
+			want:  [][]string{{rom("PS", "Yume Nikki.bin"), rom("PS", "Yume Nikki.cue")}},
+		},
+		{
+			name: "multi-disc PlayStation set", title: "Disc Saga",
+			paths: []string{
+				rom("PS", "Disc Saga (Disc 2).cue"), rom("PS", "Disc Saga (Disc 2).bin"),
+				rom("PS", "Disc Saga (Disc 1).cue"), rom("PS", "Disc Saga (Disc 1).bin"),
+				rom("PS", "Disc Saga.m3u"),
+			},
+			want: [][]string{{
+				rom("PS", "Disc Saga (Disc 1).bin"), rom("PS", "Disc Saga (Disc 1).cue"),
+				rom("PS", "Disc Saga (Disc 2).bin"), rom("PS", "Disc Saga (Disc 2).cue"),
+				rom("PS", "Disc Saga.m3u"),
+			}},
+		},
+		{
+			name: "GB build with a PlayStation CUE/BIN", title: "Two Worlds",
+			paths: []string{rom("PS", "Two Worlds.cue"), rom("GB", "Two Worlds.gb"), rom("PS", "Two Worlds.bin")},
+			want:  [][]string{{rom("GB", "Two Worlds.gb")}, {rom("PS", "Two Worlds.bin"), rom("PS", "Two Worlds.cue")}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gameURL := "https://example.itch.io/" + strings.ReplaceAll(strings.ToLower(tc.title), " ", "-")
+			install(gameURL, tc.title, tc.paths...)
+			groups := libraryTitleGroups(inv, gameURL, tc.title, tc.paths)
+			got := make([][]string, 0, len(groups))
+			for _, group := range groups {
+				if group.Provider != itchioLibraryTitleProvider || group.Title != tc.title {
+					t.Fatalf("group = %#v, want provider %q and title %q", group, itchioLibraryTitleProvider, tc.title)
+				}
+				got = append(got, group.ROMPaths)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("title group paths = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // Alternative builds for the same system are a choice, not a batch
 // (upstream dc94f66). Companions for different systems, and PlayStation file
 // sets, still download together.
@@ -321,5 +410,15 @@ func TestCatDownloadFlowRecordsTheListingOnEachUpload(t *testing.T) {
 			upload.Listing.Uploads[1].Filename != "two.gbc" || upload.Listing.Uploads[1].UploadID != "12" {
 			t.Fatalf("%s listing = %+v", upload.Filename, upload.Listing)
 		}
+	}
+}
+
+// On-screen text follows the writing style: no em dash in the subtitle.
+func TestCatDownloadFlowUndetectedTypeAsksForAFormat(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.updates = make(chan catDownloadUpdate, 1)
+	flow.updates <- catDownloadUpdate{kind: catDownloadUpdateDetected, upload: roms.Upload{Filename: "mystery"}}
+	if !flow.Sync(model) || model.State != appui.DownloadSelectChoices || model.Subtitle != "Type not detected. Choose a format" {
+		t.Fatalf("model = %+v, want the format choice", model)
 	}
 }
