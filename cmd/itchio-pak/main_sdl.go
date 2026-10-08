@@ -1381,44 +1381,26 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			ctx.RequestFrame()
 			redraw = true
 		}
-		if delay, animated := imageCache.NextFrameIn(); animated {
-			milliseconds := delay.Milliseconds()
-			if milliseconds < 1 {
-				milliseconds = 1
-			}
-			ctx.RequestFrameIn(uint32(milliseconds))
-			redraw = true
-		} else if imageCache.Busy() {
-			ctx.RequestFrameIn(50)
-			redraw = true
-		} else if route == catRouteList && model.State == appui.ListLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDownloadSelect && downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteArchiveInspect && archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteDownloadProgress && downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning {
-			ctx.RequestFrameIn(50)
-			redraw = true
-		} else if route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy() {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting {
-			// The code's countdown changes once a second.
-			ctx.RequestFrameIn(1000)
-			redraw = true
-		} else if route == catRouteSignIn && signInModel != nil &&
-			(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking) {
-			ctx.RequestFrameIn(100)
-			redraw = true
-		} else if list.IsBusy() {
-			ctx.RequestFrameIn(250)
+		delay, animated := imageCache.NextFrameIn()
+		if milliseconds, poll := catPollDelay(catPollState{
+			AnimationIn:   delay,
+			Animated:      animated,
+			ImagesLoading: imageCache.Busy(),
+			ListLoading:   route == catRouteList && model.State == appui.ListLoading,
+			DetailLoading: route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading,
+			FilesLoading: route == catRouteDownloadSelect && downloadSelectModel != nil &&
+				downloadSelectModel.State == appui.DownloadSelectLoading,
+			ArchiveInspecting: route == catRouteArchiveInspect && archiveInspectModel != nil &&
+				archiveInspectModel.State == appui.DownloadProgressRunning,
+			Downloading: route == catRouteDownloadProgress && downloadProgressModel != nil &&
+				downloadProgressModel.State == appui.DownloadProgressRunning,
+			CacheRefreshing: route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy(),
+			SignInWaiting:   route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting,
+			SignInChecking: route == catRouteSignIn && signInModel != nil &&
+				(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking),
+			CatalogBuilding: list.IsBusy(),
+		}); poll {
+			ctx.RequestFrameIn(milliseconds)
 			redraw = true
 		}
 		if err := ctx.Present(); err != nil {
