@@ -490,8 +490,8 @@ signed download page each issue their own token.
   bodyless GET/HEAD requests to `itch.io`, `api.itch.io` and `*.itch.io` are
   replayed, at most 3 times; POST handshakes wait out a cooldown but are never
   replayed. A CDN 429 is never replayed, because the signed URL can expire
-  during the cooldown: a download waits the cooldown out, resolves a fresh URL
-  and tries once more. A request whose deadline ends inside a cooldown fails at
+  during the cooldown: a download, of a single file or an archive, waits the
+  cooldown out, resolves a fresh URL and tries once more. A request whose deadline ends inside a cooldown fails at
   once with `ErrRateLimited`. A 429 that remains becomes `ErrRateLimited`
   (`internal/netlimit`, shared with the archive readers), shown as "itch.io is
   limiting requests. Wait a minute, then try again."; archive inspection never

@@ -331,3 +331,18 @@ func (c *Client) HTTPClient() *http.Client {
 func (c *Client) DownloadURL(cdnURL, dest string, progress func(int64, int64)) error {
 	return c.streamToFile(cdnURL, dest, progress)
 }
+
+// DownloadURLContext is DownloadURL with caller cancellation. A cancelled
+// download leaves dest untouched and no partial file behind.
+func (c *Client) DownloadURLContext(ctx context.Context, cdnURL, dest string, progress func(int64, int64)) error {
+	return c.streamToFileContext(ctx, cdnURL, dest, progress)
+}
+
+// DownloadFreshURLContext streams the CDN URL that resolve returns to dest.
+// After a CDN 429 it waits out that host's cooldown, calls resolve once more
+// for a fresh signed URL and streams again, like DownloadFreeContext and
+// DownloadUploadContext; a second 429 is returned. ctx cancels the cooldown
+// wait too.
+func (c *Client) DownloadFreshURLContext(ctx context.Context, resolve func(context.Context) (string, error), dest string, progress func(int64, int64)) error {
+	return c.streamFreshURL(ctx, resolve, dest, progress)
+}

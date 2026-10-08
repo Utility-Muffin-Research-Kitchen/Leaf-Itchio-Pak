@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
@@ -322,12 +325,97 @@ func (c *Client) streamToFile(srcURL, dest string, progress func(int64, int64)) 
 	return c.streamToFileContext(context.Background(), srcURL, dest, progress)
 }
 
+const streamIdleTimeout = 30 * time.Second
+
+type downloadIdleTimeout struct{}
+
+func (downloadIdleTimeout) Error() string {
+	return "Download stalled. Check the connection and try again."
+}
+func (downloadIdleTimeout) Unwrap() error { return os.ErrDeadlineExceeded }
+
+// idleGuard bounds a silent connection, not the duration of a healthy download.
+// Its deadline also makes an already-running timer callback harmless after a
+// reset or pause: time.Timer.Stop cannot stop that callback on its own.
+type idleGuard struct {
+	mu       sync.Mutex
+	timer    *time.Timer
+	deadline time.Time
+	timeout  time.Duration
+}
+
+func newIdleGuard(timeout time.Duration, cancel func()) *idleGuard {
+	g := &idleGuard{timeout: timeout, deadline: time.Now().Add(timeout)}
+	g.timer = time.AfterFunc(timeout, func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if !g.deadline.IsZero() && !time.Now().Before(g.deadline) {
+			g.deadline = time.Time{}
+			cancel()
+		}
+	})
+	return g
+}
+
+func (g *idleGuard) reset() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.deadline = time.Now().Add(g.timeout)
+	g.timer.Reset(g.timeout)
+}
+
+func (g *idleGuard) pause() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.deadline = time.Time{}
+	g.timer.Stop()
+}
+
+// stalled reports whether a download request or body read failed because the
+// connection went quiet: the idle guard fired, or a transport timeout fired
+// first (the h1 response-header timeout, or the h2 ping that ends in "client
+// connection lost"). Caller cancellation is never a stall.
+func stalled(ctx context.Context, err error) bool {
+	if context.Cause(ctx) == (downloadIdleTimeout{}) {
+		return true
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(err.Error(), "http2: client connection lost")
+}
+
+// stallError logs the cause of a stall and returns the message you see. The
+// request URL, which may be signed, stays out of the log.
+func stallError(ctx context.Context, downloaded int64, err error) error {
+	cause := fmt.Sprintf("no data for %s", streamIdleTimeout)
+	if context.Cause(ctx) != (downloadIdleTimeout{}) {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		cause = err.Error()
+	}
+	logger.Warn("stream: stalled after %d bytes: %s", downloaded, cause)
+	return downloadIdleTimeout{}
+}
+
 func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, progress func(int64, int64)) error {
 	lease, guardErr := leaf.BeginOperation(ctx, "HTTP body write", false)
 	if guardErr != nil {
 		return fmt.Errorf("protect HTTP body write: %w", guardErr)
 	}
 	defer lease.Release()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	idle := newIdleGuard(streamIdleTimeout, func() { cancel(downloadIdleTimeout{}) })
+	defer idle.pause()
+	ctx = withCooldownHooks(ctx, idle.pause, idle.reset)
+
 	// c.http has a 30-second Timeout that covers the entire response body read —
 	// fine for API calls but fatal for large file downloads. Create a per-call
 	// client with no overall timeout (Timeout: 0) that shares the same
@@ -343,6 +431,9 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	}
 	resp, err := dlClient.Do(req)
 	if err != nil {
+		if stalled(ctx, err) {
+			return stallError(ctx, 0, err)
+		}
 		return safeRequestError("fetch file", err)
 	}
 	defer resp.Body.Close()
@@ -372,6 +463,7 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 		return fmt.Errorf("create download temp: %w", err)
 	}
 	tmpPath := tmp.Name()
+	logger.Info("stream: writing %s", tmpPath)
 	committed := false
 	defer func() {
 		_ = tmp.Close()
@@ -389,6 +481,7 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
+			idle.reset()
 			if _, werr := tmp.Write(buf[:n]); werr != nil {
 				logger.Error("stream: write error after %d bytes: %v", downloaded, werr)
 				return fmt.Errorf("write: %w", werr)
@@ -402,10 +495,14 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 			break
 		}
 		if err != nil {
+			if stalled(ctx, err) {
+				return stallError(ctx, downloaded, err)
+			}
 			logger.Error("stream: read error after %d bytes: %v", downloaded, err)
 			return fmt.Errorf("read stream: %w", err)
 		}
 	}
+	idle.pause()
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("sync download temp: %w", err)
 	}

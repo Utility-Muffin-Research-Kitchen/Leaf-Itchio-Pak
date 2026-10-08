@@ -34,6 +34,7 @@ const (
 	zipDLExtracting
 	zipDLDone
 	zipDLError
+	zipDLCancelled
 )
 
 // ArchiveDownloadWorker downloads a ZIP to a temp path, extracts ROM and music files
@@ -71,6 +72,11 @@ type ArchiveDownloadWorker struct {
 	musicFailed    bool
 	err            error
 	inhibitBlocked atomic.Bool
+
+	// ctx ends the transfer when the user cancels. Extraction never reads it:
+	// a half-extracted file set must not be left behind.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (s *ArchiveDownloadWorker) loadState() zipDLState {
@@ -90,11 +96,13 @@ func NewArchiveDownloadWorker(
 		game: game, detail: detail, plan: plan.Seal(),
 		inv: inv, invPath: invPath,
 	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	go s.run(false)
 	return s
 }
 
 func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
+	defer s.logFailure()
 	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
 	if guardErr != nil {
 		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
@@ -138,23 +146,25 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 
 	// Re-resolve CDN URL immediately before the download so a stale URL from
 	// the inspect step (which may have run minutes ago) does not cause a 403.
-	cdnURL := s.plan.CDNURL
-	if s.plan.Upload.ViaAPI() {
-		// Same install session as the inspection that produced this plan.
-		fresh, rerr := s.client.ResolveUploadURLContext(context.Background(), s.cfg.Credential(), s.plan.Upload.UploadID, s.plan.Upload.Install)
-		if rerr != nil {
-			logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
-		} else {
-			cdnURL = fresh
+	// After a CDN 429 the download resolves once more, because the signed URL
+	// can expire during the cooldown.
+	resolve := func(ctx context.Context) (string, error) {
+		if s.plan.Upload.ViaAPI() {
+			// Same install session as the inspection that produced this plan.
+			fresh, rerr := s.client.ResolveUploadURLContext(ctx, s.cfg.Credential(), s.plan.Upload.UploadID, s.plan.Upload.Install)
+			if rerr != nil {
+				logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
+				return s.plan.CDNURL, nil
+			}
+			return fresh, nil
 		}
-	} else {
 		itchUpload := itchio.Upload{Filename: s.plan.Upload.Filename, URL: s.plan.Upload.URL}
-		fresh, rerr := s.client.ResolveFreeURL(itchUpload)
+		fresh, rerr := s.client.ResolveFreeURLContext(ctx, itchUpload)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve free URL failed (%v), using cached URL", rerr)
-		} else {
-			cdnURL = fresh
+			return s.plan.CDNURL, nil
 		}
+		return fresh, nil
 	}
 
 	progress := func(dl, total int64) {
@@ -162,8 +172,17 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		atomic.StoreInt64(&s.total, total)
 	}
 	logger.Info("zip-download: streaming %s → %s", s.plan.Upload.Filename, tmpPath)
-	if err := s.client.DownloadURL(cdnURL, tmpPath, progress); err != nil {
-		s.err = fmt.Errorf("download ZIP: %w", err)
+	err = s.client.DownloadFreshURLContext(s.ctx, resolve, tmpPath, progress)
+	// A cancel that arrives as the transfer ends still wins: nothing is
+	// extracted yet.
+	if s.ctx.Err() != nil {
+		_ = os.Remove(tmpPath)
+		logger.Info("zip-download: cancelled %s", s.plan.Upload.Filename)
+		s.storeState(zipDLCancelled)
+		return
+	}
+	if err != nil {
+		s.err = stepError{step: "download ZIP", err: err}
 		s.storeState(zipDLError)
 		return
 	}
@@ -282,6 +301,14 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	s.recordLeftOvers()
 	logger.Info("zip-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
+}
+
+// logFailure logs why a run ended in the error state. Every failure exit
+// then reaches the log with its cause, not only the screen.
+func (s *ArchiveDownloadWorker) logFailure() {
+	if s.loadState() == zipDLError && s.err != nil {
+		logger.Warn("zip-download: %s failed: %v", s.plan.Upload.Filename, s.err)
+	}
 }
 
 // run7z handles extraction for 7z archives using the same plan logic as run().
