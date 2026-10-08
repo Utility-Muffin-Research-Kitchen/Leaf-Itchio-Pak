@@ -41,6 +41,8 @@ capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0
 capture detail 960 720 1 0
 capture detail 1280 800 0 5
+capture detail 960 720 1 2
+capture detail 960 720 1 5
 capture detail-price 960 720 1 0
 capture detail-donation 960 720 1 0
 capture detail-price 960 720 1 2

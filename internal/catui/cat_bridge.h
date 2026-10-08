@@ -75,6 +75,11 @@ int catui_draw_title_in(int x, int y, int w, int h, const char *title);
 int catui_title_height(void);
 int catui_hints_enabled(void);
 int catui_footer_height(void);
+/* cat_draw_footer's geometry in final pixels: the width the footer may fill,
+   the round button badge, and the margin around badges, labels, and groups. */
+void catui_footer_metrics(int *available_w, int *badge, int *margin);
+/* The badge text Cat draws for a footer item without a button_text. */
+const char *catui_button_name(int button);
 int catui_draw_footer(const catui_footer_item *items, int count);
 
 catui_rect catui_box_content(const catui_box *box);
