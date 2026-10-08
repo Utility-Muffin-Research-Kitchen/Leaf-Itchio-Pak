@@ -3,6 +3,7 @@ package catui
 import (
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -340,10 +341,7 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 		}
 	}
 	return ui.withClip(rect, func() error {
-		color := ui.ctx.ThemeColor(RoleText)
-		if selected {
-			color = ui.ctx.ThemeColor(RoleHighlightedText)
-		}
+		primaryRole, secondaryRole := listRowRoles(selected)
 		pad := ui.ctx.Scale(12)
 		x := rect.X + pad
 		primaryY := rect.Y + (rect.H-ui.ctx.FontHeight(FontMedium))/2
@@ -355,7 +353,7 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 				secondaryY := rect.Y + (rect.H-ui.ctx.FontHeight(FontTiny))/2
 				if _, err := ui.ctx.DrawText(FontTiny, secondary,
 					rect.X+rect.W-pad-secondaryWidth, secondaryY,
-					ui.ctx.ThemeColor(RoleHint), secondaryWidth, true); err != nil {
+					ui.ctx.ThemeColor(secondaryRole), secondaryWidth, true); err != nil {
 					return err
 				}
 			}
@@ -363,9 +361,62 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 		if primary == "" || maxWidth <= 0 {
 			return nil
 		}
-		_, err := ui.ctx.DrawFallbackText(FontMedium, primary, x, primaryY, color, maxWidth)
+		_, err := ui.DrawEllipsizedText(FontMedium, primary, x, primaryY, ui.ctx.ThemeColor(primaryRole), maxWidth)
 		return err
 	})
+}
+
+// listRowRoles colors a list row's title and its badge or price. On the
+// highlighted row both use the highlighted text color: the hint color is
+// barely readable on the highlight.
+func listRowRoles(selected bool) (primary, secondary ThemeRole) {
+	if selected {
+		return RoleHighlightedText, RoleHighlightedText
+	}
+	return RoleText, RoleHint
+}
+
+// DrawEllipsizedText draws text with the fallback fonts and ends it in "..."
+// when it is wider than maxWidth.
+func (ui *Composer) DrawEllipsizedText(tier FontTier, text string, x, y int, color Color, maxWidth int) (int, error) {
+	text = ellipsizeText(text, maxWidth, func(value string) int {
+		return ui.ctx.MeasureFallbackText(tier, value)
+	})
+	return ui.ctx.DrawFallbackText(tier, text, x, y, color, maxWidth)
+}
+
+// ellipsis matches what Catastrophe's cat_draw_text_ellipsized appends.
+const ellipsis = "..."
+
+// ellipsizeText shortens text to the longest start that fits maxWidth with
+// "..." after it. It cuts between characters, and drops spaces and zero-width
+// joiners before the dots. When not even one character fits with the dots,
+// it returns text unchanged for the draw call's clip.
+func ellipsizeText(text string, maxWidth int, measure func(string) int) string {
+	if text == "" || maxWidth <= 0 || measure(text) <= maxWidth {
+		return text
+	}
+	cuts := make([]int, 0, len(text))
+	for offset := range text {
+		cuts = append(cuts, offset)
+	}
+	// cuts[0] is the empty start; find the last cut whose start still fits.
+	low, high := 0, len(cuts)-1
+	for low < high {
+		middle := (low + high + 1) / 2
+		if measure(text[:cuts[middle]]+ellipsis) <= maxWidth {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	start := strings.TrimRightFunc(text[:cuts[low]], func(r rune) bool {
+		return unicode.IsSpace(r) || r == '‍'
+	})
+	if start == "" {
+		return text
+	}
+	return start + ellipsis
 }
 
 func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycler bool) error {

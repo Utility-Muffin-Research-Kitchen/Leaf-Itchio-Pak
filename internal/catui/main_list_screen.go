@@ -193,7 +193,7 @@ func (screen *MainListScreen) drawReady(content Box) error {
 
 	y := art.Y + art.H + screen.ui.BasePadding/2
 	remaining := Rect{X: panel.X, Y: y, W: panel.W, H: panel.Y + panel.H - y}
-	if _, err := screen.ctx.DrawFallbackText(FontLarge, selected.Title, remaining.X, remaining.Y,
+	if _, err := screen.ui.DrawEllipsizedText(FontLarge, selected.Title, remaining.X, remaining.Y,
 		screen.ctx.ThemeColor(RoleText), remaining.W); err != nil {
 		return err
 	}
@@ -270,6 +270,11 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 		model.SetItems(nil)
 	case "signed-out":
 		model.NoticeTitle, model.Notice = "Signed out", "itch.io signed you out. Sign in again from Settings."
+	case "long-titles":
+		// Long titles end in "..." before the price column, on the
+		// highlighted row too, where the price takes the row's text color.
+		model.SetItems(longTitleFixtureItems())
+		model.Cursor = 1
 	}
 	screen, err := NewMainListScreen(ctx, model, cache)
 	if err != nil {
@@ -379,6 +384,28 @@ func fixtureListItems() []appui.ListItem {
 		items = append(items, appui.ListItem{
 			Title: title, Author: "itch creator", CoverKey: cover, Badge: badge,
 			Tags: []string{"Game Boy", "Adventure", "Controller"},
+		})
+	}
+	return items
+}
+
+func longTitleFixtureItems() []appui.ListItem {
+	rows := []struct{ title, badge string }{
+		{"Yume Nikki PS1 (demo)", "DL"},
+		{"Fortune & Glory in the City of Thieves", "$8.00"},
+		{"VoXide (Minecraft-like for PS1)", "Free"},
+		{"Unnamed PSX Homebrew Game Jam Entry", "Free"},
+		{"葉っぱの冒険と森の歌のレジェンド", "$4.99"},
+		{"Glory Kill", "Free"},
+		{"Leafbound: Tales of the Forgotten Grove", "OWNED"},
+		{"The Exit 8 PSX Port", "Free"},
+	}
+	items := make([]appui.ListItem, 0, len(rows))
+	for index, row := range rows {
+		items = append(items, appui.ListItem{
+			Title: row.title, Author: "itch creator", Badge: row.badge,
+			CoverKey: fmt.Sprintf("fixture://cover-%d", 1+index%2),
+			Tags:     []string{"PlayStation", "Adventure"},
 		})
 	}
 	return items

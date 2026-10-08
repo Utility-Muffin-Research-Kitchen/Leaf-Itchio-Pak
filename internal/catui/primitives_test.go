@@ -3,6 +3,7 @@ package catui
 import (
 	"reflect"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestScreenLayout960x720WithSubHeaderAndFooter(t *testing.T) {
@@ -237,5 +238,44 @@ func TestStateDetailWrapsAndEllipsizesOnlyWhatDoesNotFit(t *testing.T) {
 	}
 	if lines := stateDetailLines("", 20, 2, measure); lines != nil {
 		t.Fatalf("empty detail = %#v, want no lines", lines)
+	}
+}
+
+// F9: a title wider than its column ends in "..." before the price column
+// instead of being cut mid-glyph.
+func TestEllipsizeTextCutsBetweenCharactersAndEndsInDots(t *testing.T) {
+	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
+	cases := []struct {
+		text  string
+		width int
+		want  string
+	}{
+		{"Glory Kill", 100, "Glory Kill"},
+		{"VoXide (Minecraft-like for PS1)", 200, "VoXide (Minecraft..."},
+		// No space or joiner before the dots.
+		{"Unnamed PSX Homebrew Game", 110, "Unnamed..."},
+		{"Lead \u200d\U0001F431 cat", 90, "Lead..."},
+		{"葉っぱの冒険と森の歌", 70, "葉っぱの..."},
+		// Too narrow for any character and the dots: leave it to the clip.
+		{"Glory Kill", 30, "Glory Kill"},
+		{"", 30, ""},
+	}
+	for _, tc := range cases {
+		got := ellipsizeText(tc.text, tc.width, measure)
+		if got != tc.want {
+			t.Errorf("ellipsizeText(%q, %d) = %q, want %q", tc.text, tc.width, got, tc.want)
+		}
+		if got != tc.text && measure(got) > tc.width {
+			t.Errorf("ellipsizeText(%q, %d) = %q is %d wide", tc.text, tc.width, got, measure(got))
+		}
+	}
+}
+
+func TestListRowSecondaryUsesTheRowTextColor(t *testing.T) {
+	if primary, secondary := listRowRoles(true); primary != RoleHighlightedText || secondary != RoleHighlightedText {
+		t.Fatalf("selected roles = %v, %v; want highlighted text for both", primary, secondary)
+	}
+	if primary, secondary := listRowRoles(false); primary != RoleText || secondary != RoleHint {
+		t.Fatalf("unselected roles = %v, %v; want text and hint", primary, secondary)
 	}
 }
