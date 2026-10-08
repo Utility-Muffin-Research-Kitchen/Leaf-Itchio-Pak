@@ -105,7 +105,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	defer s.logFailure()
 	lease, guardErr := leaf.BeginOperation(context.Background(), "archive download", allowUninhibited)
 	if guardErr != nil {
-		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+		s.err = inhibitBlockedError(guardErr)
 		s.inhibitBlocked.Store(true)
 		s.storeState(zipDLError)
 		return
@@ -182,7 +182,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		return
 	}
 	if err != nil {
-		s.err = stepError{step: "download ZIP", err: err}
+		s.err = fmt.Errorf("download ZIP: %w", err)
 		s.storeState(zipDLError)
 		return
 	}
@@ -609,6 +609,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 			FileType:       inventory.FileTypeROM,
 			UnifiedName:    unifiedName,
 			SourceArchive:  s.plan.Upload.Filename,
+			SourceMember:   name,
 		})
 	}
 }
@@ -852,7 +853,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	// Skip when an identical ROM already exists.
 	if existing := s.findIdenticalFromOpener(open, size, ext); existing != "" {
 		logger.Info("%s: ROM %s: identical file at %s, skipping", s.logPrefix(), baseName, existing)
-		s.backfillSourceArchive(existing)
+		s.backfillSourceArchive(existing, entryName)
 		return existing, nil
 	}
 
@@ -889,6 +890,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		FileType:       inventory.FileTypeROM,
 		UnifiedName:    unifiedName,
 		SourceArchive:  s.plan.Upload.Filename,
+		SourceMember:   entryName,
 	}
 	applyArtwork(&file, artwork)
 	s.inv.Add(s.game.URL, inventory.Entry{
@@ -1065,6 +1067,7 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		DownloadedAt:   now,
 		FileType:       inventory.FileTypeMusic,
 		SourceArchive:  s.plan.Upload.Filename,
+		SourceMember:   entryName,
 	})
 	return dest, nil
 }
@@ -1105,9 +1108,10 @@ func (s *ArchiveDownloadWorker) adoptUnattributedMusic() {
 	}
 }
 
-// backfillSourceArchive records the current upload identity when an existing
-// managed ROM was verified byte-for-byte identical to its archive entry.
-func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
+// backfillSourceArchive records the current upload identity, and the member
+// it holds, when an existing managed ROM was verified byte-for-byte identical
+// to that archive entry.
+func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath, member string) {
 	if s.plan.Upload.Filename == "" {
 		return
 	}
@@ -1118,6 +1122,7 @@ func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 	for _, f := range entry.Files {
 		if f.DestPath == destPath {
 			f.SourceArchive = s.plan.Upload.Filename
+			f.SourceMember = member
 			f.OriginalUpload = s.plan.Upload.Filename
 			f.UploadID = s.plan.Upload.UploadID
 			f.UploadFingerprint = s.plan.Upload.UploadFingerprint
@@ -1289,6 +1294,7 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 			FileType:       inventory.FileTypeROM,
 			UnifiedName:    unifiedName,
 			SourceArchive:  s.plan.Upload.Filename,
+			SourceMember:   name,
 		})
 	}
 }

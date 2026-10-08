@@ -15,10 +15,6 @@ import (
 // OwnerOf compares paths the way FAT32 does, so a differently cased path is
 // the same file (review finding R18-1).
 func TestOwnerOfMatchesPathsCaseInsensitively(t *testing.T) {
-	// Updater tests point the global source paths elsewhere.
-	if err := configureInventoryTestPaths(); err != nil {
-		t.Fatal(err)
-	}
 	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
 	inv.Add("https://dev.itch.io/a", inventory.Entry{Title: "A"},
 		inventory.DownloadedFile{Filename: "disc1.chd", DestPath: "/leaf/Roms/PSX/disc1.chd"})

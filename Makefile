@@ -13,19 +13,23 @@ MLP1_BUILD_IMAGE ?= leaf-itchio-pak-mlp1-go1.27.1
 export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
 export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
 
+# internal/catui's cgo include path assumes a sibling Catastrophe checkout.
+# Put CATASTROPHE_DIR's headers first so worktrees and other layouts build.
+CATASTROPHE_CGO = CGO_CFLAGS="$${CGO_CFLAGS:-} -I$(CATASTROPHE_DIR)/include"
+
 .DEFAULT_GOAL := native
 .PHONY: test test-race test-native cat-only-audit public-assets-check pakrat-metadata-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots public-screenshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
-test: cat-only-audit public-assets-check pakrat-metadata-check
-	go test -count=1 -tags headless ./...
+test: check-catastrophe cat-only-audit public-assets-check pakrat-metadata-check
+	$(CATASTROPHE_CGO) go test -count=1 -tags headless ./...
 
-test-race: cat-only-audit public-assets-check pakrat-metadata-check
-	go test -count=1 -race -tags headless ./...
+test-race: check-catastrophe cat-only-audit public-assets-check pakrat-metadata-check
+	$(CATASTROPHE_CGO) go test -count=1 -race -tags headless ./...
 
 # Untagged suite: the Catastrophe download flows and workers build only without
 # the headless tag, so test-race alone does not cover them.
 test-native: check-catastrophe check-sdl
-	CGO_CFLAGS="$${CGO_CFLAGS:-} -I$(CATASTROPHE_DIR)/include" go test -count=1 -race ./...
+	$(CATASTROPHE_CGO) go test -count=1 -race ./...
 
 cat-only-audit:
 	./scripts/cat-only-audit.sh

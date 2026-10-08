@@ -33,3 +33,29 @@ func TestFilterIncludesPlayStation(t *testing.T) {
 		t.Fatalf("PlayStation filter = %q/%q", m.Platform, m.PlatformLabel())
 	}
 }
+
+// The list header names the platform and sort the way the filter screen
+// does, so a PSX filter reads "PlayStation" in both.
+func TestHeaderLabelsMatchTheFilterScreen(t *testing.T) {
+	for _, code := range FilterPlatforms {
+		if got, want := PlatformLabel(code), NewFilterModel(code, "", "").PlatformLabel(); got != want {
+			t.Errorf("PlatformLabel(%q) = %q, want the filter's %q", code, got, want)
+		}
+	}
+	for _, value := range FilterSortValues {
+		if got, want := SortLabel(value), NewFilterModel("", value, "").SortLabel(); got != want {
+			t.Errorf("SortLabel(%q) = %q, want the filter's %q", value, got, want)
+		}
+	}
+	if got := PlatformLabel("PSX"); got != "PlayStation" {
+		t.Errorf("PlatformLabel(PSX) = %q, want PlayStation", got)
+	}
+	// A code the filter does not list keeps its own name rather than
+	// claiming "All platforms".
+	if got := PlatformLabel("SNES"); got != "SNES" {
+		t.Errorf("PlatformLabel(SNES) = %q, want SNES", got)
+	}
+	if got := SortLabel("bogus"); got != "RSS" {
+		t.Errorf("SortLabel(bogus) = %q, want RSS like the sort cycle", got)
+	}
+}

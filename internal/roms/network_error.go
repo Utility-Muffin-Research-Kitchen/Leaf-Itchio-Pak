@@ -27,5 +27,5 @@ func remoteRequestError(operation string, err error) error {
 		}
 		return netlimit.ErrRateLimited
 	}
-	return fmt.Errorf("%s: network request failed", operation)
+	return fmt.Errorf("%s: %w", operation, netlimit.ErrNetwork)
 }

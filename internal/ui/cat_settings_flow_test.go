@@ -81,8 +81,18 @@ func TestCatSettingsExposeOnlyLeafChoicesAndSourceLabels(t *testing.T) {
 	if row := settingRow(t, model, appui.SettingsAppData); row.ActionEnabled || row.Value == "" {
 		t.Fatalf("App Data row = %+v", row)
 	}
-	if got := settingRow(t, model, appui.SettingsROMSelection).Value; got != "auto" {
-		t.Fatalf("ROM Selection = %q", got)
+	// F10: every value is in sentence case.
+	for key, want := range map[appui.SettingsKey]string{
+		appui.SettingsROMSelection:  "Auto",
+		appui.SettingsROMLocation:   "Auto",
+		appui.SettingsMusicDownload: "Auto",
+		appui.SettingsMusicLocation: "Ask",
+		appui.SettingsUnifiedNaming: "On",
+		appui.SettingsLogLevel:      "Info",
+	} {
+		if got := settingRow(t, model, key).Value; got != want {
+			t.Errorf("settings key %d = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -93,8 +103,11 @@ func TestCatSettingsToggleROMSelection(t *testing.T) {
 	if _, err := flow.Activate(model); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ROMSelection != "ask" || settingRow(t, model, appui.SettingsROMSelection).Value != "ask" {
+	if cfg.ROMSelection != "ask" || settingRow(t, model, appui.SettingsROMSelection).Value != "Ask" {
 		t.Fatalf("ROM Selection after toggle = %q", cfg.ROMSelection)
+	}
+	if got := settingRow(t, model, appui.SettingsMusicDownload).Value; got != "Off" {
+		t.Fatalf("Music Download = %q, want Off", got)
 	}
 	loaded, err := settings.Load(cfgPath)
 	if err != nil || loaded.ROMSelection != "ask" {

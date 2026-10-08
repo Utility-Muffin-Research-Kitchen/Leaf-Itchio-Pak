@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"errors"
+	"path/filepath"
 	"sort"
 	"sync/atomic"
 
@@ -12,6 +12,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -25,6 +26,10 @@ type CatDownloadBackend interface {
 
 const itchioLibraryTitleProvider = "org.umrk.itchio"
 
+// libraryTitleGroups sends one title group per system. Jawaka adds each
+// match's scanned name when one group matches several games: that tells the
+// discs of one set apart, but a game with a GB and a GBA build would show
+// "Title — Title" twice. Files of one system stay in one group.
 func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPaths []string) []leaf.LibraryTitleGroup {
 	if inv == nil || title == "" || len(savedPaths) == 0 {
 		return nil
@@ -39,7 +44,7 @@ func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPa
 			wanted[path] = struct{}{}
 		}
 	}
-	seen := make(map[string]struct{})
+	systems := make(map[string]string)
 	paths := make([]string, 0, len(wanted))
 	for _, file := range entry.Files {
 		if _, ok := wanted[file.DestPath]; !ok {
@@ -50,21 +55,43 @@ func libraryTitleGroups(inv *inventory.Inventory, gameURL, title string, savedPa
 		if !isROM || file.DestPath == "" {
 			continue
 		}
-		if _, duplicate := seen[file.DestPath]; duplicate {
+		if _, duplicate := systems[file.DestPath]; duplicate {
 			continue
 		}
-		seen[file.DestPath] = struct{}{}
+		systems[file.DestPath] = titleGroupSystem(file)
 		paths = append(paths, file.DestPath)
 	}
 	if len(paths) == 0 {
 		return nil
 	}
 	sort.Strings(paths)
-	return []leaf.LibraryTitleGroup{{
-		Provider: itchioLibraryTitleProvider,
-		Title:    title,
-		ROMPaths: paths,
-	}}
+	var groups []leaf.LibraryTitleGroup
+	groupIndex := make(map[string]int)
+	for _, path := range paths {
+		index, ok := groupIndex[systems[path]]
+		if !ok {
+			index = len(groups)
+			groupIndex[systems[path]] = index
+			groups = append(groups, leaf.LibraryTitleGroup{
+				Provider: itchioLibraryTitleProvider,
+				Title:    title,
+			})
+		}
+		groups[index].ROMPaths = append(groups[index].ROMPaths, path)
+	}
+	return groups
+}
+
+// titleGroupSystem is the library system a ROM is listed under: its canonical
+// system, or its folder when it sits outside every system folder.
+func titleGroupSystem(file inventory.DownloadedFile) string {
+	if identity, ok := roms.DescribeDestination(file.DestPath); ok && identity.CanonicalSystem != "" {
+		return identity.CanonicalSystem
+	}
+	if file.CanonicalSystem != "" {
+		return file.CanonicalSystem
+	}
+	return filepath.Dir(file.DestPath)
 }
 
 func NewCatDirectDownloadBackend(client *itchio.Client, cfg *settings.Config,
@@ -92,6 +119,14 @@ func NewCatArchiveDownloadBackend(client *itchio.Client, cfg *settings.Config,
 	return NewArchiveDownloadWorker(client, cfg, game, detail, plan, inv, inventoryPath)
 }
 
+// inhibitBlockedError is a download's failure to get suspend protection
+// from Jawaka. The screen asks whether to continue without it; the log
+// keeps Jawaka's own error.
+func inhibitBlockedError(guardErr error) error {
+	return screentext.Wrap(guardErr, "Jawaka is unavailable, so Leaf can't prevent suspend during this download. "+
+		"Press A to download without that protection, or B to cancel.")
+}
+
 func (s *DirectDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.upload.Filename,
@@ -103,9 +138,7 @@ func (s *DirectDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.SavedPaths = []string{s.dest}
 	case dlError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = s.err.Error()
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}
@@ -148,9 +181,7 @@ func (s *MultiDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.SavedPaths = append([]string(nil), s.finalPaths...)
 	case multiDLError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = s.err.Error()
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}
@@ -177,25 +208,6 @@ func (s *MultiDownloadWorker) CatLibraryTitleGroups() []leaf.LibraryTitleGroup {
 	return libraryTitleGroups(s.inv, s.game.URL, s.game.Title, s.finalPaths)
 }
 
-// stepError names the step that failed for the log. The screen shows only
-// the cause, so a message such as "Download stalled. ..." reads as a
-// sentence instead of following an internal prefix.
-type stepError struct {
-	step string
-	err  error
-}
-
-func (e stepError) Error() string { return e.step + ": " + e.err.Error() }
-func (e stepError) Unwrap() error { return e.err }
-
-func screenError(err error) string {
-	var step stepError
-	if errors.As(err, &step) {
-		return step.err.Error()
-	}
-	return err.Error()
-}
-
 func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	state := s.loadState()
 	model := appui.DownloadProgressModel{
@@ -212,9 +224,7 @@ func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.Skipped = append([]string(nil), s.skipped...)
 	case zipDLError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = screenError(s.err)
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}

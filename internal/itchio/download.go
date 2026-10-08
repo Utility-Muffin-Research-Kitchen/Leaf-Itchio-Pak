@@ -329,10 +329,11 @@ const streamIdleTimeout = 30 * time.Second
 
 type downloadIdleTimeout struct{}
 
-func (downloadIdleTimeout) Error() string {
-	return "Download stalled. Check the connection and try again."
-}
+func (downloadIdleTimeout) Error() string { return ErrDownloadStalled.Error() }
 func (downloadIdleTimeout) Unwrap() error { return os.ErrDeadlineExceeded }
+func (downloadIdleTimeout) Is(target error) bool {
+	return target == ErrDownloadStalled
+}
 
 // idleGuard bounds a silent connection, not the duration of a healthy download.
 // Its deadline also makes an already-running timer callback harmless after a

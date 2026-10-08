@@ -26,16 +26,14 @@ func ensureROMArtwork(client *itchio.Client, inv *inventory.Inventory, game itch
 		logger.Warn("cover-art: game=%q: %v", game.Title, err)
 		return itchio.ArtworkResult{}
 	}
-	if !result.Created && result.Path != "" && inv != nil {
-		if entry, ok := inv.Lookup(game.URL); ok {
-			for _, file := range entry.Files {
-				if file.ArtworkCreated && file.ArtworkPath == result.Path &&
-					(file.ArtworkHash == "" || file.ArtworkHash == result.SHA256) {
-					result.Created = true
-					break
-				}
+	if !result.Created && result.Path != "" {
+		var files []inventory.DownloadedFile
+		if inv != nil {
+			if entry, ok := inv.Lookup(game.URL); ok {
+				files = entry.Files
 			}
 		}
+		result = inventory.KeepExistingArtwork(result, files)
 	}
 	return result
 }

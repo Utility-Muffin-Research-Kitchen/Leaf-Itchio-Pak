@@ -51,6 +51,21 @@ func configureInventoryTestPaths() error {
 
 }
 
+// configureTestPaths installs config for one test and restores the paths
+// TestMain installs when the test ends, so every test starts from the same
+// paths, also under -count>1.
+func configureTestPaths(t *testing.T, config roms.PathConfig) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := configureInventoryTestPaths(); err != nil {
+			t.Errorf("restore inventory test paths: %v", err)
+		}
+	})
+	if err := roms.ConfigurePaths(config); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMain(m *testing.M) {
 	err := configureInventoryTestPaths()
 	if err != nil {
@@ -277,11 +292,6 @@ func TestVerifyAndCleanRemovesMissingFileOnAvailableSource(t *testing.T) {
 }
 
 func TestRepairArchiveRootROMsMovesOnlyAppOwnedMisplacedFile(t *testing.T) {
-	t.Cleanup(func() {
-		if err := configureInventoryTestPaths(); err != nil {
-			panic(err)
-		}
-	})
 	root := t.TempDir()
 	primary := filepath.Join(root, "primary")
 	secondary := filepath.Join(root, "secondary")
@@ -298,13 +308,11 @@ func TestRepairArchiveRootROMsMovesOnlyAppOwnedMisplacedFile(t *testing.T) {
 			StatesRoot: filepath.Join(source.root, "States"), SystemDirs: dirs, ImageDirs: images,
 		})
 	}
-	if err := roms.ConfigurePaths(roms.PathConfig{
+	configureTestPaths(t, roms.PathConfig{
 		SourceID: "primary", PrimaryRoot: primary, MusicRoot: pathSources[0].MusicRoot,
 		StatesRoot: pathSources[0].StatesRoot, SystemDirs: pathSources[0].SystemDirs,
 		ImageDirs: pathSources[0].ImageDirs, Sources: pathSources,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := os.MkdirAll(filepath.Join(secondary, "Roms"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -347,11 +355,6 @@ func TestRepairArchiveRootROMsMovesOnlyAppOwnedMisplacedFile(t *testing.T) {
 }
 
 func TestRepairArchiveRootROMsDoesNotMoveUserOrOccupiedFiles(t *testing.T) {
-	t.Cleanup(func() {
-		if err := configureInventoryTestPaths(); err != nil {
-			panic(err)
-		}
-	})
 	root := t.TempDir()
 	romRoot := filepath.Join(root, "Roms")
 	gbaRoot := filepath.Join(romRoot, "GBA")
@@ -363,12 +366,10 @@ func TestRepairArchiveRootROMsDoesNotMoveUserOrOccupiedFiles(t *testing.T) {
 		systems[system] = filepath.Join(romRoot, system)
 		images[system] = filepath.Join(root, "Images", system)
 	}
-	if err := roms.ConfigurePaths(roms.PathConfig{
+	configureTestPaths(t, roms.PathConfig{
 		SourceID: "primary", PrimaryRoot: root, MusicRoot: filepath.Join(root, "Music"),
 		StatesRoot: filepath.Join(root, "States"), SystemDirs: systems, ImageDirs: images,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	userFile := filepath.Join(romRoot, "User.gba")
 	occupiedSource := filepath.Join(romRoot, "Occupied.gba")
 	occupiedTarget := filepath.Join(gbaRoot, "Occupied.gba")
