@@ -2,6 +2,7 @@ package itchio
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -153,6 +154,7 @@ func TestStreamTransportTimeoutsReportAStall(t *testing.T) {
 }
 
 func TestStreamOtherNetworkFailuresAreNotStalls(t *testing.T) {
+	logs := captureStreamLog(t)
 	reset := errors.New("read tcp 10.0.0.2:51000->1.2.3.4:443: read: connection reset by peer")
 	err := streamWithFailure(t, func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, ContentLength: 100,
@@ -161,5 +163,41 @@ func TestStreamOtherNetworkFailuresAreNotStalls(t *testing.T) {
 	var stall downloadIdleTimeout
 	if err == nil || errors.As(err, &stall) {
 		t.Fatalf("error = %v, want the read failure, not a stall", err)
+	}
+	if !strings.Contains(logs.String(), "[ERROR] stream: read error after 7 bytes: "+reset.Error()) {
+		t.Fatalf("the read failure was not logged as an error:\n%s", logs)
+	}
+}
+
+// Cancelling a download is not a failure: the log records a cancel at info
+// level, not "read error ... context canceled" at error level.
+func TestStreamCancelIsLoggedAsACancel(t *testing.T) {
+	logs := captureStreamLog(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		reader, writer := io.Pipe()
+		go func() {
+			_, _ = io.WriteString(writer, "partial")
+			<-req.Context().Done()
+			_ = writer.CloseWithError(req.Context().Err())
+		}()
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: 100, Body: reader}, nil
+	})}}
+	err := client.streamToFileContext(ctx, "https://cdn.example/game", filepath.Join(t.TempDir(), "game.gbc"),
+		func(downloaded, _ int64) {
+			if downloaded > 0 {
+				cancel()
+			}
+		})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want the cancel", err)
+	}
+	got := logs.String()
+	if strings.Contains(got, "[ERROR]") {
+		t.Fatalf("the cancel was logged as an error:\n%s", got)
+	}
+	if !strings.Contains(got, "[INFO]  stream: cancelled after 7 bytes") {
+		t.Fatalf("the cancel was not logged:\n%s", got)
 	}
 }
