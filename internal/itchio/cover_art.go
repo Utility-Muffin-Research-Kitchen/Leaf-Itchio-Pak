@@ -52,9 +52,11 @@ func existingArtwork(path string) (ArtworkResult, bool, error) {
 }
 
 // EnsureCoverArt creates source-local launcher art only when the canonical PNG
-// does not already exist. Existing art is treated as user-owned and never
-// overwritten. Animated GIFs retain full animation in the app cache; launcher
-// art deliberately uses the bounded first decoded frame.
+// does not already exist. Existing art is never overwritten; it comes back
+// with Created false, and the caller, which knows what the app wrote, says
+// whose it is (inventory.KeepExistingArtwork). Animated GIFs retain full
+// animation in the app cache; launcher art deliberately uses the bounded
+// first decoded frame.
 func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, error) {
 	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
 	if guardErr != nil {
@@ -68,9 +70,6 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	}
 	mediaDir := filepath.Dir(artPath)
 	if existing, found, err := existingArtwork(artPath); found || err != nil {
-		if err == nil {
-			logger.Info("cover-art: preserving existing user artwork %s", artPath)
-		}
 		return existing, err
 	}
 	if coverURL == "" {
@@ -165,9 +164,6 @@ func EnsureCopiedCoverArt(romDestPath string) (ArtworkResult, error) {
 	}
 	mediaDir := filepath.Dir(artPath)
 	if existing, found, err := existingArtwork(artPath); found || err != nil {
-		if err == nil {
-			logger.Info("cover-art: preserving existing user artwork %s", artPath)
-		}
 		return existing, err
 	}
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
