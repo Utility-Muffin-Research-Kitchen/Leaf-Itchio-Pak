@@ -87,6 +87,7 @@ capture rename-states 1280 800 0 5
 capture rename-done 960 720 1 0
 capture settings 960 720 1 0
 capture settings 1280 800 0 5
+capture settings 960 720 1 2
 capture settings-confirm 960 720 1 0
 capture moderation 960 720 1 0
 capture moderation-tags 1280 800 0 5
