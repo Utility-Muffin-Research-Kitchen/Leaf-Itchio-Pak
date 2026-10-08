@@ -151,19 +151,49 @@ func TestWrapTextPreservesParagraphBreaks(t *testing.T) {
 func TestStateDetailWrapsAndEllipsizesOnlyWhatDoesNotFit(t *testing.T) {
 	measure := func(value string) int { return len(value) }
 	const detail = "Download stalled. Check the connection and try again."
-	lines := stateDetailLines(detail, 20, 4, measure)
+	lines := fitLines(detail, 20, 4, measure)
 	want := []string{"Download stalled.", "Check the connection", "and try again."}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines = %#v, want %#v", lines, want)
 	}
 	// Too short for every line: the last one carries the rest, and the draw
 	// call ellipsizes it.
-	lines = stateDetailLines(detail, 20, 2, measure)
+	lines = fitLines(detail, 20, 2, measure)
 	want = []string{"Download stalled.", "Check the connection and try again."}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("capped lines = %#v, want %#v", lines, want)
 	}
-	if lines := stateDetailLines("", 20, 2, measure); lines != nil {
+	if lines := fitLines("", 20, 2, measure); lines != nil {
 		t.Fatalf("empty detail = %#v, want no lines", lines)
+	}
+}
+
+// The progress screen's status line (the file being downloaded, inspected
+// or extracted) wraps to a second line instead of being cut off, and
+// whatever still does not fit ends in "...", as Cat's own ellipsis does.
+func TestProgressTitleWrapsToTwoLinesAndEllipsizesTheRest(t *testing.T) {
+	measure := func(value string) int { return len([]rune(value)) }
+	if got := progressTitleLines("Inspecting game.zip", 30, measure); !reflect.DeepEqual(got, []string{"Inspecting game.zip"}) {
+		t.Fatalf("short title = %#v, want it unchanged on one line", got)
+	}
+	got := progressTitleLines("Inspecting Leafbound Deluxe Edition (PlayStation) v1.2.3.zip", 30, measure)
+	want := []string{"Inspecting Leafbound Deluxe", "Edition (PlayStation) v1.2...."}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("long title = %#v, want %#v", got, want)
+	}
+	// One word wider than the line, such as a long file name without
+	// spaces, is ellipsized too.
+	got = progressTitleLines("Extracting leafbound_deluxe_edition_playstation.zip", 30, measure)
+	want = []string{"Extracting", "leafbound_deluxe_edition_pl..."}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unbroken name = %#v, want %#v", got, want)
+	}
+	// Trailing spaces go before the ellipsis, and a width too narrow for
+	// "..." leaves the line for the draw call to clip, as Cat does.
+	if got := ellipsizeLine("Leaf bound", 8, measure); got != "Leaf..." {
+		t.Fatalf("ellipsized = %q, want %q", got, "Leaf...")
+	}
+	if got := ellipsizeLine("Leafbound", 3, measure); got != "Leafbound" {
+		t.Fatalf("too narrow = %q, want the line unchanged", got)
 	}
 }

@@ -64,12 +64,12 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
 	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale", "warning",
-		"detail-unavailable", "detail-unavailable-downloaded", "detail-title-emoji", "detail-title-cjk":
+		"detail-unavailable", "detail-unavailable-downloaded", "detail-unavailable-offline", "detail-title-emoji", "detail-title-cjk":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
 			Platform: "GBC", IsFree: true, CanDownload: true,
 			Downloaded: config.Screen == "detail" || config.Screen == "detail-owned" ||
-				config.Screen == "detail-unavailable-downloaded",
+				config.Screen == "detail-unavailable-downloaded" || config.Screen == "detail-unavailable-offline",
 		})
 		switch config.Screen {
 		case "detail-price":
@@ -95,8 +95,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
 			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")
-		if config.Screen == "detail-unavailable" || config.Screen == "detail-unavailable-downloaded" {
+		if strings.HasPrefix(config.Screen, "detail-unavailable") {
 			model.SetError("Go back and reopen this game to try again.")
+			if config.Screen == "detail-unavailable-offline" {
+				model.SetError("Can't reach itch.io. Check the connection, then reopen this game.")
+			}
 			model.Images = nil
 			if model.Game.Downloaded {
 				model.Images = []string{"fixture://detail-cover"}
@@ -111,9 +114,12 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
-	case "download-select", "download-select-hidden", "archive-contents":
+	case "download-select", "download-select-hidden", "download-select-offline", "archive-contents":
 		model := appui.NewDownloadSelectModel("Leafbound 葉")
-		if config.Screen == "archive-contents" {
+		if config.Screen == "download-select-offline" {
+			// The device showed "fetch game page: network request failed" here.
+			model.SetError("Can't reach itch.io. Check the connection and try again.")
+		} else if config.Screen == "archive-contents" {
 			model.SetChoices("Choose one .GBC ROM (1/1)", []appui.DownloadChoice{
 				{Title: "release/leafbound-v1.gbc", Badge: "GBC"},
 				{Title: "release/leafbound-v2.gbc", Badge: "GBC"},
@@ -138,7 +144,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled", "archive-inspect":
+	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled",
+		"archive-inspect", "archive-inspect-long", "archive-unreadable":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -146,6 +153,10 @@ func RunInputFixture(config InputFixtureConfig) error {
 		switch config.Screen {
 		case "archive-inspect":
 			model.Filename = "Inspecting soundtrack-and-game.zip"
+			model.Downloaded, model.Total, model.FileCount = 128*1024, 640*1024, 1
+		case "archive-inspect-long":
+			// A long upload name, as itch.io creators often publish them.
+			model.Filename = "Inspecting Leafbound Deluxe Edition (PlayStation) v1.2.3 English Patch.zip"
 			model.Downloaded, model.Total, model.FileCount = 128*1024, 640*1024, 1
 		case "download-done":
 			model.State = appui.DownloadProgressDone
@@ -160,7 +171,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.Detail = "Download stalled. Check the connection and try again."
 		case "download-inhibit":
 			model.State = appui.DownloadProgressInhibitBlocked
-			model.Detail = "Jawaka is unavailable, so Leaf cannot prevent suspend during this transfer. Continue without protection or cancel."
+			model.Detail = "Jawaka is unavailable, so Leaf can't prevent suspend during this download. " +
+				"Press A to download without that protection, or B to cancel."
+		case "archive-unreadable":
+			model.State = appui.DownloadProgressError
+			model.Detail = "Leaf can't read this archive. It may be damaged or in an unsupported format."
 		case "download-cancelled":
 			model.State = appui.DownloadProgressCancelled
 			model.Detail = "No partial file was installed."
@@ -216,7 +231,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm", "manage-leftover", "manage-result":
+	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
@@ -237,6 +252,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		} else if config.Screen == "manage-result" {
 			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
+		} else if config.Screen == "manage-error" {
+			model.SetError("Couldn't delete Leafbound Deluxe Edition (PlayStation).bin. Check the SD card, then try again.")
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
 		if screenErr != nil {
@@ -270,7 +287,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
-	case "settings", "settings-confirm", "moderation", "moderation-tags":
+	case "settings", "settings-confirm", "settings-message", "settings-notice", "settings-error",
+		"moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
 			{Key: appui.SettingsAccount, Label: "itch.io Account", Value: "leafbound-player", ActionEnabled: true},
@@ -308,6 +326,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 		if config.Screen == "settings-confirm" {
 			// The sign-in warning moved to the sign-in screen (signin-warning).
 			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
+		}
+		switch config.Screen {
+		case "settings-message":
+			model.SetMessage("Inventory update started. Local downloads stay available during the check.")
+		case "settings-notice":
+			// The longest settings message.
+			model.SetMessage("Signed out. Downloads were not changed. The key stays valid on itch.io until you delete it from your account's API keys.")
+		case "settings-error":
+			model.SetError("Couldn't check your itch.io account. You're still signed in; try again when online.")
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)
 		if screenErr != nil {

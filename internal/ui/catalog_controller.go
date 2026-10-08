@@ -15,6 +15,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -339,7 +340,7 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 		return
 	}
 	if controller.err != nil {
-		model.SetError(controller.err.Error())
+		model.SetError(screentext.FromError(controller.err))
 		return
 	}
 	items := make([]appui.ListItem, 0, len(controller.viewGames))

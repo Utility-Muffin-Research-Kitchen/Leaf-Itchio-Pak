@@ -13,6 +13,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -82,7 +83,8 @@ func newCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 		ext = strings.ToLower(ext)
 		canonical, ok := leaf.CanonicalSystemForExtension(ext)
 		if !ok || canonical == "GBC" && ext == ".zip" {
-			return nil, nil, fmt.Errorf("cannot choose a ROM destination for %q", ext)
+			return nil, nil, screentext.Wrap(fmt.Errorf("cannot choose a ROM destination for %q", ext),
+				fmt.Sprintf("Leaf has no system folder for %s files.", strings.ToUpper(strings.TrimPrefix(ext, "."))))
 		}
 		targetIndex, exists := byKey[canonical]
 		if !exists {
@@ -107,7 +109,7 @@ func newCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
 func NewCatMusicDestinationFlow(sources leaf.SourceList, cfg *settings.Config,
 	cfgPath, title string) (*CatDestinationFlow, *appui.DestinationModel, error) {
 	if len(sources) == 0 {
-		return nil, nil, fmt.Errorf("Leaf runtime has no storage sources")
+		return nil, nil, screentext.Wrap(fmt.Errorf("Leaf runtime has no storage sources"), "Leaf found no SD card to save to.")
 	}
 	flow := &CatDestinationFlow{
 		sources: sources, cfg: cfg, cfgPath: cfgPath, title: title, music: true,
@@ -153,7 +155,7 @@ func (flow *CatDestinationFlow) Activate(model *appui.DestinationModel) (bool, e
 	if model.Phase == appui.DestinationSources {
 		source, ok := flow.sources.ByID(item.Value)
 		if !ok || !source.Available() {
-			return false, fmt.Errorf("selected storage card is no longer mounted")
+			return false, screentext.Wrap(fmt.Errorf("selected storage card is no longer mounted"), chosenCardRemoved)
 		}
 		flow.selected = source
 		flow.targetIndex = 0
@@ -300,7 +302,7 @@ func (flow *CatDestinationFlow) loadDir(model *appui.DestinationModel, dir strin
 
 func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, error) {
 	if !flow.selected.Available() {
-		return false, fmt.Errorf("selected storage card was removed")
+		return false, screentext.Wrap(fmt.Errorf("selected storage card was removed"), chosenCardRemoved)
 	}
 	if err := catDestinationDirectorySafe(flow.root, flow.current, false); err != nil {
 		return false, err
@@ -327,7 +329,7 @@ func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, er
 
 func (flow *CatDestinationFlow) finalize(_ *appui.DestinationModel) (bool, error) {
 	if !flow.selected.Available() {
-		return false, fmt.Errorf("selected storage card was removed")
+		return false, screentext.Wrap(fmt.Errorf("selected storage card was removed"), chosenCardRemoved)
 	}
 	for _, target := range flow.targets {
 		dir := flow.chosenDirs[target.key]
@@ -340,7 +342,8 @@ func (flow *CatDestinationFlow) finalize(_ *appui.DestinationModel) (bool, error
 			}
 		}
 		if err := catDestinationDirectorySafe(root, dir, true); err != nil {
-			return false, fmt.Errorf("selected storage card changed before download: %w", err)
+			return false, screentext.Wrap(fmt.Errorf("selected storage card changed before download: %w", err),
+				"The SD card you chose changed. Choose the folder again.")
 		}
 	}
 	if flow.music {
@@ -438,6 +441,8 @@ func nearestExistingDirectory(path string) (string, error) {
 		}
 	}
 }
+
+const chosenCardRemoved = "The SD card you chose was removed. Insert it, then try again."
 
 func destinationSourceLabel(source leaf.Source) string {
 	if source.Primary {

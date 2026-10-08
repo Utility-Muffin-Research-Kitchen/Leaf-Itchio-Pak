@@ -1,6 +1,7 @@
 package leaf
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +39,10 @@ func AvailableBytes(path string) (uint64, error) {
 	return uint64(stats.Bavail) * uint64(stats.Bsize), nil
 }
 
+// ErrNoSpace is matched when a card has too little free space for a
+// transfer and its reserve.
+var ErrNoSpace = errors.New("insufficient free space")
+
 func RequireFreeSpace(path string, contentBytes int64) error {
 	if contentBytes <= 0 {
 		return nil
@@ -53,8 +58,8 @@ func RequireFreeSpace(path string, contentBytes int64) error {
 		return fmt.Errorf("check free space: %w", err)
 	}
 	if available < required {
-		return fmt.Errorf("insufficient free space: need %d bytes plus %d-byte reserve, have %d bytes",
-			contentBytes, StorageReserveBytes, available)
+		return fmt.Errorf("%w: need %d bytes plus %d-byte reserve, have %d bytes",
+			ErrNoSpace, contentBytes, StorageReserveBytes, available)
 	}
 	return nil
 }

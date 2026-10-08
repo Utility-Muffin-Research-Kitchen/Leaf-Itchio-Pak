@@ -48,7 +48,7 @@ func InspectRemote7z(client *http.Client, cdnURL string) (ZIPManifest, error) {
 
 	r, err := sevenzip.OpenReader(tmpPath)
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("sevenzip.OpenReader: %w", err)
+		return ZIPManifest{}, fmt.Errorf("sevenzip.OpenReader: %w", UnreadableArchive(err))
 	}
 	defer r.Close()
 
