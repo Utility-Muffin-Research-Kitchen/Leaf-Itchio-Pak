@@ -3,6 +3,7 @@ package catui
 import (
 	"reflect"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestScreenLayout960x720WithSubHeaderAndFooter(t *testing.T) {
@@ -93,11 +94,14 @@ func TestFooterGroupingAndNarrowFallback(t *testing.T) {
 		{Button: ButtonA, Label: "Confirm entered value", NarrowLabel: "Done", IsConfirm: true},
 	}
 	measure := func(value string) int { return len(value) * 10 }
-	wide := ResolveFooterGroups(hints, 1000, 30, 10, measure, measure)
+	metrics := func(available int) FooterMeasure {
+		return FooterMeasure{Available: available, Badge: 30, Margin: 5, Label: measure, ButtonText: measure}
+	}
+	wide := ResolveFooterGroups(hints, metrics(1000))
 	if wide.Left[0].Label != "Previous page" || wide.Right[0].Label != "Confirm entered value" {
 		t.Fatalf("wide labels = %+v", wide)
 	}
-	narrow := ResolveFooterGroups(hints, 360, 30, 10, measure, measure)
+	narrow := ResolveFooterGroups(hints, metrics(360))
 	if got := []string{narrow.Left[0].Label, narrow.Left[1].Label, narrow.Right[0].Label}; !reflect.DeepEqual(got, []string{"Prev", "Delete", "Done"}) {
 		t.Fatalf("narrow labels = %v", got)
 	}
@@ -106,6 +110,75 @@ func TestFooterGroupingAndNarrowFallback(t *testing.T) {
 	}
 	if narrow.Left[0].ButtonText != "L1/2" {
 		t.Fatalf("narrow button-text override = %q, want L1/2", narrow.Left[0].ButtonText)
+	}
+}
+
+func footerLabels(groups FooterGroups) []string {
+	labels := []string{}
+	for _, item := range groups.Items() {
+		labels = append(labels, item.Label)
+	}
+	return labels
+}
+
+// F6: when even narrow labels do not fit, the composer leaves out the
+// lowest-ranked optional hints first and never a hint without a rank.
+func TestFooterDropsRankedHintsBeforeRequiredOnes(t *testing.T) {
+	hints := []FooterHint{
+		{Button: ButtonB, Label: "Back"},
+		{Button: ButtonL1, ButtonText: "L1/R1", Label: "Img.", DropRank: 2},
+		{Button: ButtonA, Label: "Again"},
+		{Button: ButtonX, Label: "Manage"},
+		{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set", DropRank: 1},
+	}
+	measure := func(value string) int { return len(value) * 10 }
+	// Widths with a 30 px badge and 5 px margins: every hint 550, with "Set"
+	// 500, without Settings 410, and without the image hint as well 290.
+	cases := []struct {
+		width int
+		want  []string
+	}{
+		{550, []string{"Back", "Img.", "Again", "Manage", "Settings"}},
+		{520, []string{"Back", "Img.", "Again", "Manage", "Set"}},
+		{450, []string{"Back", "Img.", "Again", "Manage"}},
+		{300, []string{"Back", "Again", "Manage"}},
+		// Nothing left to drop: the required hints stay, and Cat's own
+		// overflow hides trailing items, never the leading Back.
+		{100, []string{"Back", "Again", "Manage"}},
+	}
+	for _, tc := range cases {
+		got := footerLabels(ResolveFooterGroups(hints, FooterMeasure{
+			Available: tc.width, Badge: 30, Margin: 5, Label: measure, ButtonText: measure,
+		}))
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("width %d: labels = %v, want %v", tc.width, got, tc.want)
+		}
+	}
+}
+
+// The estimate must match what cat_draw_footer draws, or Cat collapses a
+// footer the composer thought would fit into a +N item.
+func TestFooterMeasureMirrorsCatFooterLayout(t *testing.T) {
+	measure := FooterMeasure{
+		Available: 1000, Badge: 40, Margin: 10,
+		Label:      func(value string) int { return len(value) * 10 },
+		ButtonText: func(value string) int { return len(value) * 8 },
+		ButtonName: func(button Button) string {
+			if button == ButtonSelect {
+				return "SELECT"
+			}
+			return "B"
+		},
+	}
+	items := []FooterItem{
+		{Button: ButtonB, Label: "Back"},
+		{Button: ButtonStart, ButtonText: "STR", Label: "Set"},
+		{Button: ButtonSelect, Label: "Apply", IsConfirm: true},
+	}
+	// Left pill: 10 + (40+10+40+10) + 10 + (20+24+10+30+10) + 10 = 224.
+	// Right pill: 10 + (20+48+10+50+10) + 10 = 158, its badge from the name.
+	if got := measure.width(items); got != 224+158 {
+		t.Fatalf("footer width = %d, want %d", got, 224+158)
 	}
 }
 
@@ -195,5 +268,44 @@ func TestProgressTitleWrapsToTwoLinesAndEllipsizesTheRest(t *testing.T) {
 	}
 	if got := ellipsizeLine("Leafbound", 3, measure); got != "Leafbound" {
 		t.Fatalf("too narrow = %q, want the line unchanged", got)
+	}
+}
+
+// F9: a title wider than its column ends in "..." before the price column
+// instead of being cut mid-glyph.
+func TestEllipsizeTextCutsBetweenCharactersAndEndsInDots(t *testing.T) {
+	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
+	cases := []struct {
+		text  string
+		width int
+		want  string
+	}{
+		{"Glory Kill", 100, "Glory Kill"},
+		{"VoXide (Minecraft-like for PS1)", 200, "VoXide (Minecraft..."},
+		// No space or joiner before the dots.
+		{"Unnamed PSX Homebrew Game", 110, "Unnamed..."},
+		{"Lead \u200d\U0001F431 cat", 90, "Lead..."},
+		{"葉っぱの冒険と森の歌", 70, "葉っぱの..."},
+		// Too narrow for any character and the dots: leave it to the clip.
+		{"Glory Kill", 30, "Glory Kill"},
+		{"", 30, ""},
+	}
+	for _, tc := range cases {
+		got := ellipsizeText(tc.text, tc.width, measure)
+		if got != tc.want {
+			t.Errorf("ellipsizeText(%q, %d) = %q, want %q", tc.text, tc.width, got, tc.want)
+		}
+		if got != tc.text && measure(got) > tc.width {
+			t.Errorf("ellipsizeText(%q, %d) = %q is %d wide", tc.text, tc.width, got, measure(got))
+		}
+	}
+}
+
+func TestListRowSecondaryUsesTheRowTextColor(t *testing.T) {
+	if primary, secondary := listRowRoles(true); primary != RoleHighlightedText || secondary != RoleHighlightedText {
+		t.Fatalf("selected roles = %v, %v; want highlighted text for both", primary, secondary)
+	}
+	if primary, secondary := listRowRoles(false); primary != RoleText || secondary != RoleHint {
+		t.Fatalf("unselected roles = %v, %v; want text and hint", primary, secondary)
 	}
 }

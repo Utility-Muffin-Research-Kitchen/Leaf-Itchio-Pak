@@ -261,6 +261,21 @@ int catui_footer_height(void) {
     return catui__guard() == CATUI_OK ? cat_get_footer_height() : 0;
 }
 
+void catui_footer_metrics(int *available_w, int *badge, int *margin) {
+    int ok = catui__guard() == CATUI_OK;
+    /* Mirrors cat_draw_footer: screen-edge padding on both sides, round
+       badges of CAT__BUTTON_SIZE, and CAT__BUTTON_MARGIN between parts. */
+    int padding = ok ? cat_get_footer_height() - cat_device_scale(CAT__PILL_SIZE) : 0;
+    int available = ok ? cat_get_screen_width() - padding * 2 : 0;
+    if (available_w) *available_w = available > 0 ? available : 0;
+    if (badge) *badge = ok ? cat_device_scale(CAT__BUTTON_SIZE) : 0;
+    if (margin) *margin = ok ? cat_device_scale(CAT__BUTTON_MARGIN) : 0;
+}
+
+const char *catui_button_name(int button) {
+    return cat_button_name((cat_button)button);
+}
+
 int catui_draw_footer(const catui_footer_item *items, int count) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;

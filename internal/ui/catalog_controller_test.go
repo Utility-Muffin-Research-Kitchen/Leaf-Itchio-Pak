@@ -25,7 +25,7 @@ func TestCatalogControllerBindsFilteredGamesToCatModel(t *testing.T) {
 			{Title: "PSX Homebrew", URL: "https://example.invalid/psx", Platform: "PSX", IsFree: true},
 			{Title: "Game Boy Homebrew", URL: "https://example.invalid/gb", Platform: "GB", IsFree: true},
 		},
-		cacheReady: true, platformFilter: "PSX", ownedURLs: make(map[string]bool),
+		cacheReady: true, platformFilter: "PSX", sortMode: itchio.SortModeNew, ownedURLs: make(map[string]bool),
 	}
 	controller.rebuildView()
 	model := appui.NewMainListModel(nil)
@@ -33,8 +33,9 @@ func TestCatalogControllerBindsFilteredGamesToCatModel(t *testing.T) {
 	if model.State != appui.ListReady || len(model.Items) != 1 || model.Items[0].Title != "PSX Homebrew" {
 		t.Fatalf("Cat catalogue model = %#v", model)
 	}
-	if model.Platform != "PSX" {
-		t.Fatalf("platform label = %q, want PSX", model.Platform)
+	// The header uses the filter screen's names.
+	if model.Platform != "PlayStation" || model.Sort != "Newest" {
+		t.Fatalf("header labels = %q, %q; want PlayStation, Newest", model.Platform, model.Sort)
 	}
 }
 
@@ -484,7 +485,7 @@ func TestCatalogControllerHeaderShowsAllPlatformsOnUncachedPreview(t *testing.T)
 		{Title: "GB Game", URL: "https://example.invalid/gb", Platform: "GB"},
 	}
 	controller.SyncCatModel(model)
-	if model.Platform != "PSX" || len(model.Items) != 1 || model.Items[0].Title != "PSX Game" {
-		t.Fatalf("catalogue header = %q with %#v, want PSX over the PSX game", model.Platform, model.Items)
+	if model.Platform != "PlayStation" || len(model.Items) != 1 || model.Items[0].Title != "PSX Game" {
+		t.Fatalf("catalogue header = %q with %#v, want PlayStation over the PSX game", model.Platform, model.Items)
 	}
 }

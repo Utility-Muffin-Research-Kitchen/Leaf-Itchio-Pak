@@ -41,6 +41,8 @@ capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0
 capture detail 960 720 1 0
 capture detail 1280 800 0 5
+capture detail 960 720 1 2
+capture detail 960 720 1 5
 capture detail-price 960 720 1 0
 capture detail-donation 960 720 1 0
 capture detail-price 960 720 1 2
@@ -93,6 +95,7 @@ capture rename-states 1280 800 0 5
 capture rename-done 960 720 1 0
 capture settings 960 720 1 0
 capture settings 1280 800 0 5
+capture settings 960 720 1 2
 capture settings-confirm 960 720 1 0
 capture settings-message 960 720 1 2
 capture settings-notice 960 720 1 2
