@@ -1,5 +1,10 @@
 package appui
 
+import (
+	"unicode"
+	"unicode/utf8"
+)
+
 type SettingsState uint8
 
 const (
@@ -43,6 +48,16 @@ type SettingsRow struct {
 	Label, Value  string
 	Index         int
 	ActionEnabled bool
+}
+
+// ChoiceLabel shows a stored settings choice such as "auto" or "ask" in
+// sentence case, like the On/Off and Info/Debug values in the same list.
+func ChoiceLabel(value string) string {
+	first, size := utf8.DecodeRuneInString(value)
+	if size == 0 {
+		return value
+	}
+	return string(unicode.ToUpper(first)) + value[size:]
 }
 
 type SettingsIntent uint8

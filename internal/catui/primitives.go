@@ -3,6 +3,8 @@ package catui
 import (
 	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Shared logical spacing. These are scaled once by NewComposer; screen code
@@ -69,6 +71,10 @@ type FooterHint struct {
 	Label            string
 	NarrowLabel      string
 	IsConfirm        bool
+	// DropRank marks a hint the composer may leave out when the footer does
+	// not fit even with narrow labels: rank 1 goes first, then 2, and so on.
+	// A hint with rank 0 is always shown.
+	DropRank int
 }
 
 type FooterGroups struct {
@@ -82,45 +88,103 @@ func (g FooterGroups) Items() []FooterItem {
 	return items
 }
 
-// ResolveFooterGroups preserves Catastrophe's left/action and right/confirm
-// grouping, switching all labels to their narrow variants when the estimated
-// pixel width would overlap. Catastrophe remains the final footer renderer.
-func ResolveFooterGroups(hints []FooterHint, availableWidth, badgeWidth, itemGap int,
-	measureLabel, measureButton func(string) int) FooterGroups {
-	labels := make([]string, len(hints))
-	buttonTexts := make([]string, len(hints))
-	for i := range hints {
-		labels[i] = hints[i].Label
-		buttonTexts[i] = hints[i].ButtonText
-	}
-	estimate := func() int {
-		total := itemGap
-		for i := range hints {
-			resolvedBadgeWidth := badgeWidth
-			if buttonTexts[i] != "" {
-				// Cat renders multi-character overrides in its tiny font with a
-				// half-badge inset.
-				resolvedBadgeWidth = badgeWidth/2 + measureButton(buttonTexts[i])
+// FooterMeasure describes cat_draw_footer in final pixels: the width the
+// footer may fill, the round button badge, the margin around badges, labels,
+// and groups, and how to measure label and badge text.
+type FooterMeasure struct {
+	Available, Badge, Margin int
+	Label, ButtonText        func(string) int
+	// ButtonName is the badge text Cat draws for a hint without ButtonText.
+	// Without it, such a hint is measured as a round badge.
+	ButtonName func(Button) string
+}
+
+// width mirrors cat_draw_footer. Each group is an outer pill with a margin at
+// both ends and between items. An item is its badge, a margin, its label, and
+// a margin. A single-character badge is round; a longer one is half a round
+// badge plus its text in Cat's tiny font.
+func (measure FooterMeasure) width(items []FooterItem) int {
+	total := 0
+	for _, confirm := range []bool{false, true} {
+		count := 0
+		for _, item := range items {
+			if item.IsConfirm != confirm {
+				continue
 			}
-			total += resolvedBadgeWidth + measureLabel(labels[i]) + itemGap
+			text := item.ButtonText
+			if text == "" && measure.ButtonName != nil {
+				text = measure.ButtonName(item.Button)
+			}
+			badge := measure.Badge
+			if text != "" && utf8.RuneCountInString(text) != 1 {
+				badge = measure.Badge/2 + measure.ButtonText(text)
+			}
+			total += badge + measure.Margin + measure.Label(item.Label) + measure.Margin
+			if count > 0 {
+				total += measure.Margin
+			}
+			count++
 		}
-		return total
+		if count > 0 {
+			total += measure.Margin * 2
+		}
 	}
-	if estimate() > availableWidth {
+	return total
+}
+
+// ResolveFooterGroups preserves Catastrophe's left/action and right/confirm
+// grouping, switching all labels to their narrow variants when the footer
+// would not fit. When even narrow labels do not fit, it leaves out hints by
+// DropRank, lowest first, and tries wide labels again, so Cat never has to
+// collapse the footer into a synthetic +N item. Catastrophe remains the
+// final footer renderer.
+func ResolveFooterGroups(hints []FooterHint, measure FooterMeasure) FooterGroups {
+	shown := make([]bool, len(hints))
+	for i := range hints {
+		shown[i] = true
+	}
+	resolve := func(narrow bool) []FooterItem {
+		items := make([]FooterItem, 0, len(hints))
+		for i, hint := range hints {
+			if !shown[i] {
+				continue
+			}
+			item := FooterItem{Button: hint.Button, ButtonText: hint.ButtonText, Label: hint.Label, IsConfirm: hint.IsConfirm}
+			if narrow && hint.NarrowLabel != "" {
+				item.Label = hint.NarrowLabel
+			}
+			if narrow && hint.NarrowButtonText != "" {
+				item.ButtonText = hint.NarrowButtonText
+			}
+			items = append(items, item)
+		}
+		return items
+	}
+	dropNext := func() bool {
+		drop := -1
 		for i := range hints {
-			if hints[i].NarrowLabel != "" {
-				labels[i] = hints[i].NarrowLabel
+			if shown[i] && hints[i].DropRank > 0 && (drop < 0 || hints[i].DropRank < hints[drop].DropRank) {
+				drop = i
 			}
-			if hints[i].NarrowButtonText != "" {
-				buttonTexts[i] = hints[i].NarrowButtonText
-			}
+		}
+		if drop >= 0 {
+			shown[drop] = false
+		}
+		return drop >= 0
+	}
+	var items []FooterItem
+	for {
+		if items = resolve(false); measure.width(items) <= measure.Available {
+			break
+		}
+		if items = resolve(true); measure.width(items) <= measure.Available || !dropNext() {
+			break
 		}
 	}
 
 	groups := FooterGroups{}
-	for i, hint := range hints {
-		item := FooterItem{Button: hint.Button, ButtonText: buttonTexts[i], Label: labels[i], IsConfirm: hint.IsConfirm}
-		if hint.IsConfirm {
+	for _, item := range items {
+		if item.IsConfirm {
 			groups.Right = append(groups.Right, item)
 		} else {
 			groups.Left = append(groups.Left, item)
@@ -171,12 +235,13 @@ func (ui *Composer) BeginScreen(spec ScreenSpec) (*ScreenFrame, error) {
 	if err != nil {
 		return nil, err
 	}
-	groups := ResolveFooterGroups(spec.Footer, width-ui.BasePadding*2,
-		ui.ctx.Scale(34), ui.ctx.Scale(14), func(text string) int {
-			return ui.ctx.MeasureText(FontSmall, text)
-		}, func(text string) int {
-			return ui.ctx.MeasureText(FontTiny, text)
-		})
+	available, badge, margin := ui.ctx.FooterMetrics()
+	groups := ResolveFooterGroups(spec.Footer, FooterMeasure{
+		Available: available, Badge: badge, Margin: margin,
+		Label:      func(text string) int { return ui.ctx.MeasureText(FontSmall, text) },
+		ButtonText: func(text string) int { return ui.ctx.MeasureText(FontTiny, text) },
+		ButtonName: ui.ctx.ButtonName,
+	})
 	footer := groups.Items()
 	layout := ComputeScreenLayout(LayoutMetrics{
 		Width:            width,
@@ -276,10 +341,7 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 		}
 	}
 	return ui.withClip(rect, func() error {
-		color := ui.ctx.ThemeColor(RoleText)
-		if selected {
-			color = ui.ctx.ThemeColor(RoleHighlightedText)
-		}
+		primaryRole, secondaryRole := listRowRoles(selected)
 		pad := ui.ctx.Scale(12)
 		x := rect.X + pad
 		primaryY := rect.Y + (rect.H-ui.ctx.FontHeight(FontMedium))/2
@@ -291,7 +353,7 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 				secondaryY := rect.Y + (rect.H-ui.ctx.FontHeight(FontTiny))/2
 				if _, err := ui.ctx.DrawText(FontTiny, secondary,
 					rect.X+rect.W-pad-secondaryWidth, secondaryY,
-					ui.ctx.ThemeColor(RoleHint), secondaryWidth, true); err != nil {
+					ui.ctx.ThemeColor(secondaryRole), secondaryWidth, true); err != nil {
 					return err
 				}
 			}
@@ -299,9 +361,62 @@ func (ui *Composer) DrawListRow(rect Rect, primary, secondary string, selected b
 		if primary == "" || maxWidth <= 0 {
 			return nil
 		}
-		_, err := ui.ctx.DrawFallbackText(FontMedium, primary, x, primaryY, color, maxWidth)
+		_, err := ui.DrawEllipsizedText(FontMedium, primary, x, primaryY, ui.ctx.ThemeColor(primaryRole), maxWidth)
 		return err
 	})
+}
+
+// listRowRoles colors a list row's title and its badge or price. On the
+// highlighted row both use the highlighted text color: the hint color is
+// barely readable on the highlight.
+func listRowRoles(selected bool) (primary, secondary ThemeRole) {
+	if selected {
+		return RoleHighlightedText, RoleHighlightedText
+	}
+	return RoleText, RoleHint
+}
+
+// DrawEllipsizedText draws text with the fallback fonts and ends it in "..."
+// when it is wider than maxWidth.
+func (ui *Composer) DrawEllipsizedText(tier FontTier, text string, x, y int, color Color, maxWidth int) (int, error) {
+	text = ellipsizeText(text, maxWidth, func(value string) int {
+		return ui.ctx.MeasureFallbackText(tier, value)
+	})
+	return ui.ctx.DrawFallbackText(tier, text, x, y, color, maxWidth)
+}
+
+// ellipsis matches what Catastrophe's cat_draw_text_ellipsized appends.
+const ellipsis = "..."
+
+// ellipsizeText shortens text to the longest start that fits maxWidth with
+// "..." after it. It cuts between characters, and drops spaces and zero-width
+// joiners before the dots. When not even one character fits with the dots,
+// it returns text unchanged for the draw call's clip.
+func ellipsizeText(text string, maxWidth int, measure func(string) int) string {
+	if text == "" || maxWidth <= 0 || measure(text) <= maxWidth {
+		return text
+	}
+	cuts := make([]int, 0, len(text))
+	for offset := range text {
+		cuts = append(cuts, offset)
+	}
+	// cuts[0] is the empty start; find the last cut whose start still fits.
+	low, high := 0, len(cuts)-1
+	for low < high {
+		middle := (low + high + 1) / 2
+		if measure(text[:cuts[middle]]+ellipsis) <= maxWidth {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	start := strings.TrimRightFunc(text[:cuts[low]], func(r rune) bool {
+		return unicode.IsSpace(r) || r == '‍'
+	})
+	if start == "" {
+		return text
+	}
+	return start + ellipsis
 }
 
 func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycler bool) error {
@@ -470,12 +585,26 @@ func (ui *Composer) DrawWarningCover(bounds Rect, title, body string) error {
 
 func (ui *Composer) DrawProgressView(bounds Rect, title, detail string, progress float32) error {
 	inner := insetRect(bounds, ui.ModalPadding, ui.ModalPadding)
-	y := inner.Y + maxInt(0, (inner.H-ui.ctx.Scale(84))/2)
-	if _, err := ui.ctx.DrawFallbackText(FontLarge, title, inner.X, y,
-		ui.ctx.ThemeColor(RoleEmphasis), inner.W); err != nil {
-		return err
+	titleHeight := ui.ctx.FontHeight(FontLarge)
+	// The title says what is happening to which file ("Inspecting
+	// <upload>.zip"). A long name wraps instead of being cut off; a
+	// one-line title keeps its place.
+	titles := progressTitleLines(title, inner.W, func(value string) int {
+		return ui.ctx.MeasureFallbackText(FontLarge, value)
+	})
+	extra := maxInt(0, len(titles)-1) * titleHeight
+	y := inner.Y + maxInt(0, (inner.H-ui.ctx.Scale(84)-extra)/2)
+	for _, line := range titles {
+		if _, err := ui.ctx.DrawFallbackText(FontLarge, line, inner.X, y,
+			ui.ctx.ThemeColor(RoleEmphasis), inner.W); err != nil {
+			return err
+		}
+		y += titleHeight
 	}
-	y += ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+	if len(titles) == 0 {
+		y += titleHeight
+	}
+	y += ui.BasePadding / 2
 	if _, err := ui.ctx.DrawText(FontSmall, detail, inner.X, y,
 		ui.ctx.ThemeColor(RoleHint), inner.W, true); err != nil {
 		return err
@@ -731,7 +860,7 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 	// stays readable with a larger font. In short bounds, the last line that
 	// fits is ellipsized.
 	maxLines := 1 + maxInt(0, inner.H-titleHeight-gap-detailHeight)/lineHeight
-	lines := stateDetailLines(detail, inner.W, maxLines, func(value string) int {
+	lines := fitLines(detail, inner.W, maxLines, func(value string) int {
 		return ui.ctx.MeasureText(FontSmall, value)
 	})
 	total := titleHeight + gap + detailHeight + maxInt(0, len(lines)-1)*lineHeight
@@ -760,19 +889,54 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 	return nil
 }
 
-// stateDetailLines wraps a state's detail to width and keeps at most maxLines
-// lines. When the detail needs more, the last kept line carries the rest so
-// the draw call ellipsizes it instead of dropping words silently.
-func stateDetailLines(detail string, width, maxLines int, measure func(string) int) []string {
-	if detail == "" {
+// fitLines wraps a message to width and keeps at most maxLines lines. When
+// the message needs more, the last kept line carries the rest so it can be
+// ellipsized instead of dropping words silently: DrawText does that itself,
+// fallback-font text goes through ellipsizeLine.
+func fitLines(text string, width, maxLines int, measure func(string) int) []string {
+	if text == "" {
 		return nil
 	}
-	lines := wrapText(detail, width, measure)
+	lines := wrapText(text, width, measure)
 	maxLines = maxInt(1, maxLines)
 	if len(lines) > maxLines {
 		lines = append(lines[:maxLines-1], strings.Join(lines[maxLines-1:], " "))
 	}
 	return lines
+}
+
+// progressTitleLines fits a progress title on at most two lines.
+func progressTitleLines(title string, width int, measure func(string) int) []string {
+	lines := fitLines(title, width, 2, measure)
+	if len(lines) > 0 {
+		lines[len(lines)-1] = ellipsizeLine(lines[len(lines)-1], width, measure)
+	}
+	return lines
+}
+
+// ellipsizeLine shortens line to width with a trailing "...", the way Cat
+// ellipsizes DrawText, for fallback-font text that Cat only clips. A width
+// too narrow for "..." leaves the line for the draw call to clip.
+func ellipsizeLine(line string, width int, measure func(string) int) string {
+	if measure(line) <= width {
+		return line
+	}
+	const ellipsis = "..."
+	target := width - measure(ellipsis)
+	if target <= 0 {
+		return line
+	}
+	runes := []rune(line)
+	best, lo, hi := 0, 0, len(runes)
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if measure(string(runes[:mid])) <= target {
+			best, lo = mid, mid+1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return strings.TrimRight(string(runes[:best]), " ") + ellipsis
 }
 
 func (ui *Composer) withClip(rect Rect, draw func() error) error {

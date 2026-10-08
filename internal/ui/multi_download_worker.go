@@ -97,7 +97,8 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			atomic.StoreInt32(&s.state, int32(multiDLCancelled))
 			return
 		}
-		s.err = fmt.Errorf("%w. Press A to continue without suspend protection or B to cancel", guardErr)
+		logger.Warn("multi-download: no suspend protection: %v", guardErr)
+		s.err = inhibitBlockedError(guardErr)
 		s.inhibitBlocked.Store(true)
 		atomic.StoreInt32(&s.state, int32(multiDLError))
 		return
@@ -112,6 +113,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 	// this batch replaces another game's file or another file of the batch.
 	targets, planErr := planInstallTargets(s.inv, s.cfg, s.game, s.downloads)
 	if planErr != nil {
+		logger.Error("multi-download: plan: %v", planErr)
 		s.err = planErr
 		atomic.StoreInt32(&s.state, int32(multiDLError))
 		return
@@ -129,6 +131,7 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		}
 		if _, _, preflightErr := validatePlannedPath(dl.DestPath); preflightErr != nil {
 			s.err = fmt.Errorf("download destination changed before file %d: %w", i+1, preflightErr)
+			logger.Error("multi-download: %v", s.err)
 			atomic.StoreInt32(&s.state, int32(multiDLError))
 			return
 		}

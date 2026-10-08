@@ -13,7 +13,9 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -123,14 +125,16 @@ func (flow *CatArchiveFlow) Sync(model *appui.DownloadProgressModel) bool {
 	select {
 	case update := <-flow.updates:
 		if update.err != nil {
+			logger.Error("cat archive: inspect %s: %v", flow.upload.Filename, update.err)
 			model.State = appui.DownloadProgressError
-			model.Detail = update.err.Error()
+			model.Detail = screentext.FromError(update.err)
 			return true
 		}
 		flow.plan = update.plan
 		if err := ValidateArchiveManifest(flow.plan.Manifest, DefaultArchiveLimits); err != nil {
+			logger.Warn("cat archive: %s: %v", flow.upload.Filename, err)
 			model.State = appui.DownloadProgressError
-			model.Detail = err.Error()
+			model.Detail = screentext.FromError(err)
 			return true
 		}
 		if !flow.plan.Manifest.HasROMs() && !flow.plan.Manifest.HasMusic() {

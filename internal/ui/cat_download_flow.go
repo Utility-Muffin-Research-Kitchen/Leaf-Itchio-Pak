@@ -15,6 +15,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -284,7 +285,7 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 	case update := <-flow.updates:
 		if update.err != nil {
 			logger.Error("cat download discovery: %v", update.err)
-			model.SetError(update.err.Error())
+			model.SetError(screentext.FromError(update.err))
 			return true
 		}
 		switch update.kind {
@@ -311,7 +312,7 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 				}
 				flow.mode = catDownloadModeFormats
 				flow.uploads = []roms.Upload{update.upload}
-				model.SetChoices("Type not detected — choose a format", []appui.DownloadChoice{{
+				model.SetChoices("Type not detected. Choose a format", []appui.DownloadChoice{{
 					Title: update.upload.Filename, Badge: "P8.PNG",
 					FormatOptions: manualFormatLabels(),
 				}})

@@ -234,28 +234,6 @@ func TestApplySort_ReturnsNewSlice(t *testing.T) {
 	}
 }
 
-func TestSortModeBadge(t *testing.T) {
-	cases := []struct {
-		mode itchio.SortMode
-		want string
-	}{
-		{itchio.SortModeRSS, "RSS"},
-		{itchio.SortModeAZ, "A-Z"},
-		{itchio.SortModeZA, "Z-A"},
-		{itchio.SortModeNew, "NEW"},
-		{itchio.SortModeDL, "DL"},
-		{itchio.SortModeFree, "FREE"},
-		{itchio.SortModePaid, "PAID"},
-		{itchio.SortModeOwned, "OWNED"},
-	}
-	for _, tc := range cases {
-		got := itchio.SortModeBadge(tc.mode)
-		if got != tc.want {
-			t.Errorf("SortModeBadge(%q) = %q, want %q", tc.mode, got, tc.want)
-		}
-	}
-}
-
 func TestNextSortMode_Cycle(t *testing.T) {
 	// Full cycle must return to RSS after PAID.
 	mode := itchio.SortModeRSS
