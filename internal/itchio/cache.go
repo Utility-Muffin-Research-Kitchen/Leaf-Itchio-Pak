@@ -63,7 +63,7 @@ func LoadGamesCache(path string) (*GameCache, error) {
 	}
 	for i := range cache.Games {
 		g := &cache.Games[i]
-		if g.Title == "" || !hasLetter(g.Title) {
+		if !hasDisplayableChar(g.Title) {
 			g.Title = SlugToTitle(g.URL)
 		}
 	}

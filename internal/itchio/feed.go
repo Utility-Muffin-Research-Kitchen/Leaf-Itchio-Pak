@@ -11,8 +11,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
@@ -123,9 +125,10 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-// SlugToTitle derives a display title from the URL slug when the RSS title is
-// empty. It extracts the path segment after ".itch.io/", splits on hyphens and
-// underscores, and capitalises the first letter of each word.
+// SlugToTitle derives a display title from the URL slug when the RSS title has
+// nothing to draw (see hasDisplayableChar). It extracts the path segment after
+// ".itch.io/", splits on hyphens and underscores, and capitalises the first
+// letter of each word.
 func SlugToTitle(gameURL string) string {
 	s := gameURL
 	if idx := strings.Index(s, ".itch.io/"); idx >= 0 {
@@ -143,14 +146,52 @@ func SlugToTitle(gameURL string) string {
 	return strings.Join(words, " ")
 }
 
-// hasLetter reports whether s contains at least one Unicode letter.
-func hasLetter(s string) bool {
+// hasDisplayableChar reports whether s has something to draw: a letter,
+// mark, number, punctuation or symbol, emoji included. Whitespace and
+// control, format, private-use and unassigned code points draw nothing, and
+// U+FFFD only stands in for bytes that failed to decode. This goes by Unicode
+// category, not font coverage; the bundled fonts include an emoji fallback.
+func hasDisplayableChar(s string) bool {
 	for _, r := range s {
-		if unicode.IsLetter(r) {
+		if r != utf8.RuneError && unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S) {
 			return true
 		}
 	}
 	return false
+}
+
+// slugFallbackLog remembers which items one fetch has already logged as
+// using the slug fallback. A refresh parses the same item many times: games
+// are listed in several feeds, and past the last page itch.io repeats it.
+type slugFallbackLog struct {
+	mu     sync.Mutex
+	logged map[string]bool
+}
+
+type slugFallbackLogKey struct{}
+
+func withSlugFallbackLog(ctx context.Context) context.Context {
+	return context.WithValue(ctx, slugFallbackLogKey{}, &slugFallbackLog{logged: make(map[string]bool)})
+}
+
+func slugFallbackLogFrom(ctx context.Context) *slugFallbackLog {
+	fallbacks, _ := ctx.Value(slugFallbackLogKey{}).(*slugFallbackLog)
+	return fallbacks
+}
+
+// logSlugFallback logs an item's slug fallback once per fetch, at debug
+// level: an unreadable title is the developer's choice, not an app fault.
+func logSlugFallback(ctx context.Context, gameURL, rawTitle, fallback string) {
+	if fallbacks := slugFallbackLogFrom(ctx); fallbacks != nil {
+		fallbacks.mu.Lock()
+		logged := fallbacks.logged[gameURL]
+		fallbacks.logged[gameURL] = true
+		fallbacks.mu.Unlock()
+		if logged {
+			return
+		}
+	}
+	logger.Debug("feed: item %s has no readable title %q, using slug fallback %q", gameURL, rawTitle, fallback)
 }
 
 func parseAuthor(gameURL string) string {
@@ -204,6 +245,9 @@ func (c *Client) FetchGamesFromURL(url string) ([]Game, error) {
 // transient transport/server failures are retried, and both requests and retry
 // waits stop immediately when ctx is cancelled.
 func (c *Client) FetchGamesFromURLContext(ctx context.Context, url string) ([]Game, error) {
+	if slugFallbackLogFrom(ctx) == nil {
+		ctx = withSlugFallbackLog(ctx)
+	}
 	var lastErr error
 	for attempt := 0; attempt <= feedMaxRetries; attempt++ {
 		if attempt > 0 {
@@ -266,9 +310,10 @@ func (c *Client) fetchGamesFromURLOnce(ctx context.Context, url string) ([]Game,
 	for _, item := range feed.Items {
 		price := parsePrice(item.Price)
 		title := parseTitle(item.Title)
-		if title == "" || !hasLetter(title) {
-			title = SlugToTitle(item.Link)
-			logger.Warn("feed: item %s has no readable title %q, using slug fallback %q", item.Link, parseTitle(item.Title), title)
+		if !hasDisplayableChar(title) {
+			fallback := SlugToTitle(item.Link)
+			logSlugFallback(ctx, item.Link, title, fallback)
+			title = fallback
 		}
 		games = append(games, Game{
 			Title:       title,
@@ -376,7 +421,7 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 		return nil, ctx.Err()
 	default:
 	}
-	ctx, cancel := context.WithCancel(withCooldownBudget(ctx, refreshCooldownBudget))
+	ctx, cancel := context.WithCancel(withSlugFallbackLog(withCooldownBudget(ctx, refreshCooldownBudget)))
 	defer cancel()
 
 	// Enumerate all (platform, slug) pairs.
