@@ -25,8 +25,11 @@ const (
 type ManageItem struct {
 	Kind                 ManageItemKind
 	Label, Detail, Badge string
-	FileIndex            int
-	Enabled              bool
+	// Note is a second line under Label, such as the archive member a file
+	// came from.
+	Note      string
+	FileIndex int
+	Enabled   bool
 }
 
 type ManageIntent uint8

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -72,7 +73,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 		}
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemFile, Label: label, Detail: rel, Badge: badge,
-			FileIndex: index, Enabled: enabled,
+			Note: memberNote(file.SourceMember, label), FileIndex: index, Enabled: enabled,
 		})
 	}
 	if leftOver := flow.leftOverIndices(); len(leftOver) > 0 {
@@ -112,6 +113,16 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 		})
 	}
 	model.SetItems(fmt.Sprintf("%d managed file(s) · source-owned paths only", len(entry.Files)), items)
+}
+
+// memberNote names the archive member a file came from, when its name on the
+// card does not already say so: two builds in one archive can install under
+// one title name.
+func memberNote(member, installedName string) string {
+	if member == "" || strings.EqualFold(path.Base(member), installedName) {
+		return ""
+	}
+	return "From " + member
 }
 
 func (flow *CatManageFlow) indicesAvailable(indices []int) bool {

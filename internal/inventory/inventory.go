@@ -84,6 +84,11 @@ type DownloadedFile struct {
 	UnifiedName   bool      `json:"unified_name,omitempty"`
 	FileType      string    `json:"file_type,omitempty"`
 	SourceArchive string    `json:"source_archive,omitempty"`
+	// SourceMember is the path inside SourceArchive the file was extracted
+	// from, such as "Glory Hunters 1.3 EZ IV Patched.gba" for a file
+	// installed as "Glory Hunters.gba". Empty for files that were not in an
+	// archive, files the app wrote itself, and older inventories.
+	SourceMember string `json:"source_member,omitempty"`
 
 	// LeftOver marks a file of an upload that its latest reinstall did not
 	// write, such as a track an older version named differently. Manage
