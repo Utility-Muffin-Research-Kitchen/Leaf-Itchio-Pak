@@ -39,3 +39,51 @@ func TestCatPollDelayPollsForEveryWorkerAScreenWaitsOn(t *testing.T) {
 		})
 	}
 }
+
+// F3: after a download or a Manage rename the screen said "Requesting Leaf
+// library rescan…" for 12 to 42 s on the device. jawakad answered within the
+// IPC client's 2 s deadline, but nothing asked for a frame while the answer
+// was outstanding, so it was shown only after the next button press or at
+// the next wall-clock minute.
+func TestCatPollDelayPollsWhileALibraryRescanRequestIsOutstanding(t *testing.T) {
+	milliseconds, poll := catPollDelay(catPollState{LibraryScanRequested: true})
+	if !poll || milliseconds > 50 {
+		t.Fatalf("catPollDelay(rescan requested) = %d ms, poll=%v; want a poll within 50 ms", milliseconds, poll)
+	}
+}
+
+// Settings shows "Checking your itch.io account…" until its worker reports
+// back, the same wait as the rescan status.
+func TestCatPollDelayPollsWhileSettingsChecksTheAccount(t *testing.T) {
+	milliseconds, poll := catPollDelay(catPollState{AccountChecking: true})
+	if !poll || milliseconds > 100 {
+		t.Fatalf("catPollDelay(account check) = %d ms, poll=%v; want a poll within 100 ms", milliseconds, poll)
+	}
+}
+
+// The loop must come back by the earliest time any worker needs, so a slow
+// poll for one worker never delays a faster one.
+func TestCatPollDelayUsesTheShortestDelayInFlight(t *testing.T) {
+	tests := []struct {
+		name  string
+		state catPollState
+		want  uint32
+	}{
+		{"rescan during a background catalogue build",
+			catPollState{CatalogBuilding: true, LibraryScanRequested: true}, 50},
+		{"rescan while a slow GIF shows",
+			catPollState{Animated: true, AnimationIn: 400 * time.Millisecond, LibraryScanRequested: true}, 50},
+		{"cover art during the sign-in countdown",
+			catPollState{SignInWaiting: true, ImagesLoading: true}, 50},
+		{"GIF frame sooner than cover art polling",
+			catPollState{Animated: true, AnimationIn: 20 * time.Millisecond, ImagesLoading: true}, 20},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			milliseconds, poll := catPollDelay(test.state)
+			if !poll || milliseconds != test.want {
+				t.Fatalf("catPollDelay = %d ms, poll=%v; want %d ms", milliseconds, poll, test.want)
+			}
+		})
+	}
+}

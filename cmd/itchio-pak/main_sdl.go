@@ -301,6 +301,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	downloadScanStarted := false
+	downloadScansPending := 0
 	downloadLibraryStatus := ""
 	type managementScanResult struct {
 		manage  *appui.ManageModel
@@ -585,6 +586,36 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		route = catRouteDownloadProgress
 		return nil
 	}
+	// syncDownloadScans collects rescan answers on every pass, not only on
+	// the progress screen, so an answer that arrives after you leave it still
+	// ends the wait that keeps the loop polling and holds sleep.
+	syncDownloadScans := func() bool {
+		changed := false
+		for {
+			select {
+			case result := <-libraryScanResults:
+				if downloadScansPending > 0 {
+					downloadScansPending--
+				}
+				if result.generation != downloadGeneration {
+					continue
+				}
+				if result.err != nil {
+					logger.Warn("download: automatic library rescan failed: %v", result.err)
+					downloadLibraryStatus = "ROM installed · automatic rescan failed; use Rescan in Leaf."
+				} else if strings.Contains(strings.ToLower(result.message), "queued") {
+					logger.Info("download: Leaf library rescan queued")
+					downloadLibraryStatus = "Leaf library rescan queued."
+				} else {
+					logger.Info("download: Leaf library rescan requested")
+					downloadLibraryStatus = "Leaf library rescan requested."
+				}
+				changed = true
+			default:
+				return changed
+			}
+		}
+	}
 	syncDownloadProgress := func() {
 		if route != catRouteDownloadProgress || downloadBackend == nil || downloadProgressModel == nil {
 			return
@@ -600,6 +631,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		if downloadBackend.CatNeedsLibraryScan() && len(titleGroups) > 0 && !downloadScanStarted {
 			downloadScanStarted = true
+			downloadScansPending++
 			downloadLibraryStatus = "Requesting Leaf library rescan…"
 			generation := downloadGeneration
 			go func() {
@@ -610,28 +642,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				_ = ctx.Wake()
 			}()
 		}
-		for {
-			select {
-			case result := <-libraryScanResults:
-				if result.generation != downloadGeneration {
-					continue
-				}
-				if result.err != nil {
-					logger.Warn("download: automatic library rescan failed: %v", result.err)
-					downloadLibraryStatus = "ROM installed · automatic rescan failed; use Rescan in Leaf."
-				} else if strings.Contains(strings.ToLower(result.message), "queued") {
-					logger.Info("download: Leaf library rescan queued")
-					downloadLibraryStatus = "Leaf library rescan queued."
-				} else {
-					logger.Info("download: Leaf library rescan requested")
-					downloadLibraryStatus = "Leaf library rescan requested."
-				}
-			default:
-				snapshot.LibraryStatus = downloadLibraryStatus
-				*downloadProgressModel = snapshot
-				return
-			}
-		}
+		snapshot.LibraryStatus = downloadLibraryStatus
+		*downloadProgressModel = snapshot
 	}
 	var startDownloadPlan func(*ui.CatDownloadPlan) error
 	var handleArchiveAction func(ui.CatArchiveAction) error
@@ -892,6 +904,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				redraw = true
 			}
 		}
+		if syncDownloadScans() {
+			redraw = true
+		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			syncDownloadProgress()
 			redraw = true
@@ -913,6 +928,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				break
 			}
 			if event.Wake {
+				// A worker posted a result, maybe after this pass synced.
+				// Come straight back to collect it rather than idle in
+				// Present: this event was the only signal that it is there.
+				ctx.RequestFrame()
 				redraw = true
 				continue
 			}
@@ -1297,6 +1316,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				redraw = true
 			}
 		}
+		if syncDownloadScans() {
+			redraw = true
+		}
 		if route == catRouteDownloadProgress && downloadBackend != nil {
 			syncDownloadProgress()
 			redraw = true
@@ -1313,7 +1335,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			busy = busy || downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading
 			busy = busy || archiveInspectModel != nil && archiveInspectModel.State == appui.DownloadProgressRunning
 			busy = busy || downloadProgressModel != nil && downloadProgressModel.State == appui.DownloadProgressRunning
-			busy = busy || downloadLibraryStatus == "Requesting Leaf library rescan…"
+			busy = busy || downloadScansPending > 0
 			busy = busy || managementScansPending > 0
 			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
 			busy = busy || settingsFlow != nil && settingsFlow.Busy()
@@ -1398,7 +1420,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			SignInWaiting:   route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting,
 			SignInChecking: route == catRouteSignIn && signInModel != nil &&
 				(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking),
-			CatalogBuilding: list.IsBusy(),
+			CatalogBuilding:      list.IsBusy(),
+			LibraryScanRequested: downloadScansPending > 0 || managementScansPending > 0,
+			AccountChecking:      settingsFlow.Busy(),
 		}); poll {
 			ctx.RequestFrameIn(milliseconds)
 			redraw = true
