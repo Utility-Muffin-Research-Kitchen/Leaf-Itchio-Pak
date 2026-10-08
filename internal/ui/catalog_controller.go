@@ -44,10 +44,11 @@ type CatalogController struct {
 	err          error
 	pageUpdateCh chan pageResult
 
-	cachedGames []itchio.Game
-	cacheReady  bool
-	cachePath   string
-	viewGames   []itchio.Game
+	cachedGames  []itchio.Game
+	cacheReady   bool
+	cachePath    string
+	previewGames []itchio.Game // live feed page shown until the cache is ready
+	viewGames    []itchio.Game
 
 	inv           *inventory.Inventory
 	inventoryPath string
@@ -148,7 +149,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		} else {
 			logger.Debug("cache: file exists but contains no games, using live feed")
 		}
-		go controller.loadPage(1, "")
+		go controller.loadPage(1)
 		go controller.buildCache()
 	}
 	return controller
@@ -251,10 +252,10 @@ func (controller *CatalogController) ApplyDetailAccess(game *appui.DetailGame) {
 	game.CanDownload = game.IsFree || signedIn && (game.Owned || !controller.ownedKnown())
 }
 
-func (controller *CatalogController) loadPage(page int, query string) {
+func (controller *CatalogController) loadPage(page int) {
 	controller.loading.Store(true)
-	logger.Debug("feed: loading page %d query=%q", page, query)
-	games, err := controller.client.FetchGames(page, query)
+	logger.Debug("feed: loading page %d", page)
+	games, err := controller.client.FetchGames(page)
 	if err != nil {
 		logger.Error("feed: page %d error: %v", page, err)
 	} else {
@@ -288,6 +289,9 @@ func (controller *CatalogController) consumeUpdates() {
 	case games := <-controller.cacheUpdateCh:
 		controller.cachedGames = games
 		controller.cacheReady = true
+		// The only error the list shows is the preview's, and the catalogue
+		// now replaces the preview.
+		controller.err = nil
 		controller.needsRebuild = false
 		controller.rebuildView()
 	default:
@@ -301,9 +305,14 @@ func (controller *CatalogController) consumeUpdates() {
 	select {
 	case result := <-controller.pageUpdateCh:
 		controller.loading.Store(false)
-		controller.viewGames = result.games
-		controller.err = result.err
-		controller.cursor = 0
+		controller.previewGames = result.games
+		// A preview that returns after the catalogue is ready is not on
+		// screen, so its error and the cursor reset do not apply.
+		if !controller.cacheReady {
+			controller.err = result.err
+			controller.rebuildView()
+			controller.cursor = 0
+		}
 	default:
 	}
 	if controller.needsRebuild {
@@ -318,7 +327,9 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 	}
 	controller.consumeUpdates()
 	model.Platform = "All platforms"
-	if controller.platformFilter != "" {
+	// The preview page ignores the platform filter, so name it only once
+	// the catalogue applies it.
+	if controller.cacheReady && controller.platformFilter != "" {
 		model.Platform = controller.platformFilter
 	}
 	model.Sort = itchio.SortModeBadge(controller.sortMode)
@@ -397,7 +408,7 @@ func (controller *CatalogController) DismissNotice(index int) {
 	controller.rebuildView()
 }
 
-func (controller *CatalogController) RetryCatLoad() { go controller.loadPage(1, "") }
+func (controller *CatalogController) RetryCatLoad() { go controller.loadPage(1) }
 
 func (controller *CatalogController) ApplyCatCache(games []itchio.Game) {
 	controller.cacheFetched.Store(time.Now().Unix())
@@ -504,10 +515,16 @@ func (controller *CatalogController) rebuildView() {
 	if controller.cursor >= 0 && controller.cursor < len(controller.viewGames) {
 		selectedURL = controller.viewGames[controller.cursor].URL
 	}
+	// Until the cache is ready the preview page is what is shown, so the
+	// inventory-based sorts must look at it rather than the empty cache.
+	shown := controller.cachedGames
+	if !controller.cacheReady {
+		shown = controller.previewGames
+	}
 	downloaded := make(map[string]bool)
 	pending := make(map[string]bool)
 	removed := make(map[string]bool)
-	for _, game := range controller.cachedGames {
+	for _, game := range shown {
 		if controller.inv.IsPresent(game.URL) {
 			downloaded[game.URL] = true
 		}
@@ -518,8 +535,9 @@ func (controller *CatalogController) rebuildView() {
 			removed[game.URL] = true
 		}
 	}
-	filtered := controller.cachedGames
-	if controller.platformFilter != "" {
+	filtered := shown
+	// The preview page is one untagged feed, so only search and sort apply.
+	if controller.cacheReady && controller.platformFilter != "" {
 		filtered = applyPlatformFilter(filtered, controller.platformFilter)
 	}
 	if controller.searchQuery != "" {
@@ -560,6 +578,11 @@ func (controller *CatalogController) buildCache() {
 		// catalogue. Progressive results are useful only during first launch,
 		// before any committed cache exists.
 		if controller.cacheCommitted.Load() {
+			return
+		}
+		// An empty snapshot would replace the preview page with an empty
+		// list and mark the catalogue ready before it has any games.
+		if len(partial) == 0 {
 			return
 		}
 		snapshot := append([]itchio.Game(nil), partial...)

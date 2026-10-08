@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -289,16 +288,14 @@ const PerPage = 36 // itch.io XML feeds return 36 items per page
 
 // FetchGames fetches one page of the GB Studio feed. It is used as a quick
 // live-feed preview when no local cache exists yet; the full multi-platform
-// catalogue is built by FetchAllGames.
-func (c *Client) FetchGames(page int, query string) ([]Game, error) {
-	return c.FetchGamesContext(context.Background(), page, query)
+// catalogue is built by FetchAllGames. The browse feeds ignore a q= search
+// parameter, so searching always filters locally.
+func (c *Client) FetchGames(page int) ([]Game, error) {
+	return c.FetchGamesContext(context.Background(), page)
 }
 
-func (c *Client) FetchGamesContext(ctx context.Context, page int, query string) ([]Game, error) {
+func (c *Client) FetchGamesContext(ctx context.Context, page int) ([]Game, error) {
 	feedURL := fmt.Sprintf("%s/games/made-with-gb-studio.xml?page=%d", c.base, page)
-	if query != "" {
-		feedURL += "&q=" + neturl.QueryEscape(query)
-	}
 	return c.FetchGamesFromURLContext(ctx, feedURL)
 }
 
@@ -366,12 +363,13 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 
 // FetchAllGames fetches every page of every platform feed in AllPlatforms in
 // parallel (up to feedConcurrency slugs at a time), deduplicates games by URL
-// across platforms, and returns the merged list. progress is called after each
-// slug completes. If a slug errors, its games are skipped and the error is
-// recorded; partial results from other slugs are always returned. Rate
-// limiting is the exception: the first slug that fails with ErrRateLimited
-// stops the whole refresh, and all slugs together wait out at most
-// refreshCooldownBudget of cooldown.
+// across platforms, and returns the merged list. progress is called with the
+// games merged so far after each slug completes and while slugs are paging,
+// but never before the first game is merged. If a slug errors, its games are
+// skipped and the error is recorded; partial results from other slugs are
+// always returned. Rate limiting is the exception: the first slug that fails
+// with ErrRateLimited stops the whole refresh, and all slugs together wait out
+// at most refreshCooldownBudget of cooldown.
 func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game)) ([]Game, error) {
 	select {
 	case <-ctx.Done():
@@ -439,7 +437,10 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 			for len(pingCh) > 0 {
 				<-pingCh
 			}
-			if progress != nil {
+			// Games join all only when their slug finishes. Until then there
+			// is nothing to report, and an empty snapshot would look like an
+			// empty catalogue.
+			if progress != nil && len(all) > 0 {
 				progress(all)
 			}
 		case r := <-resultCh:

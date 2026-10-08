@@ -332,6 +332,106 @@ func TestFetchAllGames(t *testing.T) {
 	}
 }
 
+// While the first feed is still paging, nothing has been merged yet. Progress
+// at that point would hand the caller an empty catalogue, which the first
+// launch would show in place of the preview page.
+func TestFetchAllGames_NoProgressBeforeFirstMerge(t *testing.T) {
+	page1, err := os.ReadFile("../../testdata/rss_page1.xml")
+	if err != nil {
+		t.Fatalf("read rss_page1.xml: %v", err)
+	}
+	page2Requested := make(chan struct{})
+	release := make(chan struct{})
+	var requestedOnce, releaseOnce sync.Once
+	releasePage2 := func() { releaseOnce.Do(func() { close(release) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/games/made-with-gb-studio.xml" {
+			switch r.URL.Query().Get("page") {
+			case "1":
+				w.Write(page1)
+				return
+			case "2":
+				requestedOnce.Do(func() { close(page2Requested) })
+				<-release
+			}
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	defer releasePage2()
+
+	var mu sync.Mutex
+	var sizes []int
+	done := make(chan error, 1)
+	go func() {
+		_, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), func(partial []itchio.Game) {
+			mu.Lock()
+			sizes = append(sizes, len(partial))
+			mu.Unlock()
+		})
+		done <- err
+	}()
+	select {
+	case <-page2Requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second GB Studio page was never requested")
+	}
+	// Page 1 reported its games before page 2 was requested. Hold page 2 so
+	// the collect loop acts on that report while nothing is merged.
+	time.Sleep(200 * time.Millisecond)
+	releasePage2()
+	if err := <-done; err != nil {
+		t.Fatalf("FetchAllGames: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sizes) == 0 {
+		t.Fatal("no progress after the GB Studio feed merged")
+	}
+	for _, size := range sizes {
+		if size == 0 {
+			t.Fatalf("progress sizes = %v, want no empty snapshot", sizes)
+		}
+	}
+}
+
+// The GBA feed uses the canonical tag-gameboy-advance slug rather than the
+// redirecting tag-gba alias. Games carry the platform code, never the slug.
+func TestFetchAllGames_GBAUsesCanonicalSlug(t *testing.T) {
+	const gbaURL = "https://gbadev.itch.io/gba-game"
+	gbaFeed := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>A GBA Game</title><link>` + gbaURL + `</link><description></description><price>0.0</price></item>
+</channel></rss>`
+	var aliasRequested atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/games/tag-gba.xml":
+			aliasRequested.Store(true)
+			http.Redirect(w, r, "/games/tag-gameboy-advance.xml?"+r.URL.RawQuery, http.StatusMovedPermanently)
+		case "/games/tag-gameboy-advance.xml":
+			if r.URL.Query().Get("page") == "1" {
+				w.Write([]byte(gbaFeed))
+				return
+			}
+			fallthrough
+		default:
+			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+		}
+	}))
+	defer srv.Close()
+
+	games, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchAllGames: %v", err)
+	}
+	if aliasRequested.Load() {
+		t.Error("the redirecting tag-gba alias was requested")
+	}
+	if len(games) != 1 || games[0].URL != gbaURL || games[0].Platform != "GBA" {
+		t.Fatalf("games = %#v, want the one GBA game", games)
+	}
+}
+
 func TestFetchAllGames_StopsOnWrapAround(t *testing.T) {
 	// itch.io recycles the first page past the last real page instead of
 	// returning an empty feed. A full page of all-duplicates must terminate
@@ -584,20 +684,21 @@ func TestClientsIdentifyAsLeafWithoutBrowserHeaders(t *testing.T) {
 	}
 }
 
-func TestFetchGamesContextEscapesSearchQuery(t *testing.T) {
-	var gotQuery string
+func TestFetchGamesContextSendsNoRemoteSearchQuery(t *testing.T) {
+	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.Query().Get("q")
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
 	}))
 	defer srv.Close()
 
 	client := itchio.NewClientWithBase(srv.URL)
-	if _, err := client.FetchGamesContext(context.Background(), 1, "cats & dogs"); err != nil {
+	if _, err := client.FetchGamesContext(context.Background(), 2); err != nil {
 		t.Fatal(err)
 	}
-	if gotQuery != "cats & dogs" {
-		t.Fatalf("decoded query = %q, want %q", gotQuery, "cats & dogs")
+	// The browse feeds ignore q=, so search is local; only the page is sent.
+	if gotPath != "/games/made-with-gb-studio.xml" || gotQuery != "page=2" {
+		t.Fatalf("preview request = %s?%s, want /games/made-with-gb-studio.xml?page=2", gotPath, gotQuery)
 	}
 }
 

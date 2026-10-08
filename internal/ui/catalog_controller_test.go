@@ -3,10 +3,12 @@
 package ui
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,5 +274,217 @@ func TestListPriceBadgeUsesFetchedGameData(t *testing.T) {
 	}
 	if badges["Paid"] != "€4,99" || badges["Now free"] != "Free" || badges["Not opened"] != "$2.00" {
 		t.Fatalf("badges = %v", badges)
+	}
+}
+
+func TestCatalogControllerSearchesUncachedPreviewLocally(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "Cat Quest", Author: "someone", URL: "https://example.invalid/cat"},
+		{Title: "Dog Run", Author: "else", URL: "https://example.invalid/dog"},
+	}}
+	controller.consumeUpdates()
+	if len(controller.viewGames) != 2 {
+		t.Fatalf("preview view = %d games, want 2", len(controller.viewGames))
+	}
+
+	controller.searchQuery = "dog"
+	controller.rebuildView()
+	if len(controller.viewGames) != 1 || controller.viewGames[0].Title != "Dog Run" {
+		t.Fatalf("searched preview = %#v, want Dog Run only", controller.viewGames)
+	}
+	controller.searchQuery = ""
+	controller.rebuildView()
+	if len(controller.viewGames) != 2 {
+		t.Fatalf("cleared search view = %d games, want the full preview page", len(controller.viewGames))
+	}
+}
+
+// Before the cache exists, a persisted Downloaded sort must still list the
+// downloaded games on the preview page instead of an empty list.
+func TestCatalogControllerDownloadedSortOnUncachedPreview(t *testing.T) {
+	const downloadedURL = "https://example.invalid/downloaded"
+	inv := &inventory.Inventory{Entries: map[string]*inventory.Entry{
+		downloadedURL: {GameURL: downloadedURL, Files: []inventory.DownloadedFile{{Filename: "game.gb"}}},
+	}}
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: inv, sortMode: itchio.SortModeDL,
+		pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "Not Downloaded", URL: "https://example.invalid/other"},
+		{Title: "Downloaded", URL: downloadedURL},
+	}}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 1 || model.Items[0].Title != "Downloaded" {
+		t.Fatalf("Downloaded sort on the preview = state %v, items %#v; want the one downloaded game",
+			model.State, model.Items)
+	}
+}
+
+// On first launch the full fetch reports progress while its first feed is
+// still paging and nothing is merged. That must not replace the preview page
+// with an empty catalogue; the first snapshot with games replaces it.
+func TestCatalogControllerKeepsPreviewUntilCacheHasGames(t *testing.T) {
+	page1, err := os.ReadFile("../../testdata/rss_page1.xml")
+	if err != nil {
+		t.Fatalf("read rss_page1.xml: %v", err)
+	}
+	page2Requested := make(chan struct{})
+	release := make(chan struct{})
+	var requestedOnce, releaseOnce sync.Once
+	releasePage2 := func() { releaseOnce.Do(func() { close(release) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/games/made-with-gb-studio.xml" {
+			switch r.URL.Query().Get("page") {
+			case "1":
+				w.Write(page1)
+				return
+			case "2":
+				requestedOnce.Do(func() { close(page2Requested) })
+				<-release
+			}
+		}
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	done := make(chan struct{})
+	defer func() { <-done }()
+	defer releasePage2()
+
+	controller := &CatalogController{
+		client: itchio.NewClientWithBase(srv.URL), cfg: &settings.Config{},
+		inv:          &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachePath:    filepath.Join(t.TempDir(), "games_cache.json"),
+		pageUpdateCh: make(chan pageResult, 1), cacheUpdateCh: make(chan []itchio.Game, 1),
+		ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "Preview One", URL: "https://example.invalid/preview-one"},
+		{Title: "Preview Two", URL: "https://example.invalid/preview-two"},
+	}}
+	controller.consumeUpdates()
+
+	go func() {
+		defer close(done)
+		controller.buildCache()
+	}()
+	select {
+	case <-page2Requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second GB Studio page was never requested")
+	}
+	// Page 1 reported its games before page 2 was requested; nothing is
+	// merged until the feed finishes. Watch the screen while page 2 is held.
+	for deadline := time.Now().Add(200 * time.Millisecond); time.Now().Before(deadline); {
+		controller.consumeUpdates()
+		if controller.cacheReady {
+			t.Fatalf("catalogue became ready with %d games before any feed finished", len(controller.cachedGames))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 2 {
+		t.Fatalf("screen while the first feed pages = state %v, %d items; want the 2 preview games",
+			model.State, len(model.Items))
+	}
+
+	releasePage2()
+	<-done
+	controller.SyncCatModel(model)
+	if !controller.cacheReady || model.State != appui.ListReady || len(model.Items) != itchio.PerPage {
+		t.Fatalf("after the first feed merged: ready=%v state %v, %d items; want %d catalogue games",
+			controller.cacheReady, model.State, len(model.Items), itchio.PerPage)
+	}
+}
+
+// A preview page that returns after the catalogue is ready must neither
+// replace the list with its error nor move the selection.
+func TestCatalogControllerIgnoresLatePreviewOnceCatalogueIsReady(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: []itchio.Game{
+			{Title: "One", URL: "https://example.invalid/one"},
+			{Title: "Two", URL: "https://example.invalid/two"},
+			{Title: "Three", URL: "https://example.invalid/three"},
+		},
+		cacheReady: true, pageUpdateCh: make(chan pageResult, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.rebuildView()
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	model.Cursor = 1
+	if _, ok := controller.CatSelected(model.Cursor); !ok {
+		t.Fatal("row 2 is not selectable")
+	}
+
+	late := []pageResult{
+		{err: errors.New("fetch feed: connection reset")},
+		{games: []itchio.Game{{Title: "Preview", URL: "https://example.invalid/preview"}}},
+	}
+	for _, result := range late {
+		controller.pageUpdateCh <- result
+		controller.SyncCatModel(model)
+		if model.State != appui.ListReady || len(model.Items) != 3 {
+			t.Fatalf("after a late preview (err=%v): state %v, %d items; want the 3 catalogue games",
+				result.err, model.State, len(model.Items))
+		}
+		if controller.cursor != 1 || model.Cursor != 1 {
+			t.Fatalf("after a late preview (err=%v): cursor controller=%d model=%d, want row 2",
+				result.err, controller.cursor, model.Cursor)
+		}
+	}
+}
+
+// A failed preview no longer matters once the catalogue has games to show.
+func TestCatalogControllerCatalogueReplacesPreviewError(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		pageUpdateCh: make(chan pageResult, 1), cacheUpdateCh: make(chan []itchio.Game, 1),
+		ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{err: errors.New("fetch feed: connection reset")}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListError {
+		t.Fatalf("failed preview state = %v, want the error screen", model.State)
+	}
+	controller.cacheUpdateCh <- []itchio.Game{{Title: "Catalogue", URL: "https://example.invalid/catalogue"}}
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 1 {
+		t.Fatalf("after the catalogue arrived: state %v, %d items; want the catalogue game",
+			model.State, len(model.Items))
+	}
+}
+
+// The preview page is unfiltered, so the header must not name a saved
+// platform filter until the catalogue that honours it is ready.
+func TestCatalogControllerHeaderShowsAllPlatformsOnUncachedPreview(t *testing.T) {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		platformFilter: "PSX", pageUpdateCh: make(chan pageResult, 1),
+		cacheUpdateCh: make(chan []itchio.Game, 1), ownedURLs: make(map[string]bool),
+	}
+	controller.pageUpdateCh <- pageResult{games: []itchio.Game{
+		{Title: "GB Studio Game", URL: "https://example.invalid/gb"},
+	}}
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	if model.Platform != "All platforms" || len(model.Items) != 1 {
+		t.Fatalf("preview header = %q with %d items, want All platforms over the unfiltered page",
+			model.Platform, len(model.Items))
+	}
+	controller.cacheUpdateCh <- []itchio.Game{
+		{Title: "PSX Game", URL: "https://example.invalid/psx", Platform: "PSX"},
+		{Title: "GB Game", URL: "https://example.invalid/gb", Platform: "GB"},
+	}
+	controller.SyncCatModel(model)
+	if model.Platform != "PSX" || len(model.Items) != 1 || model.Items[0].Title != "PSX Game" {
+		t.Fatalf("catalogue header = %q with %#v, want PSX over the PSX game", model.Platform, model.Items)
 	}
 }
