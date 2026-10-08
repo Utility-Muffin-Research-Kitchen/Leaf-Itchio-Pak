@@ -32,13 +32,14 @@ through `jawakad`, and suspend inhibition must use a generic Jawaka contract.
 ```sh
 make test
 make test-race
+make test-native
 make mac
 make package-smoke
 ```
 
-The headless and native race suites are both required. Device packaging is
-MLP1-only; explicit device staging is dispatched through Leaf's `stage-app`
-target and never changes the default Leaf payload.
+The headless (`test-race`) and native (`test-native`) race suites are both
+required. Device packaging is MLP1-only; explicit device staging is dispatched
+through Leaf's `stage-app` target and never changes the default Leaf payload.
 
 ## Code constraints
 

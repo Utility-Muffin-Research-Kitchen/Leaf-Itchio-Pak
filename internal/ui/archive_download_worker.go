@@ -131,8 +131,9 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	// Re-resolve CDN URL immediately before the download so a stale URL from
 	// the inspect step (which may have run minutes ago) does not cause a 403.
 	cdnURL := s.plan.CDNURL
-	if s.plan.Upload.DownloadKeyID != "" {
-		fresh, rerr := s.client.ResolveAuthURL(s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.DownloadKeyID)
+	if s.plan.Upload.ViaAPI() {
+		// Same install session as the inspection that produced this plan.
+		fresh, rerr := s.client.ResolveUploadURLContext(context.Background(), s.cfg.APIKey, s.plan.Upload.UploadID, s.plan.Upload.Install)
 		if rerr != nil {
 			logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
 		} else {
@@ -224,6 +225,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
 					s.extracted = append(s.extracted, m3uPath)
 					file := inventory.DownloadedFile{
+						UploadID:      s.plan.Upload.UploadID,
 						Filename:      filepath.Base(m3uPath),
 						DestPath:      m3uPath,
 						DownloadedAt:  now,
@@ -522,6 +524,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
+			UploadID:      s.plan.Upload.UploadID,
 			Filename:      filepath.Base(finalDest),
 			DestPath:      finalDest,
 			DownloadedAt:  now,
@@ -692,6 +695,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
+		UploadID:      s.plan.Upload.UploadID,
 		Filename:      filepath.Base(finalDest),
 		DestPath:      finalDest,
 		DownloadedAt:  now,
@@ -730,6 +734,7 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
+		UploadID:     s.plan.Upload.UploadID,
 		Filename:     filepath.Base(dest),
 		DestPath:     dest,
 		DownloadedAt: now,
@@ -887,6 +892,7 @@ func (s *ArchiveDownloadWorker) extractROM(f *zip.File, baseName string, now tim
 
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
+		UploadID:      s.plan.Upload.UploadID,
 		Filename:      filepath.Base(finalDest),
 		DestPath:      finalDest,
 		DownloadedAt:  now,
@@ -924,6 +930,7 @@ func (s *ArchiveDownloadWorker) extractMusic(f *zip.File, baseName string, now t
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
+		UploadID:     s.plan.Upload.UploadID,
 		Filename:     filepath.Base(dest),
 		DestPath:     dest,
 		DownloadedAt: now,
@@ -1035,6 +1042,7 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
+			UploadID:      s.plan.Upload.UploadID,
 			Filename:      filepath.Base(finalDest),
 			DestPath:      finalDest,
 			DownloadedAt:  now,

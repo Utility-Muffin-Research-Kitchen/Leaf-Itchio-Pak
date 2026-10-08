@@ -35,6 +35,7 @@ capture detail 1280 800 0 5
 capture warning 960 720 1 0
 capture download-select 960 720 1 0
 capture download-select 1280 800 0 5
+capture download-select-hidden 960 720 1 2
 capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0

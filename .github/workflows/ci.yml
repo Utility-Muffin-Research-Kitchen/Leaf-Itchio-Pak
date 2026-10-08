@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.12"
+          go-version: "1.27.1"
 
       - name: Install SDL development libraries
         run: |
@@ -42,3 +42,9 @@ jobs:
       - name: Test
         working-directory: Leaf-Itchio-Pak
         run: make test-race
+
+      # The download flows, workers and UI controllers build only without the
+      # headless tag, so the headless suite above does not cover them.
+      - name: Native tests
+        working-directory: Leaf-Itchio-Pak
+        run: make test-native
