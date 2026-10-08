@@ -145,14 +145,25 @@ func (flow *CatDownloadFlow) discover() {
 func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 	uploads, err := flow.client.FetchWebUploadsContext(flow.requestContext(), flow.game.URL)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
-	listing := webUploadListing(uploads)
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, webUploadListing(uploads), nil))
+	return update
+}
+
+// listedUploads turns one upload list into the uploads you choose from. It
+// is the one place that gives each upload the list it was chosen from: the
+// install uses that list to tell an update, whose old upload the list no
+// longer offers, from another build it still offers, and seeds update
+// checks with it. install is nil for the web flow.
+func listedUploads(uploads []itchio.Upload, listing *roms.UploadListing, install *roms.InstallSession) []roms.Upload {
+	var listed []roms.Upload
 	for _, upload := range uploads {
-		update.uploads = append(update.uploads, roms.Upload{
-			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-			UploadID: upload.UploadID, UploadFingerprint: upload.Fingerprint(), Listing: listing,
+		listed = append(listed, roms.Upload{
+			Filename: upload.Filename, URL: upload.URL, UploadID: upload.UploadID,
+			UploadFingerprint: upload.Fingerprint(), NeedsFormat: upload.NeedsFormat,
+			DesktopOrWeb: upload.DesktopOrWebOnly(), Install: install, Listing: listing,
 		})
 	}
-	return update
+	return listed
 }
 
 // apiUploadListing and webUploadListing record what a listing offered, so
@@ -196,18 +207,9 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 	switch {
 	case err == nil && len(uploads) > 0:
 		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
-		update := catDownloadUpdate{kind: catDownloadUpdateUploads}
 		install := roms.NewInstallSession(flow.detail.GameID, "")
-		listing := apiUploadListing(uploads)
-		for _, upload := range uploads {
-			update.uploads = append(update.uploads, roms.Upload{
-				Filename: upload.Filename, UploadID: upload.UploadID,
-				UploadFingerprint: upload.Fingerprint(),
-				NeedsFormat:       upload.NeedsFormat, Install: install, Listing: listing,
-				DesktopOrWeb: upload.DesktopOrWebOnly(),
-			})
-		}
-		return update
+		return catDownloadUpdate{kind: catDownloadUpdateUploads,
+			uploads: flow.dropTextMarkdown(listedUploads(uploads, apiUploadListing(uploads), install))}
 	case errors.Is(err, itchio.ErrRateLimited) || errors.Is(err, context.Canceled):
 		return catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	case err != nil:
@@ -234,15 +236,40 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 	if err == nil {
 		listing = apiUploadListing(uploads)
 	}
-	for _, upload := range uploads {
-		update.uploads = append(update.uploads, roms.Upload{
-			Filename: upload.Filename, UploadID: upload.UploadID,
-			UploadFingerprint: upload.Fingerprint(),
-			NeedsFormat:       upload.NeedsFormat, Install: install, Listing: listing,
-			DesktopOrWeb: upload.DesktopOrWebOnly(),
-		})
-	}
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, listing, install))
 	return update
+}
+
+// mdProbeBytes is how much of a ".md" upload is read to tell a Mega Drive
+// ROM from Markdown; roms.MDIsROM checks the first 4 KB for text.
+const mdProbeBytes = 4096
+
+// dropTextMarkdown removes ".md" uploads that are text, such as a README
+// published next to the game. ".md" is also the Mega Drive extension, so
+// each one is checked by its first bytes with the same rule as archive
+// members. An upload that cannot be checked stays offered.
+func (flow *CatDownloadFlow) dropTextMarkdown(uploads []roms.Upload) []roms.Upload {
+	kept := make([]roms.Upload, 0, len(uploads))
+	for _, upload := range uploads {
+		if strings.EqualFold(roms.ROMExt(upload.Filename), ".md") && flow.uploadIsText(upload) {
+			logger.Info("download: not offering %s; it is text, not a Mega Drive ROM", upload.Filename)
+			continue
+		}
+		kept = append(kept, upload)
+	}
+	return kept
+}
+
+func (flow *CatDownloadFlow) uploadIsText(upload roms.Upload) bool {
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, upload)
+	if err == nil {
+		var header []byte
+		if header, err = flow.client.FetchFileHeader(cdnURL, mdProbeBytes); err == nil {
+			return !roms.MDIsROM(header)
+		}
+	}
+	logger.Warn("download: could not check %s for Markdown, offering it: %v", upload.Filename, err)
+	return false
 }
 
 func (flow *CatDownloadFlow) publish(update catDownloadUpdate) {
@@ -412,7 +439,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		for _, upload := range known {
 			hasArchive = hasArchive || isArchive(upload.Filename)
 		}
-		if !hasArchive {
+		if !hasArchive && !hasAlternativeBuilds(known) {
 			flow.plan = flow.planForUploads(known)
 			return
 		}
@@ -467,6 +494,30 @@ func splitSetAside(uploads []roms.Upload) (kept, aside []roms.Upload) {
 func setAsideLast(uploads []roms.Upload) []roms.Upload {
 	kept, aside := splitSetAside(uploads)
 	return append(kept, aside...)
+}
+
+// hasAlternativeBuilds reports whether two uploads target the same cartridge
+// system, which makes them alternative builds of one game (an update and the
+// original jam release, say) rather than companions for different systems.
+// PlayStation files are left out: CUE/BIN tracks and the discs of one game
+// are a dependent set, not competing builds.
+func hasAlternativeBuilds(uploads []roms.Upload) bool {
+	seen := make(map[string]bool, len(uploads))
+	for _, upload := range uploads {
+		ext := strings.ToLower(roms.ROMExt(upload.Filename))
+		if roms.IsPSXExt(ext) {
+			continue
+		}
+		system := roms.DestinationDir(ext)
+		if system == "" {
+			continue
+		}
+		if seen[system] {
+			return true
+		}
+		seen[system] = true
+	}
+	return false
 }
 
 func isPairedPSXUploadSet(uploads []roms.Upload) bool {

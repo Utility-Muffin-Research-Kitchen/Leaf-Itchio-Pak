@@ -353,12 +353,16 @@ func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycle
 func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []string, offset int) error {
 	return ui.withClip(rect, func() error {
 		x, y := rect.X, rect.Y
-		if title != "" {
-			if _, err := ui.ctx.DrawFallbackText(FontLarge, title, x, y,
+		// A title wider than a narrow column wraps instead of being cut off.
+		for _, line := range ui.scrollingTitleLines(title, rect.W) {
+			if _, err := ui.ctx.DrawFallbackText(FontLarge, line, x, y,
 				ui.ctx.ThemeColor(RoleEmphasis), rect.W); err != nil {
 				return err
 			}
-			y += ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+			y += ui.ctx.FontHeight(FontLarge)
+		}
+		if title != "" {
+			y += ui.BasePadding / 2
 		}
 		lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
 		lines := make([]string, 0, len(paragraphs)*2)
@@ -382,6 +386,29 @@ func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []stri
 		}
 		return nil
 	})
+}
+
+func (ui *Composer) scrollingTitleLines(title string, width int) []string {
+	if title == "" {
+		return nil
+	}
+	return wrapText(title, width, func(value string) int {
+		return ui.ctx.MeasureFallbackText(FontLarge, value)
+	})
+}
+
+// ScrollingBodyRows is how many body lines DrawScrollingBody shows in rect
+// below title, which may wrap.
+func (ui *Composer) ScrollingBodyRows(rect Rect, title string) int {
+	used := 0
+	if lines := ui.scrollingTitleLines(title, rect.W); len(lines) > 0 {
+		used = len(lines)*ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+	}
+	lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
+	if lineHeight <= 0 {
+		return 1
+	}
+	return maxInt(1, (rect.H-used)/lineHeight)
 }
 
 func CenteredModalRect(bounds Rect, widthPercent, heightPercent, margin int) Rect {
@@ -698,7 +725,16 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 	inner := insetRect(bounds, ui.ModalPadding, ui.ModalPadding)
 	titleHeight := ui.ctx.FontHeight(FontLarge)
 	detailHeight := ui.ctx.FontHeight(FontSmall)
-	total := titleHeight + ui.BasePadding/2 + detailHeight
+	lineHeight := detailHeight + ui.ctx.Scale(4)
+	gap := ui.BasePadding / 2
+	// The detail wraps instead of being cut off at the first line, so an error
+	// stays readable with a larger font. In short bounds, the last line that
+	// fits is ellipsized.
+	maxLines := 1 + maxInt(0, inner.H-titleHeight-gap-detailHeight)/lineHeight
+	lines := stateDetailLines(detail, inner.W, maxLines, func(value string) int {
+		return ui.ctx.MeasureText(FontSmall, value)
+	})
+	total := titleHeight + gap + detailHeight + maxInt(0, len(lines)-1)*lineHeight
 	y := inner.Y + maxInt(0, (inner.H-total)/2)
 	color := ui.ctx.ThemeColor(RoleEmphasis)
 	if kind == StateError {
@@ -712,14 +748,31 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 		y, color, width); err != nil {
 		return err
 	}
-	y += titleHeight + ui.BasePadding/2
+	y += titleHeight + gap
+	for _, line := range lines {
+		width := minInt(inner.W, ui.ctx.MeasureText(FontSmall, line))
+		if _, err := ui.ctx.DrawText(FontSmall, line, inner.X+(inner.W-width)/2,
+			y, ui.ctx.ThemeColor(RoleHint), width, true); err != nil {
+			return err
+		}
+		y += lineHeight
+	}
+	return nil
+}
+
+// stateDetailLines wraps a state's detail to width and keeps at most maxLines
+// lines. When the detail needs more, the last kept line carries the rest so
+// the draw call ellipsizes it instead of dropping words silently.
+func stateDetailLines(detail string, width, maxLines int, measure func(string) int) []string {
 	if detail == "" {
 		return nil
 	}
-	detailWidth := minInt(inner.W, ui.ctx.MeasureText(FontSmall, detail))
-	_, err := ui.ctx.DrawText(FontSmall, detail, inner.X+(inner.W-detailWidth)/2,
-		y, ui.ctx.ThemeColor(RoleHint), detailWidth, true)
-	return err
+	lines := wrapText(detail, width, measure)
+	maxLines = maxInt(1, maxLines)
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines-1], strings.Join(lines[maxLines-1:], " "))
+	}
+	return lines
 }
 
 func (ui *Composer) withClip(rect Rect, draw func() error) error {

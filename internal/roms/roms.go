@@ -32,7 +32,9 @@ type Upload struct {
 	// nil means the anonymous web flow.
 	Install *InstallSession
 	// Listing is the list this upload was chosen from, shared by every
-	// upload of that list. The install seeds update checks with it.
+	// upload of that list; nil when the list is unknown. The install uses it
+	// to tell an update, whose old upload the list no longer offers, from
+	// another build the list still offers, and seeds update checks with it.
 	Listing *UploadListing
 }
 

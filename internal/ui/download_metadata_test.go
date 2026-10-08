@@ -180,8 +180,8 @@ func TestArchiveReinstallAcknowledgesUploadWithRenamedMember(t *testing.T) {
 	}
 	entry, _ := flow.inv.Lookup(url)
 	oldTheme := filepath.Join(primary, "Music", "Leafbound", "01 Theme.mp3")
-	if len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != oldTheme {
-		t.Fatalf("left over files = %v, want [%s]", entry.LeftoverFiles, oldTheme)
+	if len(leftOverFiles(entry)) != 1 || leftOverFiles(entry)[0] != oldTheme {
+		t.Fatalf("left over files = %v, want [%s]", leftOverFiles(entry), oldTheme)
 	}
 	if _, err := os.Stat(oldTheme); err != nil {
 		t.Fatalf("the old track was deleted: %v", err)
@@ -221,8 +221,8 @@ func TestDirectReinstallAcknowledgesUploadRenamedUnderSameID(t *testing.T) {
 	if flow.inv.HasPendingUpdates(url) {
 		t.Fatalf("update pending after reinstall and re-check: %+v", flow.inv.PendingUpdateFiles(url))
 	}
-	if entry, _ := flow.inv.Lookup(url); len(entry.LeftoverFiles) != 1 || filepath.Base(entry.LeftoverFiles[0]) != "cart-v1.gb" {
-		t.Fatalf("left over files = %v, want the version 1 ROM", entry.LeftoverFiles)
+	if entry, _ := flow.inv.Lookup(url); len(leftOverFiles(entry)) != 1 || filepath.Base(leftOverFiles(entry)[0]) != "cart-v1.gb" {
+		t.Fatalf("left over files = %v, want the version 1 ROM", leftOverFiles(entry))
 	}
 }
 
@@ -276,4 +276,16 @@ func TestListingSeedMarksDesktopAndWebBuilds(t *testing.T) {
 	if source != inventory.SourceAPI || len(files) != 2 || files[0].DesktopOrWebOnly || !files[1].DesktopOrWebOnly {
 		t.Fatalf("seed = %+v from %q, want only the Windows build marked", files, source)
 	}
+}
+
+// leftOverFiles lists the DestPaths of the entry's files marked left over,
+// in inventory order.
+func leftOverFiles(entry inventory.Entry) []string {
+	var paths []string
+	for _, file := range entry.Files {
+		if file.LeftOver {
+			paths = append(paths, file.DestPath)
+		}
+	}
+	return paths
 }

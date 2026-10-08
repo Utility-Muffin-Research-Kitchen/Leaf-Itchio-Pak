@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -46,16 +47,22 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 	case result := <-loader.updates:
 		if result.err != nil {
 			logger.Error("cat detail: %v", result.err)
-			model.SetError(result.err.Error())
+			model.Tags = dedupeStrings(loader.game.Tags)
+			model.Images = dedupeStrings([]string{loader.game.CoverURL})
+			model.SetError(unavailableDetail(result.err))
+			if itchio.IsAdvisoryTriggered(model.Tags, catFilterConfig(cfg)) {
+				model.State = appui.DetailWarning
+			}
 			return true
 		}
 		detail := result.detail
 		loader.detail = detail
 		if data := detail.Data; data != nil {
+			// The current price decides IsFree. The page's action follows
+			// from it and the account when CatalogController.ApplyDetailAccess
+			// runs before each draw.
 			loader.game.IsFree = data.Pricing() != itchio.PricingPaid
 			model.Game.IsFree = loader.game.IsFree
-			model.Game.CanDownload = loader.game.IsFree || (cfg != nil && cfg.SignedIn())
-			model.Game.NeedsSignIn = !model.Game.CanDownload
 			if data.CoverImage != "" {
 				loader.game.CoverURL = data.CoverImage
 			}
@@ -63,11 +70,27 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		}
 		images := dedupeStrings(append([]string{loader.game.CoverURL}, detail.ScreenshotURLs...))
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
-		warning := itchio.IsAdvisoryTriggered(detail.PageTags, catFilterConfig(cfg))
+		// Catalogue and page tags together, so a tag that warns on the
+		// unavailable page also warns here.
+		warning := itchio.IsAdvisoryTriggered(tags, catFilterConfig(cfg))
 		model.SetReady(detail.Description, tags, images, detail.BrowserOnly, warning)
 		return true
 	default:
 		return false
+	}
+}
+
+// unavailableDetail says why the game page could not load and what to do.
+// Reopening never brings back a removed game, and retrying at once is what
+// the rate limiter exists to prevent.
+func unavailableDetail(err error) string {
+	switch {
+	case errors.Is(err, itchio.ErrGameRemoved):
+		return "This game was removed from itch.io."
+	case errors.Is(err, itchio.ErrRateLimited):
+		return "itch.io is limiting requests. Wait a minute, then reopen this game."
+	default:
+		return "Go back and reopen this game to try again."
 	}
 }
 

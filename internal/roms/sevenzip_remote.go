@@ -53,10 +53,12 @@ func InspectRemote7z(client *http.Client, cdnURL string) (ZIPManifest, error) {
 	defer r.Close()
 
 	logger.Debug("7z-inspect: read %d entries", len(r.File))
-	return manifestFrom7zReader(r), nil
+	return manifestFrom7zReader(r)
 }
 
-func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
+// manifestFrom7zReader classifies a 7z's members. A ".md" member that
+// cannot be read fails the inspection instead of passing as Markdown.
+func manifestFrom7zReader(r *sevenzip.ReadCloser) (ZIPManifest, error) {
 	var m ZIPManifest
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -71,16 +73,11 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 		if strings.HasPrefix(name, "._") {
 			continue // macOS resource-fork stub outside __MACOSX/
 		}
-		kind := ClassifyEntry(name)
-
-		// Magic-byte detection for entries without a recognised extension.
-		// Skip for known image extensions — a .png is always artwork.
-		if kind == KindOther && !IsImageExt(strings.ToLower(filepath.Ext(name))) {
-			if detected := classify7zByMagic(f); detected != "" {
-				stem := strings.TrimSuffix(name, filepath.Ext(name))
-				name = stem + detected
-				kind = KindROM
-			}
+		// Classify by extension, or by the first bytes when the name does not
+		// decide it (see ClassifyArchiveMember).
+		kind, name, err := ClassifyArchiveMember(name, f.Open)
+		if err != nil {
+			return ZIPManifest{}, fmt.Errorf("read %s: %w", name, err)
 		}
 
 		m.Entries = append(m.Entries, ZIPEntry{
@@ -89,18 +86,5 @@ func manifestFrom7zReader(r *sevenzip.ReadCloser) ZIPManifest {
 			Size: f.FileHeader.UncompressedSize,
 		})
 	}
-	return m
-}
-
-// classify7zByMagic reads the first DetectBufSize bytes of a 7z entry and
-// returns the detected playable ROM extension, or "" if unrecognised.
-func classify7zByMagic(f *sevenzip.File) string {
-	rc, err := f.Open()
-	if err != nil {
-		return ""
-	}
-	defer rc.Close()
-	buf := make([]byte, DetectBufSize)
-	n, _ := io.ReadFull(rc, buf)
-	return DetectPlayableROMExt(buf[:n])
+	return m, nil
 }

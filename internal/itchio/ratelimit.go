@@ -140,6 +140,15 @@ func (t *rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error
 // refresh budget would run out first. A cooldown extended by a concurrent 429
 // while this request slept is waited out too.
 func (t *rateLimitTransport) waitTurn(ctx context.Context, host string) error {
+	// Keep the idle clock paused across an extended cooldown too. The clock
+	// starts again only when this request can actually reach the network.
+	hooks, hasHooks := ctx.Value(cooldownHooksKey{}).(cooldownHooks)
+	paused := false
+	defer func() {
+		if paused {
+			hooks.resume()
+		}
+	}()
 	for {
 		t.mu.Lock()
 		var until time.Time
@@ -167,10 +176,21 @@ func (t *rateLimitTransport) waitTurn(ctx context.Context, host string) error {
 			return &RateLimitedError{Host: host}
 		}
 		logger.Debug("ratelimit: waiting %s for %s cooldown", wake.Sub(now).Round(time.Millisecond), host)
+		if hasHooks && !paused {
+			hooks.pause()
+			paused = true
+		}
 		if err := t.sleepUntil(ctx, wake); err != nil {
 			return err
 		}
 	}
+}
+
+type cooldownHooks struct{ pause, resume func() }
+type cooldownHooksKey struct{}
+
+func withCooldownHooks(ctx context.Context, pause, resume func()) context.Context {
+	return context.WithValue(ctx, cooldownHooksKey{}, cooldownHooks{pause, resume})
 }
 
 func (t *rateLimitTransport) recordOK(host string) {

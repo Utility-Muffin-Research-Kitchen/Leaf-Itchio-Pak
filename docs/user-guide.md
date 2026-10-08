@@ -64,9 +64,22 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
+With **ROM Selection** on `auto`, the app downloads every supported upload
+together when each one is for a different system. A PlayStation game's CUE/BIN
+tracks or discs count as one set. When the game offers more than one build for
+the same system, such as an update and the original jam release, or offers an
+archive, the app lists every upload instead and downloads only the one you
+choose.
+
 Signed in, the app can tell Windows, macOS, Linux, Android and browser builds
 from the files Leaf can play. It never picks those builds for you. When
 you choose the file yourself, they're listed last, behind **Show all files**.
+
+If you later pick another build for the same system that the page still
+offers, the app keeps both: the first keeps the title name, such as
+`Glory Hunters.gba`, and the next gets its upload name added,
+`Glory Hunters (glory_ez4).gba`. An update that replaced the old upload on the
+page replaces the old file instead.
 
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
@@ -91,9 +104,16 @@ does not remove the installed ROM; use Leaf's Rescan action if needed.
 | PlayStation | `.cbn`, `.chd`, `.cue`/`.bin`, `.img`, `.iso`, `.mdf`, `.pbp`, `.toc`, `.m3u` |
 | Archives | `.zip`, `.7z` with inspected supported content |
 
+`.md` is also the extension of Markdown text. A `.md` file, inside an archive or
+as its own upload, is installed as a Mega Drive ROM only when it has a Mega
+Drive header or is not plain text, so `README.md` and `LICENSE.md` are left out.
+
 PlayStation support files such as BIN are installed with their descriptor but
-are not indexed as separate games. Descriptor/playlist names are preserved when
-renaming could break internal references.
+are not indexed as separate games. From an archive that has a CUE sheet, only
+the BIN files the sheet references are installed, so a BIOS image such as
+`openbios.bin` shipped next to the game stays out of your PlayStation folder.
+Descriptor/playlist names are preserved when renaming could break internal
+references.
 
 ## Dual-SD destinations
 
@@ -130,6 +150,8 @@ working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
 The app also checks at launch and when you sign in or out, but then skips games
 it checked in the last six hours, and it waits while a download runs.
+A new version that replaces a file you downloaded, such as a new `.gb` build
+for your `.gb` or a new archive for your archive, shows as an update.
 When signed in, it also detects files replaced under the same name, including
 paid games you own. A changed upload marks a game only when you installed that
 upload, so a new Windows or soundtrack build of a game you play as a ROM does
@@ -142,6 +164,7 @@ When signed out, it can find newly listed filenames on public pages, but cannot
 verify changed file contents or hidden paid downloads. Signing in or out does
 not mark every file as an update, but an installed upload that was replaced in
 the meantime still shows, even before the first check after you download.
+A network error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
@@ -189,6 +212,14 @@ Music support is disabled by default. Enable `auto` or `ask` to include common
 audio files from an upload/archive. Mixed archives may install both ROM and music
 content in one transaction summary.
 
+A game's tracks go into one Music folder. When an archive holds tracks with the
+same name in different folders, such as `cd1/01 Theme.ogg` and
+`cd2/01 Theme.ogg`, every track of those folders keeps its folder as a
+subfolder (`cd1/01 Theme.ogg`, `cd1/02 Battle.ogg`, `cd2/01 Theme.ogg`), so
+both are installed and Disco Boy plays each disc in order. Tracks whose names
+differ only in letter case would be the same file on your SD card, so the later
+one gets a number: `Theme.ogg` and `theme (2).ogg`.
+
 Disco Boy is optional. This pak neither installs nor launches it. Open or relaunch
 Disco Boy after installing music so its normal scan reads the selected Music
 root on either card.
@@ -197,6 +228,13 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+When you download an archive or file again, files of its earlier version that
+the new install no longer uses stay on your card. For example, an older version
+of this app put every soundtrack track in one folder, and the new install keeps
+same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
+**OLD** and offers **Delete left-over files**. Nothing is deleted until you
+choose it.
+
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
@@ -206,8 +244,19 @@ New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
-names when a rename could break references. Every committed ROM/artwork change
-requests one Jawaka rescan.
+names when a rename could break references. When two files from one download
+or archive would get the same title name, they keep their original names so
+neither replaces the other. FAT32 ignores letter case, so two names that
+differ only in case count as the same file: a download stops before writing
+anything, and an archive skips the later file and lists it on the
+**Download complete** screen. Every committed ROM/artwork change requests one
+Jawaka rescan.
+
+A download never replaces a file that another game installed, or a file the
+app did not install. It saves its own copy as `<Title> - <file name>` instead,
+and downloading the same game again later updates that copy. If two games
+already share a file from an earlier version, deleting one of them in Manage
+keeps the file for the other.
 
 ## Data and logs
 
@@ -248,6 +297,12 @@ moved or overwritten.
 The picker requires a real mounted filesystem, not merely the stock empty mount
 directory. Reinsert/mount the card and reopen the picker. The app intentionally
 does not guess between arbitrary mounts.
+
+### A README shows up as a Mega Drive game
+
+Earlier versions installed some `README.md` files from archives as Mega Drive
+ROMs, named after the game, such as `Roms/GENESIS/<Title>.md`. Open the game's
+Manage screen and delete that file.
 
 ### A paid/owned game is unavailable
 

@@ -188,14 +188,14 @@ func TestPartialArchiveInstallKeepsOtherBuildsOfTheSameVersion(t *testing.T) {
 	add("ez.gba", "build:1")
 	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "glory.zip", Fingerprint: "build:1",
 		Written: []string{"/leaf/Roms/GBA/ez.gba"}, Replaces: pickedOnly})
-	if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 0 {
-		t.Fatalf("a second build picked from the same version left %v over", entry.LeftoverFiles)
+	if entry, _ := inv.Lookup("game"); len(leftOverFiles(entry)) != 0 {
+		t.Fatalf("a second build picked from the same version left %v over", leftOverFiles(entry))
 	}
 	add("ez.gba", "build:2")
 	inv.CommitUploadInstall("game", inventory.UploadInstall{UploadID: "1", Filename: "glory.zip", Fingerprint: "build:2",
 		Written: []string{"/leaf/Roms/GBA/ez.gba"}, Replaces: pickedOnly})
-	if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != "/leaf/Roms/GBA/plain.gba" {
-		t.Fatalf("left over after a newer version = %v, want the older plain build", entry.LeftoverFiles)
+	if entry, _ := inv.Lookup("game"); len(leftOverFiles(entry)) != 1 || leftOverFiles(entry)[0] != "/leaf/Roms/GBA/plain.gba" {
+		t.Fatalf("left over after a newer version = %v, want the older plain build", leftOverFiles(entry))
 	}
 }
 
@@ -367,8 +367,8 @@ func TestReinstallClearsUpdateWhenFilesMoved(t *testing.T) {
 				t.Fatalf("re-check after reinstall raised the update again: %+v", inv.PendingUpdateFiles("game"))
 			}
 			entry, _ := inv.Lookup("game")
-			if len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] != tc.leftover {
-				t.Fatalf("left over files = %v, want [%s]", entry.LeftoverFiles, tc.leftover)
+			if len(leftOverFiles(entry)) != 1 || leftOverFiles(entry)[0] != tc.leftover {
+				t.Fatalf("left over files = %v, want [%s]", leftOverFiles(entry), tc.leftover)
 			}
 			if len(entry.Files) != len(tc.after)+1 {
 				t.Fatalf("files after reinstall = %+v, want the old file kept", entry.Files)
@@ -376,18 +376,18 @@ func TestReinstallClearsUpdateWhenFilesMoved(t *testing.T) {
 			// Installing the same version again leaves nothing new behind,
 			// and a rewritten path is no longer left over.
 			install(tc.after, tc.last)
-			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 {
-				t.Fatalf("left over files after a same-version reinstall = %v", entry.LeftoverFiles)
+			if entry, _ := inv.Lookup("game"); len(leftOverFiles(entry)) != 1 {
+				t.Fatalf("left over files after a same-version reinstall = %v", leftOverFiles(entry))
 			}
 			install(tc.before, tc.last)
-			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 1 || entry.LeftoverFiles[0] == tc.leftover {
-				t.Fatalf("left over files after rewriting the old path = %v", entry.LeftoverFiles)
+			if entry, _ := inv.Lookup("game"); len(leftOverFiles(entry)) != 1 || leftOverFiles(entry)[0] == tc.leftover {
+				t.Fatalf("left over files after rewriting the old path = %v", leftOverFiles(entry))
 			}
 			// A removed file is no longer offered for cleanup.
 			entry, _ = inv.Lookup("game")
-			inv.RemoveFile("game", entry.LeftoverFiles[0])
-			if entry, _ := inv.Lookup("game"); len(entry.LeftoverFiles) != 0 {
-				t.Fatalf("left over files after removing it = %v", entry.LeftoverFiles)
+			inv.RemoveFile("game", leftOverFiles(entry)[0])
+			if entry, _ := inv.Lookup("game"); len(leftOverFiles(entry)) != 0 {
+				t.Fatalf("left over files after removing it = %v", leftOverFiles(entry))
 			}
 		})
 	}
@@ -466,4 +466,16 @@ func TestSourceSwitchKeepsComparingUploadsMatchedByID(t *testing.T) {
 	if pending := inv.PendingUpdateFiles("game"); len(pending) != 1 || !pending[0].Changed {
 		t.Fatalf("new build across a sign-out and sign-in = %+v, want an update", pending)
 	}
+}
+
+// leftOverFiles lists the DestPaths of the entry's files marked left over,
+// in inventory order.
+func leftOverFiles(entry inventory.Entry) []string {
+	var paths []string
+	for _, file := range entry.Files {
+		if file.LeftOver {
+			paths = append(paths, file.DestPath)
+		}
+	}
+	return paths
 }

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +84,41 @@ type DownloadedFile struct {
 	UnifiedName   bool      `json:"unified_name,omitempty"`
 	FileType      string    `json:"file_type,omitempty"`
 	SourceArchive string    `json:"source_archive,omitempty"`
+
+	// LeftOver marks a file of an upload that its latest reinstall did not
+	// write, such as a track an older version named differently. Manage
+	// offers it for deletion; nothing deletes it automatically.
+	LeftOver bool `json:"left_over,omitempty"`
+}
+
+// UploadName is the itch.io upload a file was installed from: the archive
+// for an extracted file, otherwise the downloaded upload itself.
+func (f DownloadedFile) UploadName() string {
+	if f.SourceArchive != "" {
+		return f.SourceArchive
+	}
+	if f.OriginalUpload != "" {
+		return f.OriginalUpload
+	}
+	return f.Filename
+}
+
+// contentKind is a file's content kind, also for rows written before
+// content_kind existed.
+func (f DownloadedFile) contentKind() string {
+	if f.ContentKind == ContentKindMusic || f.FileType == FileTypeMusic {
+		return ContentKindMusic
+	}
+	if f.ContentKind != "" {
+		return f.ContentKind
+	}
+	return ContentKindROM
+}
+
+// FileOwner is one inventory record of a file on a content source.
+type FileOwner struct {
+	GameURL string
+	File    DownloadedFile
 }
 
 type UpstreamFile struct {
@@ -138,10 +175,6 @@ type Entry struct {
 	// the listed version against it rather than against every file ever
 	// recorded for the upload.
 	AcknowledgedUploads map[string]string `json:"acknowledged_uploads,omitempty"`
-	// LeftoverFiles holds the DestPaths of files recorded for an upload that
-	// its latest complete reinstall did not write: left over from an older
-	// version. They stay on disk and in Files until you remove them.
-	LeftoverFiles []string `json:"leftover_files,omitempty"`
 }
 
 // UploadInstall describes one upload whose install finished.
@@ -228,7 +261,87 @@ func Load(path string) (*Inventory, error) {
 		inv.Entries = make(map[string]*Entry)
 	}
 	logger.Debug("inventory: loaded %d entries from %s", len(inv.Entries), path)
+	inv.warnSharedPaths()
 	return &inv, nil
+}
+
+// fileIdentity returns the source and source-relative path of a recorded
+// file, keyed the way FAT32 compares names.
+func fileIdentity(file DownloadedFile) (string, string, bool) {
+	sourceID, rel := file.SourceID, file.RelativePath
+	if sourceID == "" || rel == "" {
+		identity, ok := roms.DescribeDestination(file.DestPath)
+		if !ok {
+			return "", "", false
+		}
+		sourceID, rel = identity.SourceID, identity.RelativePath
+	}
+	return sourceID, strings.ToLower(path.Clean(filepath.ToSlash(rel))), true
+}
+
+// OwnerOf returns every inventory record of the file at relativePath on
+// sourceID. Names are compared case-insensitively, as FAT32 does. More than
+// one owner means two records share the file; downloads never create that,
+// but inventories written before the check could.
+func (inv *Inventory) OwnerOf(sourceID, relativePath string) []FileOwner {
+	want := strings.ToLower(path.Clean(filepath.ToSlash(relativePath)))
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	var owners []FileOwner
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			if source, rel, ok := fileIdentity(file); ok && source == sourceID && rel == want {
+				owners = append(owners, FileOwner{GameURL: gameURL, File: file})
+			}
+		}
+	}
+	sort.Slice(owners, func(i, j int) bool { return owners[i].GameURL < owners[j].GameURL })
+	return owners
+}
+
+// warnSharedPaths reports files that more than one game records. It changes
+// nothing: deleting either game keeps the file (see Manage), and the user
+// decides what to remove.
+func (inv *Inventory) warnSharedPaths() {
+	games := make(map[string][]string)
+	shown := make(map[string]string)
+	var keys []string
+	for gameURL, entry := range inv.Entries {
+		for _, file := range entry.Files {
+			source, rel, ok := fileIdentity(file)
+			if !ok {
+				continue
+			}
+			key := source + ":" + rel
+			if len(games[key]) == 0 {
+				keys = append(keys, key)
+				shown[key] = source + ":" + filepath.ToSlash(file.RelativePath)
+				if file.RelativePath == "" {
+					shown[key] = key
+				}
+			}
+			if !containsString(games[key], gameURL) {
+				games[key] = append(games[key], gameURL)
+			}
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if owners := games[key]; len(owners) > 1 {
+			sort.Strings(owners)
+			logger.Warn("inventory: %s is recorded by %d games (%s); deleting one keeps the file",
+				shown[key], len(owners), strings.Join(owners, ", "))
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes the inventory to path atomically (write to .tmp then rename).
@@ -333,9 +446,9 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 
 // CommitUploadInstall acknowledges one upload after every file of its install
 // is recorded. It clears the upload's update unless a newer version was seen
-// while the download ran, and records files of the same upload that the
-// install did not write as left over from an older version. Those files are
-// never deleted here.
+// while the download ran, and marks files of the same upload that the
+// install did not write as left over from an older version, as MarkLeftOver
+// does. Those files are never deleted here.
 func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall) {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
@@ -366,29 +479,22 @@ func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall)
 		}
 	}
 
-	written := make(map[string]bool, len(install.Written))
-	for _, path := range install.Written {
-		written[filepath.Clean(path)] = true
-	}
-	leftover := make([]string, 0, len(e.LeftoverFiles))
-	for _, path := range e.LeftoverFiles {
-		if !written[filepath.Clean(path)] {
-			leftover = append(leftover, path)
+	// A file of this upload the install wrote is current. One it did not
+	// write is left over when it is older, or when the install would have
+	// rewritten it; another build the install did not pick keeps its mark.
+	written := leftOverKeys(install.Written)
+	belongs := func(file DownloadedFile) bool {
+		if file.DestPath == "" || !fileMatchesUpload(file, identity) {
+			return false
 		}
-	}
-	for _, file := range e.Files {
-		if file.DestPath == "" || written[filepath.Clean(file.DestPath)] || !fileMatchesUpload(file, identity) ||
-			slices.Contains(leftover, file.DestPath) {
-			continue
+		if written[leftOverKey(file.DestPath)] {
+			return true
 		}
 		older, conclusive := fingerprintChanged(file.UploadFingerprint, install.Fingerprint)
-		if (older && conclusive) || install.Replaces == nil || install.Replaces(file) {
-			leftover = append(leftover, file.DestPath)
-		}
+		return (older && conclusive) || install.Replaces == nil || install.Replaces(file)
 	}
-	e.LeftoverFiles = nil
-	if len(leftover) > 0 {
-		e.LeftoverFiles = leftover
+	for _, file := range markLeftOverLocked(e, belongs, written) {
+		logger.Info("inventory: %s is left over from an older version of %s", filepath.Base(file.DestPath), install.Filename)
 	}
 }
 
@@ -400,22 +506,54 @@ func sameUpload(a, b UpstreamFile) bool {
 	return fileMatchesUpload(DownloadedFile{OriginalUpload: a.Filename}, b)
 }
 
-// pruneLeftoverFilesLocked drops left over paths that no longer have a file
-// record, after a removal or a clean-up of missing files.
-func pruneLeftoverFilesLocked(e *Entry) {
-	if len(e.LeftoverFiles) == 0 {
-		return
+// MarkLeftOver records which files of one upload a reinstall left behind.
+// Call it after the reinstall commits, with every path it wrote or kept.
+// Each file gameURL recorded from upload, of contentKind ("" for every
+// kind), is flagged LeftOver when written does not hold it and cleared when
+// it does. Paths compare case-insensitively, as FAT32 does. It returns the
+// flagged files. Nothing is deleted.
+func (inv *Inventory) MarkLeftOver(gameURL, upload, contentKind string, written []string) []DownloadedFile {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	entry, ok := inv.Entries[gameURL]
+	if !ok || upload == "" {
+		return nil
 	}
-	kept := e.LeftoverFiles[:0]
-	for _, path := range e.LeftoverFiles {
-		if slices.ContainsFunc(e.Files, func(file DownloadedFile) bool { return file.DestPath == path }) {
-			kept = append(kept, path)
+	return markLeftOverLocked(entry, func(file DownloadedFile) bool {
+		return file.UploadName() == upload && (contentKind == "" || file.contentKind() == contentKind)
+	}, leftOverKeys(written))
+}
+
+// markLeftOverLocked flags each file of entry that belongs to a committed
+// install as LeftOver when written does not hold its path, and clears the
+// flag when it does. Files that do not belong keep their flag. It returns
+// the flagged files.
+func markLeftOverLocked(entry *Entry, belongs func(DownloadedFile) bool, written map[string]bool) []DownloadedFile {
+	var flagged []DownloadedFile
+	for index := range entry.Files {
+		file := &entry.Files[index]
+		if !belongs(*file) {
+			continue
+		}
+		file.LeftOver = !written[leftOverKey(file.DestPath)]
+		if file.LeftOver {
+			flagged = append(flagged, *file)
 		}
 	}
-	e.LeftoverFiles = nil
-	if len(kept) > 0 {
-		e.LeftoverFiles = kept
+	return flagged
+}
+
+// leftOverKey compares paths case-insensitively, as FAT32 does.
+func leftOverKey(path string) string {
+	return strings.ToLower(filepath.Clean(path))
+}
+
+func leftOverKeys(paths []string) map[string]bool {
+	keys := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		keys[leftOverKey(path)] = true
 	}
+	return keys
 }
 
 // Remove deletes the entry for gameURL.
@@ -437,7 +575,6 @@ func (inv *Inventory) Lookup(gameURL string) (Entry, bool) {
 	snap.Files = append([]DownloadedFile(nil), e.Files...)
 	snap.KnownUpstreamFiles = cloneUpstreamFiles(e.KnownUpstreamFiles)
 	snap.AcknowledgedUploads = maps.Clone(e.AcknowledgedUploads)
-	snap.LeftoverFiles = slices.Clone(e.LeftoverFiles)
 	return snap, true
 }
 
@@ -491,7 +628,6 @@ func (inv *Inventory) RemoveFile(gameURL, destPath string) bool {
 		delete(inv.Entries, gameURL)
 		return true
 	}
-	pruneLeftoverFilesLocked(entry)
 	return false
 }
 
@@ -629,7 +765,6 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 		} else {
 			entry.Files = kept
 			entry.VerifiedAt = time.Now()
-			pruneLeftoverFilesLocked(entry)
 		}
 	}
 	inv.mu.Unlock()
@@ -941,7 +1076,7 @@ func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []Up
 			// tracked file must carry the listed version.
 			anyInstalled, allCurrent, hasOlderVersion := false, true, false
 			for _, installed := range e.Files {
-				if !fileMatchesUpload(installed, *file) || slices.Contains(e.LeftoverFiles, installed.DestPath) {
+				if !fileMatchesUpload(installed, *file) || installed.LeftOver {
 					continue
 				}
 				anyInstalled = true
@@ -1009,7 +1144,7 @@ func markReplacementsLocked(e *Entry, files []UpstreamFile, eligible func(int) b
 func missingUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
 	var missing []DownloadedFile
 	for _, installed := range e.Files {
-		if installed.UploadID == "" || slices.Contains(e.LeftoverFiles, installed.DestPath) {
+		if installed.UploadID == "" || installed.LeftOver {
 			continue
 		}
 		if !slices.ContainsFunc(files, func(file UpstreamFile) bool { return fileInstalledFrom(installed, file) }) {
@@ -1194,9 +1329,6 @@ func (inv *Inventory) UpdateFile(gameURL, oldDestPath string, file DownloadedFil
 	for i, f := range e.Files {
 		if f.DestPath == oldDestPath {
 			e.Files[i] = file
-			if index := slices.Index(e.LeftoverFiles, oldDestPath); index >= 0 {
-				e.LeftoverFiles[index] = file.DestPath
-			}
 			return true
 		}
 	}
