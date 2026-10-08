@@ -326,13 +326,14 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 		return
 	}
 	controller.consumeUpdates()
-	model.Platform = "All platforms"
+	// The header names the platform and sort as the filter screen does.
 	// The preview page ignores the platform filter, so name it only once
 	// the catalogue applies it.
+	model.Platform = appui.PlatformLabel("")
 	if controller.cacheReady && controller.platformFilter != "" {
-		model.Platform = controller.platformFilter
+		model.Platform = appui.PlatformLabel(controller.platformFilter)
 	}
-	model.Sort = itchio.SortModeBadge(controller.sortMode)
+	model.Sort = appui.SortLabel(string(controller.sortMode))
 	model.CacheStatus = cacheAgeLabel(time.Now(), controller.cacheFetched.Load())
 	if controller.loading.Load() {
 		model.SetLoading()

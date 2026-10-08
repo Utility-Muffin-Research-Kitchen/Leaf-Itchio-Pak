@@ -270,6 +270,10 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 		model.SetItems(nil)
 	case "signed-out":
 		model.NoticeTitle, model.Notice = "Signed out", "itch.io signed you out. Sign in again from Settings."
+	case "header-labels":
+		// The header names the platform and sort as the filter screen does.
+		model.Platform, model.Sort = appui.PlatformLabel("PSX"), appui.SortLabel("dl")
+		model.CacheStatus = "Cache 47h old"
 	case "long-titles":
 		// Long titles end in "..." before the price column, on the
 		// highlighted row too, where the price takes the row's text color.
