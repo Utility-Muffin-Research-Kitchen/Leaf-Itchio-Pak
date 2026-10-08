@@ -66,6 +66,7 @@ capture download-stalled 960 720 1 2
 capture download-inhibit 960 720 1 0
 capture download-cancelled 960 720 1 0
 capture archive-inspect 960 720 1 0
+capture archive-inspect-long 960 720 1 2
 capture archive-contents 1280 800 0 5
 capture destination-source 960 720 1 0
 capture destination-source 1280 800 0 5
@@ -86,6 +87,9 @@ capture rename-done 960 720 1 0
 capture settings 960 720 1 0
 capture settings 1280 800 0 5
 capture settings-confirm 960 720 1 0
+capture settings-message 960 720 1 2
+capture settings-notice 960 720 1 2
+capture settings-error 960 720 1 2
 capture moderation 960 720 1 0
 capture moderation-tags 1280 800 0 5
 capture about 960 720 1 0

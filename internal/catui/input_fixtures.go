@@ -133,7 +133,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled", "archive-inspect":
+	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled",
+		"archive-inspect", "archive-inspect-long":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -141,6 +142,10 @@ func RunInputFixture(config InputFixtureConfig) error {
 		switch config.Screen {
 		case "archive-inspect":
 			model.Filename = "Inspecting soundtrack-and-game.zip"
+			model.Downloaded, model.Total, model.FileCount = 128*1024, 640*1024, 1
+		case "archive-inspect-long":
+			// A long upload name, as itch.io creators often publish them.
+			model.Filename = "Inspecting Leafbound Deluxe Edition (PlayStation) v1.2.3 English Patch.zip"
 			model.Downloaded, model.Total, model.FileCount = 128*1024, 640*1024, 1
 		case "download-done":
 			model.State = appui.DownloadProgressDone
@@ -265,7 +270,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
-	case "settings", "settings-confirm", "moderation", "moderation-tags":
+	case "settings", "settings-confirm", "settings-message", "settings-notice", "settings-error",
+		"moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
 			{Key: appui.SettingsAccount, Label: "itch.io Account", Value: "leafbound-player", ActionEnabled: true},
@@ -303,6 +309,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 		if config.Screen == "settings-confirm" {
 			// The sign-in warning moved to the sign-in screen (signin-warning).
 			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
+		}
+		switch config.Screen {
+		case "settings-message":
+			model.SetMessage("Inventory update started. Local downloads stay available during the check.")
+		case "settings-notice":
+			// The longest settings message.
+			model.SetMessage("Signed out. Downloads were not changed. The key stays valid on itch.io until you delete it from your account's API keys.")
+		case "settings-error":
+			model.SetError("Couldn't check your itch.io account. You're still signed in; try again when online.")
 		}
 		screen, screenErr := NewSettingsScreen(ctx, model)
 		if screenErr != nil {
