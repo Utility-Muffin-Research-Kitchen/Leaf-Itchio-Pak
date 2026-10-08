@@ -198,9 +198,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 				{Kind: appui.DestinationItemFolder, Label: "Game Soundtracks", Detail: "Folder", Value: "Game Soundtracks", Enabled: true},
 			})
 		case "destination-confirm":
+			// The names the install writes; a reinstall can replace a file on
+			// the other card.
 			model.SetConfirm("Confirm download destination", "Secondary SD", []string{
-				"Roms/GBC/RPG/Leafbound.gbc",
-				"Roms/GB/Leafbound Bonus.gb",
+				"Roms/GBC/RPG/Leafbound 葉 (2).gbc",
+				"Roms/GBC/RPG",
+				"Primary SD / Roms/GB/leafbound_bonus_v3.gb",
+				"Roms/GB",
 			})
 		}
 		screen, screenErr := NewDestinationScreen(ctx, model)

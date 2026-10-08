@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
@@ -65,7 +67,7 @@ func TestCatROMDestinationSecondarySubfolder(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	cfg := &settings.Config{}
 	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
-		"Game", []roms.Upload{{Filename: "game.gbc"}})
+		nil, itchio.Game{Title: "Game"}, []roms.Upload{{Filename: "game.gbc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +121,7 @@ func TestCatDestinationHidesSymlinkEscape(t *testing.T) {
 		"GBC": {SourceID: "primary", RelativePath: "escape"},
 	}}
 	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
-		"Game", []roms.Upload{{Filename: "game.gbc"}})
+		nil, itchio.Game{Title: "Game"}, []roms.Upload{{Filename: "game.gbc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func TestCatDestinationStopsWhenSelectedCardIsRemoved(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	cfg := &settings.Config{}
 	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
-		"Game", []roms.Upload{{Filename: "game.gbc"}})
+		nil, itchio.Game{Title: "Game"}, []roms.Upload{{Filename: "game.gbc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +196,7 @@ func TestCatDestinationRechecksCardAfterSummary(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	cfg := &settings.Config{}
 	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
-		"Game", []roms.Upload{{Filename: "game.gbc"}})
+		nil, itchio.Game{Title: "Game"}, []roms.Upload{{Filename: "game.gbc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ func TestCatDestinationVisitsEachCanonicalSystemOnce(t *testing.T) {
 	sources, catalog, cfgPath := destinationFixture(t)
 	cfg := &settings.Config{}
 	flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath,
-		"Collection", []roms.Upload{
+		nil, itchio.Game{Title: "Collection"}, []roms.Upload{
 			{Filename: "one.gb"},
 			{Filename: "two.gbc"},
 			{Filename: "three.gb"},
@@ -308,5 +310,83 @@ func TestCatPSXArchiveDestinationKeepsCueAndBinOnSecondary(t *testing.T) {
 	dirs := flow.ArchiveROMDirs()
 	if dirs[".cue"] != want || dirs[".bin"] != want {
 		t.Fatalf("PSX archive dirs = %#v, want %q", dirs, want)
+	}
+}
+
+// The confirm screen names each file the way the install will write it, not
+// by its upload name. On the device it said "Roms/GB/power_bee_v3.gb" while
+// the reinstall wrote the game's existing "Power Bee (GB) (2).gb".
+func TestCatROMDestinationConfirmShowsTheInstalledName(t *testing.T) {
+	game := itchio.Game{Title: "Power Bee (GB)", URL: "https://dev.itch.io/power-bee"}
+	upload := roms.Upload{Filename: "power_bee_v3.gb"}
+	for _, tc := range []struct {
+		name      string
+		unified   bool
+		unknown   bool   // a file the app does not know holds the title's name
+		installed string // where an earlier install of the upload is
+		secondary bool   // the earlier install is on the secondary card
+		want      string
+	}{
+		{name: "new install keeps the upload name", want: "Roms/GB/power_bee_v3.gb"},
+		{name: "new install with unified naming", unified: true, want: "Roms/GB/Power Bee (GB).gb"},
+		{name: "unified name taken by an unknown file", unified: true, unknown: true,
+			want: "Roms/GB/Power Bee (GB) (2).gb"},
+		{name: "reinstall keeps the existing name", unified: true, unknown: true,
+			installed: "Power Bee (GB) (2).gb", want: "Roms/GB/Power Bee (GB) (2).gb"},
+		{name: "reinstall in another folder", installed: "Arcade/power_bee_v3.gb",
+			want: "Roms/GB/Arcade/power_bee_v3.gb"},
+		{name: "reinstall on the other card", installed: "power_bee_v3.gb", secondary: true,
+			want: "Secondary SD / Roms/GB/power_bee_v3.gb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sources, catalog, cfgPath := destinationFixture(t)
+			configureManageFixture(t, sources, catalog)
+			gbDir := filepath.Join(sources[0].RomsPath, "GB")
+			if err := os.MkdirAll(gbDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.unknown {
+				if err := os.WriteFile(filepath.Join(gbDir, "Power Bee (GB).gb"), []byte("unknown"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+			if tc.installed != "" {
+				dir := gbDir
+				if tc.secondary {
+					dir = filepath.Join(sources[1].RomsPath, "GB")
+				}
+				plantOwnedFile(t, inv, game, upload.Filename, filepath.Join(dir, tc.installed), "earlier")
+			}
+			cfg := &settings.Config{UnifiedNaming: tc.unified}
+			flow, model, err := NewCatROMDestinationFlow(sources, catalog, cfg, cfgPath, inv, game, []roms.Upload{upload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := flow.Activate(model); err != nil { // Primary SD.
+				t.Fatal(err)
+			}
+			model.Cursor = 0 // Save here, in Roms/GB.
+			if complete, err := flow.Activate(model); err != nil || complete || model.Phase != appui.DestinationConfirm {
+				t.Fatalf("summary = %v, state %v, %v", complete, model.Phase, err)
+			}
+			if len(model.SummaryLines) == 0 || model.SummaryLines[0] != tc.want {
+				t.Fatalf("confirm lines = %q, want %q first", model.SummaryLines, tc.want)
+			}
+			if complete, err := flow.Activate(model); err != nil || !complete {
+				t.Fatalf("confirm = %v, %v", complete, err)
+			}
+
+			// The download starts from these paths, and the install names
+			// them the way the confirm screen did.
+			dests := flow.UploadDestPaths()
+			targets, err := planInstallTargets(inv, cfg, game, []romDownload{{Upload: upload, DestPath: dests[0]}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := flow.displayPath(targets[0].final); got != tc.want {
+				t.Fatalf("install writes %q, confirm said %q", got, tc.want)
+			}
+		})
 	}
 }

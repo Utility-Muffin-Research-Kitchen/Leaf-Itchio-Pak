@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -25,6 +27,10 @@ type CatDestinationFlow struct {
 	cfgPath string
 	title   string
 	music   bool
+	// inv and game name the files a ROM download installs; nil inv (archive
+	// and music destinations) means the names are not known yet.
+	inv  *inventory.Inventory
+	game itchio.Game
 
 	targets       []catDestinationTarget
 	uploads       []roms.Upload
@@ -39,21 +45,28 @@ type CatDestinationFlow struct {
 	preferences   map[string]settings.RememberedDestination
 }
 
+// NewCatROMDestinationFlow chooses where game's uploads download. inv lets
+// the confirm screen name each file the way the install will.
 func NewCatROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
-	cfg *settings.Config, cfgPath, title string, uploads []roms.Upload) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	cfg *settings.Config, cfgPath string, inv *inventory.Inventory, game itchio.Game,
+	uploads []roms.Upload) (*CatDestinationFlow, *appui.DestinationModel, error) {
 	exts := make([]string, len(uploads))
 	for index, upload := range uploads {
 		exts[index] = strings.ToLower(roms.ROMExt(upload.Filename))
 	}
-	return newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, title, uploads, exts, false)
+	return NewCatLogicalROMDestinationFlow(sources, catalog, cfg, cfgPath, inv, game, uploads, exts)
 }
 
 // NewCatLogicalROMDestinationFlow chooses destinations using the inspected
 // inner ROM extensions while retaining the outer upload filenames.
 func NewCatLogicalROMDestinationFlow(sources leaf.SourceList, catalog *leaf.Catalog,
-	cfg *settings.Config, cfgPath, title string, uploads []roms.Upload,
-	exts []string) (*CatDestinationFlow, *appui.DestinationModel, error) {
-	return newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, title, uploads, exts, false)
+	cfg *settings.Config, cfgPath string, inv *inventory.Inventory, game itchio.Game,
+	uploads []roms.Upload, exts []string) (*CatDestinationFlow, *appui.DestinationModel, error) {
+	flow, model, err := newCatROMDestinationFlow(sources, catalog, cfg, cfgPath, game.Title, uploads, exts, false)
+	if flow != nil {
+		flow.inv, flow.game = inv, game
+	}
+	return flow, model, err
 }
 
 // NewCatArchiveROMDestinationFlow chooses one directory per distinct ROM
@@ -209,6 +222,26 @@ func (flow *CatDestinationFlow) DestPaths() []string {
 	return append([]string(nil), flow.destPaths...)
 }
 
+// UploadDestPaths returns where each upload downloads to: the chosen folder,
+// or the path an earlier install of the same upload has, which a reinstall
+// replaces.
+func (flow *CatDestinationFlow) UploadDestPaths() []string {
+	paths := make([]string, 0, len(flow.uploads))
+	for index, upload := range flow.uploads {
+		if index >= len(flow.destPaths) {
+			break
+		}
+		dest := filepath.Join(flow.destPaths[index], upload.Filename)
+		if flow.inv != nil {
+			if existing := flow.inv.ExistingDestPath(flow.game.URL, upload.Filename); existing != "" {
+				dest = existing
+			}
+		}
+		paths = append(paths, dest)
+	}
+	return paths
+}
+
 // ArchiveROMDirs returns the chosen directory keyed by each inspected inner
 // extension, ready for ZIPPlan.ROMDirs.
 func (flow *CatDestinationFlow) ArchiveROMDirs() map[string]string {
@@ -360,12 +393,16 @@ func (flow *CatDestinationFlow) finalize(_ *appui.DestinationModel) (bool, error
 	return true, nil
 }
 
+// summaryLines lists the files a ROM download installs, then each chosen
+// folder. An archive's file names are decided while it is extracted, so its
+// lines name only the folders.
 func (flow *CatDestinationFlow) summaryLines() []string {
 	var lines []string
 	if flow.music {
 		rel, _ := leaf.RelativeWithin(flow.selected.Root, flow.chosenDirs["music"])
 		return []string{filepath.ToSlash(rel)}
 	}
+	installed := flow.installPaths()
 	for targetIndex, target := range flow.targets {
 		dir := flow.chosenDirs[target.key]
 		rel, _ := leaf.RelativeWithin(flow.selected.Root, dir)
@@ -374,7 +411,10 @@ func (flow *CatDestinationFlow) summaryLines() []string {
 			if mappedTarget != targetIndex || uploadIndex >= len(flow.uploads) {
 				continue
 			}
-			if flow.uploads[uploadIndex].Filename != "" {
+			if uploadIndex < len(installed) {
+				lines = append(lines, flow.displayPath(installed[uploadIndex]))
+				added = true
+			} else if flow.uploads[uploadIndex].Filename != "" {
 				lines = append(lines, filepath.ToSlash(filepath.Join(rel, flow.uploads[uploadIndex].Filename)))
 				added = true
 			}
@@ -386,6 +426,48 @@ func (flow *CatDestinationFlow) summaryLines() []string {
 		lines = append(lines, label)
 	}
 	return lines
+}
+
+// installPaths returns where the install leaves each upload, after name
+// collisions and unified naming, or nil when that is not known: for archive
+// and music destinations, or when the names cannot be planned (the download
+// then reports why).
+func (flow *CatDestinationFlow) installPaths() []string {
+	if flow.inv == nil {
+		return nil
+	}
+	dests := flow.UploadDestPaths()
+	if len(dests) != len(flow.uploads) {
+		return nil
+	}
+	downloads := make([]romDownload, len(dests))
+	for index, dest := range dests {
+		downloads[index] = romDownload{Upload: flow.uploads[index], DestPath: dest}
+	}
+	targets, err := planInstallTargets(flow.inv, flow.cfg, flow.game, downloads)
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, len(targets))
+	for index, target := range targets {
+		paths[index] = target.final
+	}
+	return paths
+}
+
+// displayPath shows path relative to its card's root, naming the card when
+// it is not the selected one. A reinstall can replace a file on the other
+// card.
+func (flow *CatDestinationFlow) displayPath(path string) string {
+	if rel, err := leaf.RelativeWithin(flow.selected.Root, path); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	for _, source := range flow.sources {
+		if rel, err := leaf.RelativeWithin(source.Root, path); err == nil {
+			return destinationSourceLabel(source) + " / " + filepath.ToSlash(rel)
+		}
+	}
+	return filepath.Base(path)
 }
 
 func catDestinationDirectorySafe(root, target string, create bool) error {

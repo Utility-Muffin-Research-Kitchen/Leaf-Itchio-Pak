@@ -62,7 +62,9 @@ formats. Depending on Settings and the upload, it may ask for:
 2. an archive subset or format;
 3. a mounted SD card;
 4. a folder inside the canonical system or Music root;
-5. final confirmation of every relative output path.
+5. final confirmation of every relative output path, with each file under the
+   name it's saved as. For an archive, the confirmation lists only the
+   folders, because the app names its files as it extracts them.
 
 With **ROM Selection** on `auto`, the app downloads every supported upload
 together when each one is for a different system. A PlayStation game's CUE/BIN

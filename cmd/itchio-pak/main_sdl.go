@@ -668,10 +668,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			var flowErr error
 			if len(plan.LogicalExts) > 0 {
 				destinationFlow, destinationModel, flowErr = ui.NewCatLogicalROMDestinationFlow(
-					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads, plan.LogicalExts)
+					sources, catalog, cfg, cfgPath, inv, activeGame, plan.Uploads, plan.LogicalExts)
 			} else {
 				destinationFlow, destinationModel, flowErr = ui.NewCatROMDestinationFlow(
-					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
+					sources, catalog, cfg, cfgPath, inv, activeGame, plan.Uploads)
 			}
 			if flowErr != nil {
 				downloadSelectModel.SetError(flowErr.Error())
@@ -1038,18 +1038,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 							}
 							break
 						}
-						resolved := &ui.CatDownloadPlan{Uploads: append([]roms.Upload(nil), destinationPlan.Uploads...)}
+						resolved := &ui.CatDownloadPlan{
+							Uploads:   append([]roms.Upload(nil), destinationPlan.Uploads...),
+							DestPaths: destinationFlow.UploadDestPaths(),
+						}
 						if len(resolved.Uploads) == 1 {
 							resolved.Kind = ui.CatDownloadPlanDirect
 						} else {
 							resolved.Kind = ui.CatDownloadPlanMulti
-						}
-						for index, upload := range resolved.Uploads {
-							dest := filepath.Join(dirs[index], upload.Filename)
-							if existing := inv.ExistingDestPath(activeGame.URL, upload.Filename); existing != "" {
-								dest = existing
-							}
-							resolved.DestPaths = append(resolved.DestPaths, dest)
 						}
 						destinationFlow, destinationModel, destinationScreen, destinationPlan = nil, nil, nil, nil
 						if err := startDownloadPlan(resolved); err != nil {
