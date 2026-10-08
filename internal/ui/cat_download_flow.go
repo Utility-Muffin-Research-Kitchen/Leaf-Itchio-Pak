@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -75,25 +77,51 @@ type CatDownloadFlow struct {
 	mode    catDownloadMode
 	keys    []itchio.OwnedKey
 	uploads []roms.Upload
+	hidden  []roms.Upload // desktop and web builds behind "Show all files"
 	updates chan catDownloadUpdate
 	plan    *CatDownloadPlan
+
+	// ctx bounds every request the flow makes: discovery, purchase listings
+	// and format probes. Close cancels it when you leave the download screens.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewCatDownloadFlow(client *itchio.Client, cfg *settings.Config, game itchio.Game,
 	detail *itchio.GameDetail, inv *inventory.Inventory, wake func()) *CatDownloadFlow {
+	if detail != nil && detail.Data != nil {
+		game.IsFree = detail.Data.Pricing() != itchio.PricingPaid
+	}
 	flow := &CatDownloadFlow{
 		client: client, cfg: cfg, game: game, detail: detail, inv: inv, wake: wake,
 		updates: make(chan catDownloadUpdate, 2),
 	}
+	flow.ctx, flow.cancel = context.WithCancel(context.Background())
 	flow.discover()
 	return flow
+}
+
+// Close stops the flow's requests, including any wait before a rate-limit
+// retry. Call it when the download screens are left; later results are
+// dropped with the flow. Plans already handed to a download keep working.
+func (flow *CatDownloadFlow) Close() {
+	if flow.cancel != nil {
+		flow.cancel()
+	}
+}
+
+func (flow *CatDownloadFlow) requestContext() context.Context {
+	if flow.ctx == nil {
+		return context.Background()
+	}
+	return flow.ctx
 }
 
 func (flow *CatDownloadFlow) discover() {
 	go func() {
 		update := catDownloadUpdate{}
-		if !flow.game.IsFree && flow.cfg.APIKey != "" && flow.detail != nil && flow.detail.GameID != "" {
-			keys, err := flow.client.FetchOwnedKeys(flow.cfg.APIKey, flow.detail.GameID)
+		if !flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
+			keys, err := flow.client.FetchOwnedKeysContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID)
 			if err != nil {
 				update.err = err
 			} else if len(keys) > 1 {
@@ -102,32 +130,146 @@ func (flow *CatDownloadFlow) discover() {
 			} else if len(keys) == 1 {
 				update = flow.fetchForKey(keys[0])
 			} else {
-				update.err = fmt.Errorf("game is not owned by the configured itch.io account")
+				update.err = itchio.ErrNotOwned
 			}
+		} else if flow.game.IsFree && flow.cfg.SignedIn() && flow.detail != nil && flow.detail.GameID != "" {
+			update = flow.fetchFree()
 		} else {
-			uploads, err := flow.client.FetchUploads(flow.game.URL)
-			update.kind, update.err = catDownloadUpdateUploads, err
-			for _, upload := range uploads {
-				update.uploads = append(update.uploads, roms.Upload{
-					Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-				})
-			}
+			update = flow.fetchWeb()
 		}
 		flow.publish(update)
 	}()
 }
 
-func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate {
-	downloadKeyID := strconv.FormatInt(key.ID, 10)
-	uploads, err := flow.client.FetchUploadsForKey(flow.cfg.APIKey, flow.detail.GameID, downloadKeyID)
+// fetchWeb lists uploads through the anonymous web download flow.
+func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
+	uploads, err := flow.client.FetchWebUploadsContext(flow.requestContext(), flow.game.URL)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, webUploadListing(uploads), nil))
+	return update
+}
+
+// listedUploads turns one upload list into the uploads you choose from. It
+// is the one place that gives each upload the list it was chosen from: the
+// install uses that list to tell an update, whose old upload the list no
+// longer offers, from another build it still offers, and seeds update
+// checks with it. install is nil for the web flow.
+func listedUploads(uploads []itchio.Upload, listing *roms.UploadListing, install *roms.InstallSession) []roms.Upload {
+	var listed []roms.Upload
 	for _, upload := range uploads {
-		update.uploads = append(update.uploads, roms.Upload{
-			Filename: upload.Filename, UploadID: upload.UploadID,
-			DownloadKeyID: downloadKeyID, NeedsFormat: upload.NeedsFormat,
+		listed = append(listed, roms.Upload{
+			Filename: upload.Filename, URL: upload.URL, UploadID: upload.UploadID,
+			UploadFingerprint: upload.Fingerprint(), NeedsFormat: upload.NeedsFormat,
+			DesktopOrWeb: upload.DesktopOrWebOnly(), Install: install, Listing: listing,
 		})
 	}
+	return listed
+}
+
+// apiUploadListing and webUploadListing record what a listing offered, so
+// the install chosen from it can seed update checks. Web builds are left
+// out, as the update check leaves them out.
+func apiUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(true, uploads)
+}
+
+func webUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(false, uploads)
+}
+
+func uploadListing(api bool, uploads []itchio.Upload) *roms.UploadListing {
+	listing := &roms.UploadListing{API: api, Uploads: make([]roms.ListedUpload, 0, len(uploads))}
+	for _, upload := range uploads {
+		if upload.Type == "html" {
+			continue
+		}
+		listing.Uploads = append(listing.Uploads, roms.ListedUpload{
+			Filename: upload.Filename, DisplayName: upload.DisplayName,
+			UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
+			DesktopOrWebOnly: upload.DesktopOrWebOnly(), Soundtrack: upload.Type == "soundtrack",
+		})
+	}
+	return listing
+}
+
+// fetchFree lists a free or name-your-own-price game through the API when a
+// key is set, which skips the web download handshake and its download_url
+// POST. The listing starts one install with no purchase ID.
+//
+// It falls back to the web flow at most once, when the API fails or lists
+// nothing, so the two endpoints are never tried in a loop. A rate limit or
+// cancellation is final: trying the other endpoint would ignore it. When the
+// API refused access and the web flow found no download link either, the
+// access error is the one reported; any other web failure, such as being
+// offline, is reported as is.
+func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
+	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, "")
+	switch {
+	case err == nil && len(uploads) > 0:
+		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
+		install := roms.NewInstallSession(flow.detail.GameID, "")
+		return catDownloadUpdate{kind: catDownloadUpdateUploads,
+			uploads: flow.dropTextMarkdown(listedUploads(uploads, apiUploadListing(uploads), install))}
+	case errors.Is(err, itchio.ErrRateLimited) || errors.Is(err, context.Canceled):
+		return catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	case err != nil:
+		logger.Warn("cat download: free game API listing failed, using the web flow: %v", err)
+	default:
+		logger.Info("cat download: API lists no uploads for free game_id=%s, using the web flow", flow.detail.GameID)
+	}
+	update := flow.fetchWeb()
+	if errors.Is(update.err, itchio.ErrNoWebDownload) && errors.Is(err, itchio.ErrNoAccess) {
+		update.err = err
+	}
 	return update
+}
+
+// fetchForKey lists the uploads a purchase grants. Each listing starts a new
+// install: its uploads share one session for probes, inspection, refreshed
+// URLs, and every file downloaded.
+func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate {
+	downloadKeyID := strconv.FormatInt(key.ID, 10)
+	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, downloadKeyID)
+	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
+	var listing *roms.UploadListing
+	if err == nil {
+		listing = apiUploadListing(uploads)
+	}
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, listing, install))
+	return update
+}
+
+// mdProbeBytes is how much of a ".md" upload is read to tell a Mega Drive
+// ROM from Markdown; roms.MDIsROM checks the first 4 KB for text.
+const mdProbeBytes = 4096
+
+// dropTextMarkdown removes ".md" uploads that are text, such as a README
+// published next to the game. ".md" is also the Mega Drive extension, so
+// each one is checked by its first bytes with the same rule as archive
+// members. An upload that cannot be checked stays offered.
+func (flow *CatDownloadFlow) dropTextMarkdown(uploads []roms.Upload) []roms.Upload {
+	kept := make([]roms.Upload, 0, len(uploads))
+	for _, upload := range uploads {
+		if strings.EqualFold(roms.ROMExt(upload.Filename), ".md") && flow.uploadIsText(upload) {
+			logger.Info("download: not offering %s; it is text, not a Mega Drive ROM", upload.Filename)
+			continue
+		}
+		kept = append(kept, upload)
+	}
+	return kept
+}
+
+func (flow *CatDownloadFlow) uploadIsText(upload roms.Upload) bool {
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, upload)
+	if err == nil {
+		var header []byte
+		if header, err = flow.client.FetchFileHeader(cdnURL, mdProbeBytes); err == nil {
+			return !roms.MDIsROM(header)
+		}
+	}
+	logger.Warn("download: could not check %s for Markdown, offering it: %v", upload.Filename, err)
+	return false
 }
 
 func (flow *CatDownloadFlow) publish(update catDownloadUpdate) {
@@ -203,6 +345,12 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 	case catDownloadModeUploads:
 		if model.Cursor < len(flow.uploads) {
 			flow.plan = flow.planForUpload(flow.uploads[model.Cursor])
+		} else if len(flow.hidden) > 0 {
+			// "Show all files": list the set-aside builds last and move
+			// to the first of them.
+			first := len(flow.uploads)
+			flow.chooseUpload(model, append(append([]roms.Upload(nil), flow.uploads...), flow.hidden...), nil)
+			model.Cursor = first
 		}
 	case catDownloadModeFormats:
 		if model.Cursor >= len(flow.uploads) || model.Cursor >= len(model.Choices) {
@@ -224,13 +372,7 @@ func (flow *CatDownloadFlow) Choose(model *appui.DownloadSelectModel) {
 }
 
 func (flow *CatDownloadFlow) detect(upload roms.Upload) {
-	var cdnURL string
-	var err error
-	if upload.DownloadKeyID != "" {
-		cdnURL, err = flow.client.ResolveAuthURL(flow.cfg.APIKey, upload.UploadID, upload.DownloadKeyID)
-	} else {
-		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: upload.Filename, URL: upload.URL})
-	}
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, upload)
 	if err != nil {
 		flow.publish(catDownloadUpdate{kind: catDownloadUpdateDetected, upload: upload, err: err})
 		return
@@ -251,7 +393,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		model.SetError("No downloadable files were found for this game.")
 		return
 	}
-	flow.uploads = uploads
+	flow.uploads, flow.hidden = uploads, nil
 	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {
 		// BIN is ambiguous: it is commonly a PlayStation companion track, but
 		// Mega Drive homebrew is also frequently published as a lone .bin.
@@ -272,13 +414,20 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 			known = append(known, upload)
 		}
 	}
+	// Desktop and web builds are never picked automatically. While another
+	// file is on offer they wait behind "Show all files"; when only they
+	// remain, you choose.
+	known, setAside := splitSetAside(known)
+	unknown = setAsideLast(unknown)
+	if len(setAside) > 0 {
+		logger.Debug("cat download: %d desktop or web build(s) set aside", len(setAside))
+	}
+	if len(known) == 0 && len(setAside) > 0 {
+		flow.chooseUpload(model, setAside, nil)
+		return
+	}
 	if flow.cfg.ROMSelection == "ask" && len(known) > 0 && !isPairedPSXUploadSet(known) {
-		flow.mode, flow.uploads = catDownloadModeUploads, known
-		choices := make([]appui.DownloadChoice, 0, len(known))
-		for _, upload := range known {
-			choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
-		}
-		model.SetChoices("Choose file to download", choices)
+		flow.chooseUpload(model, known, setAside)
 		return
 	}
 	if len(known) == 1 {
@@ -290,16 +439,11 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		for _, upload := range known {
 			hasArchive = hasArchive || isArchive(upload.Filename)
 		}
-		if !hasArchive {
+		if !hasArchive && !hasAlternativeBuilds(known) {
 			flow.plan = flow.planForUploads(known)
 			return
 		}
-		flow.mode, flow.uploads = catDownloadModeUploads, known
-		choices := make([]appui.DownloadChoice, 0, len(known))
-		for _, upload := range known {
-			choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
-		}
-		model.SetChoices("Choose file to download", choices)
+		flow.chooseUpload(model, known, setAside)
 		return
 	}
 	flow.mode, flow.uploads = catDownloadModeFormats, unknown
@@ -310,6 +454,70 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		})
 	}
 	model.SetChoices("Choose file and format", choices)
+}
+
+// chooseUpload lists uploads for you to pick from. hidden files wait behind
+// a last "Show all files" row.
+func (flow *CatDownloadFlow) chooseUpload(model *appui.DownloadSelectModel, uploads, hidden []roms.Upload) {
+	flow.mode, flow.uploads, flow.hidden = catDownloadModeUploads, uploads, hidden
+	choices := make([]appui.DownloadChoice, 0, len(uploads)+1)
+	for _, upload := range uploads {
+		choices = append(choices, appui.DownloadChoice{Title: upload.Filename, Badge: formatBadge(upload.Filename)})
+	}
+	if len(hidden) > 0 {
+		choices = append(choices, appui.DownloadChoice{Title: "Show all files", Detail: fmt.Sprintf("%d more", len(hidden))})
+	}
+	model.SetChoices("Choose file to download", choices)
+}
+
+// setAside reports whether upload is a desktop or web build that is not a
+// ROM itself. A file with a ROM extension is kept even when its author
+// tagged it with a platform.
+func setAside(upload roms.Upload) bool {
+	return upload.DesktopOrWeb && (upload.NeedsFormat || isArchive(upload.Filename))
+}
+
+// splitSetAside separates set-aside builds from the other uploads, keeping
+// the listing order of each.
+func splitSetAside(uploads []roms.Upload) (kept, aside []roms.Upload) {
+	for _, upload := range uploads {
+		if setAside(upload) {
+			aside = append(aside, upload)
+		} else {
+			kept = append(kept, upload)
+		}
+	}
+	return kept, aside
+}
+
+// setAsideLast moves set-aside builds to the end, keeping the listing order.
+func setAsideLast(uploads []roms.Upload) []roms.Upload {
+	kept, aside := splitSetAside(uploads)
+	return append(kept, aside...)
+}
+
+// hasAlternativeBuilds reports whether two uploads target the same cartridge
+// system, which makes them alternative builds of one game (an update and the
+// original jam release, say) rather than companions for different systems.
+// PlayStation files are left out: CUE/BIN tracks and the discs of one game
+// are a dependent set, not competing builds.
+func hasAlternativeBuilds(uploads []roms.Upload) bool {
+	seen := make(map[string]bool, len(uploads))
+	for _, upload := range uploads {
+		ext := strings.ToLower(roms.ROMExt(upload.Filename))
+		if roms.IsPSXExt(ext) {
+			continue
+		}
+		system := roms.DestinationDir(ext)
+		if system == "" {
+			continue
+		}
+		if seen[system] {
+			return true
+		}
+		seen[system] = true
+	}
+	return false
 }
 
 func isPairedPSXUploadSet(uploads []roms.Upload) bool {

@@ -1,8 +1,11 @@
 package itchio
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,12 +26,16 @@ func TestHTTPClientHasBoundedMetadataTransport(t *testing.T) {
 	if !ok {
 		t.Fatalf("transport = %T, want *uaTransport", client.Transport)
 	}
-	if !strings.Contains(ua.userAgent, browserUserAgent) || !strings.Contains(ua.userAgent, productName+"/v0.1.0") {
+	if ua.userAgent != "Leaf-Itchio-Pak/v0.1.0 (+"+productURL+")" {
 		t.Fatalf("user agent = %q", ua.userAgent)
 	}
-	fallback, ok := ua.wrapped.(*h2FallbackTransport)
+	limiter, ok := ua.wrapped.(*rateLimitTransport)
 	if !ok {
-		t.Fatalf("wrapped transport = %T, want *h2FallbackTransport", ua.wrapped)
+		t.Fatalf("wrapped transport = %T, want *rateLimitTransport", ua.wrapped)
+	}
+	fallback, ok := limiter.wrapped.(*h2FallbackTransport)
+	if !ok {
+		t.Fatalf("limited transport = %T, want *h2FallbackTransport", limiter.wrapped)
 	}
 	h1, ok := fallback.h1.(*http.Transport)
 	if !ok {
@@ -74,5 +81,61 @@ func TestH2FallbackCachesH1OnlyHost(t *testing.T) {
 	}
 	if got := h1Calls.Load(); got != 2 {
 		t.Fatalf("h1 requests = %d, want 2", got)
+	}
+}
+
+func TestProductUserAgentSanitizesVersion(t *testing.T) {
+	for version, want := range map[string]string{
+		"":             "dev",
+		"  ":           "dev",
+		"0.2.0":        "0.2.0",
+		"1.0 (beta)/x": "1.0--beta--x",
+	} {
+		if got := productUserAgent(version); got != productName+"/"+want+" (+"+productURL+")" {
+			t.Errorf("productUserAgent(%q) = %q", version, got)
+		}
+	}
+}
+
+func TestStandardTLSNegotiatesH2AndH1WithVerification(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
+	h2 := httptest.NewUnstartedServer(handler)
+	h2.EnableHTTP2 = true
+	h2.StartTLS()
+	defer h2.Close()
+	h1 := httptest.NewTLSServer(handler)
+	defer h1.Close()
+
+	roots := x509.NewCertPool()
+	roots.AddCert(h2.Certificate())
+	roots.AddCert(h1.Certificate())
+	tlsRootCAs = roots
+	defer func() { tlsRootCAs = nil }()
+
+	client := newHTTPClient("dev")
+	for _, test := range []struct {
+		server *httptest.Server
+		proto  string
+	}{{h2, "HTTP/2.0"}, {h1, "HTTP/1.1"}, {h1, "HTTP/1.1"}} {
+		resp, err := client.Get(test.server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.Proto != test.proto {
+			t.Errorf("%s: proto = %s, want %s", test.server.URL, resp.Proto, test.proto)
+		}
+		// Current Go defaults, not the Go 1.22 GODEBUG set (tlsmlkem=0).
+		if resp.TLS == nil || resp.TLS.Version != tls.VersionTLS13 || resp.TLS.CurveID != tls.X25519MLKEM768 {
+			t.Errorf("%s: TLS state = %+v, want TLS 1.3 with X25519MLKEM768", test.server.URL, resp.TLS)
+		}
+	}
+
+	tlsRootCAs = x509.NewCertPool()
+	for _, server := range []*httptest.Server{h2, h1} {
+		if resp, err := newHTTPClient("dev").Get(server.URL); err == nil {
+			resp.Body.Close()
+			t.Errorf("%s: untrusted certificate accepted", server.URL)
+		}
 	}
 }

@@ -151,7 +151,7 @@ func runSDL() {
 	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
 		logger.SetLevel(logger.LevelFromString(envLevel))
 	}
-	logger.RegisterSecret(cfg.APIKey, "[API-KEY]")
+	logger.RegisterSecret(cfg.AuthToken, "[TOKEN]")
 
 	inventoryPath := filepath.Join(filepath.Dir(cfgPath), "inventory.json")
 	inv, inventoryErr := inventory.Load(inventoryPath)
@@ -229,6 +229,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	imageCache := catui.NewImageCache(50, client.HTTPClient())
 	defer imageCache.Clear()
 	imageCache.SetNotify(func() { _ = ctx.Wake() })
+	client.SetAuthToken(cfg.AuthToken)
 	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() { _ = ctx.Wake() })
 	updateSvc.SetSources(sources)
 	updateSvc.SetLibraryScanRequester(func() (string, error) {
@@ -241,6 +242,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	list := ui.NewCatalogController(client, cfg, cfgPath, cachePath, inv, inventoryPath,
 		updateSvc, ownedCachePath)
 	list.SetWake(func() { _ = ctx.Wake() })
+	account := ui.NewAccount(cfg, cfgPath, ownedCachePath, client)
+	account.SetOwnedChanged(list.ReplaceOwnedGames)
+	account.SetCredentialChanged(updateSvc.TriggerNow)
 	model := appui.NewMainListModel(nil)
 	model.SetLoading()
 	screen, err := catui.NewMainListScreen(ctx, model, imageCache)
@@ -264,6 +268,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		catRouteTags
 		catRouteAbout
 		catRouteCacheRefresh
+		catRouteSignIn
 	)
 	route := catRouteList
 	var filterModel *appui.FilterModel
@@ -286,6 +291,15 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	}
 	libraryScanResults := make(chan libraryScanResult, 1)
 	downloadGeneration := 0
+	// finishDownload resumes background update checks once the running
+	// download ends; nil when none runs.
+	var finishDownload func()
+	endDownload := func() {
+		if finishDownload != nil {
+			finishDownload()
+			finishDownload = nil
+		}
+	}
 	downloadScanStarted := false
 	downloadLibraryStatus := ""
 	type managementScanResult struct {
@@ -301,6 +315,20 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	var archiveInspectScreen *catui.DownloadProgressScreen
 	var archiveContentsModel *appui.DownloadSelectModel
 	var archiveContentsScreen *catui.DownloadSelectScreen
+	// leaveDownload drops the download and archive flows and stops their
+	// requests, so a lookup, probe or inspection does not keep creating
+	// install sessions after you go back.
+	leaveDownload := func() {
+		if downloadFlow != nil {
+			downloadFlow.Close()
+		}
+		if archiveFlow != nil {
+			archiveFlow.Close()
+		}
+		downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+		archiveFlow, archiveInspectModel, archiveInspectScreen = nil, nil, nil
+		archiveContentsModel, archiveContentsScreen = nil, nil
+	}
 	var destinationModel *appui.DestinationModel
 	var destinationScreen *catui.DestinationScreen
 	var destinationFlow *ui.CatDestinationFlow
@@ -333,6 +361,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	var cacheRefreshModel *appui.RefreshModel
 	var cacheRefreshScreen *catui.RefreshScreen
 	var cacheRefreshFlow *ui.CatCacheRefreshFlow
+	var signInFlow *ui.CatSignInFlow
+	var signInModel *appui.SignInModel
+	var signInScreen *catui.SignInScreen
+	var signInReturn catRoute
 	openDetail := func(index int) error {
 		game, ok := list.CatSelected(index)
 		if !ok {
@@ -342,8 +374,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		detailModel = appui.NewDetailModel(appui.DetailGame{
 			Title: game.Title, Author: game.Author, URL: game.URL, Platform: game.Platform,
 			Price: game.Price, IsFree: game.IsFree, Downloaded: inv.IsPresent(game.URL),
-			CanDownload: game.IsFree || cfg.APIKey != "",
 		})
+		list.ApplyDetailAccess(&detailModel.Game)
 		var screenErr error
 		detailScreen, screenErr = catui.NewDetailScreen(ctx, detailModel, imageCache)
 		if screenErr != nil {
@@ -357,7 +389,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		settingsReturn = back
 		settingsFlow, settingsModel = ui.NewCatSettingsFlow(cfg, cfgPath, ownedCachePath,
 			filepath.Dir(cfgPath), sources, client, func() { _ = ctx.Wake() })
-		settingsFlow.SetOwnedChanged(list.ReplaceOwnedGames)
+		settingsFlow.SetAccount(account)
 		var screenErr error
 		settingsScreen, screenErr = catui.NewSettingsScreen(ctx, settingsModel)
 		if screenErr != nil {
@@ -365,6 +397,68 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		route = catRouteSettings
 		return nil
+	}
+	openSignIn := func(back catRoute) error {
+		signInReturn = back
+		if signInFlow != nil {
+			// An earlier sign-in is still saving its key in the background:
+			// reuse its flow so nothing it delivers is lost.
+			signInModel = appui.NewSignInModel()
+			signInFlow.Open(signInModel)
+		} else {
+			signInFlow, signInModel = ui.NewCatSignInFlow(client, account, func() { _ = ctx.Wake() })
+		}
+		var screenErr error
+		signInScreen, screenErr = catui.NewSignInScreen(ctx, signInModel)
+		if screenErr != nil {
+			signInFlow.Cancel()
+			signInModel = nil
+			return screenErr
+		}
+		route = catRouteSignIn
+		return nil
+	}
+	// closeSignIn leaves the sign-in screen. The flow stays until it is idle:
+	// a key itch.io already issued is still saved, then checked.
+	closeSignIn := func() {
+		signInFlow.Cancel()
+		signInScreen.Close()
+		signInModel, signInScreen = nil, nil
+		route = signInReturn
+		switch route {
+		case catRouteSettings:
+			settingsFlow.Refresh(settingsModel)
+		case catRouteDetail:
+			list.ApplyDetailAccess(&detailModel.Game)
+		}
+	}
+	// syncSignIn applies sign-in results and reports whether to redraw. A
+	// flow whose screen is closed is kept until idle, so a late key is saved.
+	syncSignIn := func() bool {
+		if signInFlow == nil {
+			return false
+		}
+		signedIn := cfg.SignedIn()
+		changed := signInFlow.Sync(signInModel)
+		if signInModel == nil {
+			if cfg.SignedIn() != signedIn && settingsFlow != nil && settingsModel != nil {
+				settingsFlow.Refresh(settingsModel) // a key saved after you left the screen
+				changed = true
+			}
+			if signInFlow.Idle() {
+				signInFlow = nil
+			}
+		}
+		return changed
+	}
+	// signOutRejected signs out after itch.io rejected the stored key.
+	signOutRejected := func() {
+		if err := account.SignOutRejected(); err != nil {
+			logger.Error("sign-in: %v", err)
+		}
+		if settingsFlow != nil && settingsModel != nil {
+			settingsFlow.Refresh(settingsModel)
+		}
 	}
 	openModeration := func(back catRoute) error {
 		moderationReturn = back
@@ -379,19 +473,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	}
 	handleSettingsAction := func(action ui.CatSettingsAction) error {
 		switch action {
-		case ui.CatSettingsEditAPIKey:
-			// Product decision: newly typed characters remain visible because a
-			// fully masked field proved too frustrating on a controller keyboard.
-			// Always start blank so the persisted key itself is never revealed.
-			value, accepted, keyboardErr := ctx.Keyboard("")
-			if keyboardErr != nil {
-				return keyboardErr
-			}
-			if accepted {
-				if flowErr := settingsFlow.SetAPIKey(settingsModel, value); flowErr != nil {
-					settingsModel.SetError(flowErr.Error())
-				}
-			}
+		case ui.CatSettingsSignIn:
+			return openSignIn(catRouteSettings)
 		case ui.CatSettingsClearImages:
 			imageCache.Clear()
 			settingsModel.SetMessage("Decoded image and GIF frames were cleared. They will be fetched again when needed.")
@@ -408,7 +491,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			}
 			route = catRouteCacheRefresh
 		case ui.CatSettingsUpdateInventory:
-			updateSvc.TriggerNow()
+			updateSvc.CheckAllNow()
 			settingsModel.SetMessage("Inventory update started. Local downloads stay available during the check.")
 		case ui.CatSettingsModeration:
 			return openModeration(catRouteSettings)
@@ -486,6 +569,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	startBackend := func(backend ui.CatDownloadBackend) error {
+		endDownload()
+		finishDownload = updateSvc.DownloadStarted()
 		downloadBackend = backend
 		downloadGeneration++
 		downloadScanStarted = false
@@ -510,6 +595,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			snapshot.State == appui.DownloadProgressCancelled
 		var titleGroups []leaf.LibraryTitleGroup
 		if terminal {
+			endDownload()
 			titleGroups = downloadBackend.CatLibraryTitleGroups()
 		}
 		if downloadBackend.CatNeedsLibraryScan() && len(titleGroups) > 0 && !downloadScanStarted {
@@ -677,6 +763,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	drawCurrent := func() error {
+		// itch.io rejected the stored key at startup: say so once on the
+		// list, and keep the flag in config until you close the notice.
+		if cfg.SignedOutNotice && route == catRouteList {
+			model.NoticeTitle, model.Notice = "Signed out", "itch.io signed you out. Sign in again from Settings."
+		} else if !cfg.SignedOutNotice {
+			model.NoticeTitle, model.Notice = "", ""
+		}
 		if powerPending {
 			if pendingPowerAction == power.ActionShutdown {
 				return waitShutdown.Draw()
@@ -688,6 +781,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			imageCache.BeginFrame()
 			return filterScreen.Draw()
 		case catRouteDetail:
+			// The action follows the current account: signing in or out
+			// anywhere, or the owned list arriving, updates an open page.
+			list.ApplyDetailAccess(&detailModel.Game)
 			return detailScreen.Draw()
 		case catRouteDownloadSelect:
 			return downloadSelectScreen.Draw()
@@ -713,8 +809,23 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			return aboutScreen.Draw()
 		case catRouteCacheRefresh:
 			return cacheRefreshScreen.Draw()
+		case catRouteSignIn:
+			return signInScreen.Draw()
 		default:
 			return screen.Draw()
+		}
+	}
+
+	if cfg.LegacyKeyRemoved {
+		// Once, after upgrading from a release that stored a typed API key:
+		// explain where it went, next to the sign-in row.
+		if err := openSettings(catRouteList); err != nil {
+			return err
+		}
+		settingsModel.SetMessage("Your saved itch.io API key was removed. Sign in with itch.io (the first row) to download games you own.")
+		cfg.LegacyKeyRemoved = false
+		if err := cfg.Save(cfgPath); err != nil {
+			logger.Warn("settings: %v", err)
 		}
 	}
 
@@ -748,6 +859,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
@@ -763,6 +875,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			redraw = true
 		}
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
+			redraw = true
+		}
+		if syncSignIn() {
+			redraw = true
+		}
+		if list.TakeSignInRejected() {
+			signOutRejected()
 			redraw = true
 		}
 		if cacheRefreshFlow != nil && cacheRefreshModel != nil {
@@ -844,6 +963,10 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					downloadFlow = ui.NewCatDownloadFlow(client, cfg, activeGame, activeDetail, inv,
 						func() { _ = ctx.Wake() })
 					route = catRouteDownloadSelect
+				case appui.DetailIntentSignIn:
+					if err := openSignIn(catRouteDetail); err != nil {
+						return err
+					}
 				case appui.DetailIntentManage:
 					if err := openManage(); err != nil {
 						logger.Warn("cat manage: %v", err)
@@ -854,7 +977,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			case catRouteDownloadSelect:
 				switch downloadSelectScreen.HandleInput(event) {
 				case appui.DownloadSelectIntentBack:
-					downloadFlow, downloadSelectScreen, downloadSelectModel = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				case appui.DownloadSelectIntentChoose:
 					downloadFlow.Choose(downloadSelectModel)
@@ -865,15 +988,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			case catRouteArchiveInspect:
 				switch archiveInspectScreen.HandleInput(event) {
 				case appui.DownloadProgressIntentCancel, appui.DownloadProgressIntentBack:
-					archiveFlow, archiveInspectModel, archiveInspectScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				}
 			case catRouteArchiveContents:
 				switch archiveContentsScreen.HandleInput(event) {
 				case appui.DownloadSelectIntentBack:
-					archiveFlow, archiveContentsModel, archiveContentsScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				case appui.DownloadSelectIntentChoose:
 					archiveFlow.Choose(archiveContentsModel)
@@ -886,7 +1007,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DestinationIntentBack:
 					if destinationFlow.Back(destinationModel) {
 						destinationFlow, destinationModel, destinationScreen, destinationPlan = nil, nil, nil, nil
-						downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+						leaveDownload()
 						route = catRouteDetail
 					}
 				case appui.DestinationIntentActivate:
@@ -943,11 +1064,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DownloadProgressIntentCancel:
 					downloadBackend.CatCancel()
 				case appui.DownloadProgressIntentBack:
+					endDownload()
 					list.ScheduleRebuild()
 					detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
 					downloadProgressScreen.Close()
 					downloadBackend, downloadProgressModel, downloadProgressScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				}
 			case catRouteManage:
@@ -1072,6 +1194,19 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					aboutScreen = nil
 					route = catRouteSettings
 				}
+			case catRouteSignIn:
+				switch signInScreen.HandleInput(event) {
+				case appui.SignInIntentCancel, appui.SignInIntentBack:
+					closeSignIn()
+				case appui.SignInIntentRetry:
+					signInFlow.Start(signInModel)
+				case appui.SignInIntentAccept:
+					if err := signInFlow.AcceptWarning(signInModel); err != nil {
+						logger.Error("sign-in: %v", err)
+						signInModel.State, signInModel.CanRetry = appui.SignInError, false
+						signInModel.Heading, signInModel.Detail = "Couldn't save your choice", "The SD card could not be written."
+					}
+				}
 			case catRouteCacheRefresh:
 				switch cacheRefreshScreen.HandleInput(event) {
 				case appui.RefreshIntentCancel:
@@ -1113,6 +1248,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					}
 				case appui.ListIntentDismissNotice:
 					list.DismissNotice(model.Cursor)
+				case appui.ListIntentCloseNotice:
+					model.NoticeTitle, model.Notice = "", ""
+					cfg.SignedOutNotice = false
+					if err := cfg.Save(cfgPath); err != nil {
+						logger.Warn("settings: %v", err)
+					}
 				}
 			}
 			redraw = true
@@ -1123,6 +1264,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		list.SyncCatModel(model)
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
@@ -1140,6 +1282,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if settingsFlow != nil && settingsModel != nil && settingsFlow.Sync(settingsModel) {
 			redraw = true
 		}
+		if syncSignIn() {
+			redraw = true
+		}
+		if list.TakeSignInRejected() {
+			signOutRejected()
+			redraw = true
+		}
 		if cacheRefreshFlow != nil && cacheRefreshModel != nil {
 			if games, changed := cacheRefreshFlow.Sync(cacheRefreshModel); changed {
 				if games != nil {
@@ -1153,6 +1302,12 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			redraw = true
 		}
 		if powerPending {
+			// A sign-in only waiting for approval gives way: it is cancelled
+			// and its screen closed, so the power action is not held for the
+			// code's ten-minute lifetime.
+			if signInFlow != nil && signInFlow.YieldToPower(signInModel) {
+				closeSignIn()
+			}
 			busy := list.IsBusy() || updateSvc.IsRunning()
 			busy = busy || detailModel != nil && detailModel.State == appui.DetailLoading
 			busy = busy || downloadSelectModel != nil && downloadSelectModel.State == appui.DownloadSelectLoading
@@ -1162,6 +1317,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			busy = busy || managementScansPending > 0
 			busy = busy || cacheRefreshFlow != nil && cacheRefreshFlow.Busy()
 			busy = busy || settingsFlow != nil && settingsFlow.Busy()
+			busy = busy || signInFlow.Busy()
 			if !busy {
 				if pendingPowerAction == power.ActionShutdown {
 					logger.Info("power: Cat routes idle, writing /tmp/poweroff")
@@ -1251,6 +1407,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			ctx.RequestFrameIn(50)
 			redraw = true
 		} else if route == catRouteCacheRefresh && cacheRefreshFlow != nil && cacheRefreshFlow.Busy() {
+			ctx.RequestFrameIn(100)
+			redraw = true
+		} else if route == catRouteSignIn && signInModel != nil && signInModel.State == appui.SignInWaiting {
+			// The code's countdown changes once a second.
+			ctx.RequestFrameIn(1000)
+			redraw = true
+		} else if route == catRouteSignIn && signInModel != nil &&
+			(signInModel.State == appui.SignInStarting || signInModel.State == appui.SignInChecking) {
 			ctx.RequestFrameIn(100)
 			redraw = true
 		} else if list.IsBusy() {

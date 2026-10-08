@@ -18,7 +18,9 @@ func TestClassifyEntry(t *testing.T) {
 		{"game.gba", roms.KindROM},
 		{"game.nes", roms.KindROM},
 		{"game.NES", roms.KindROM},
-		{"game.md", roms.KindROM},
+		{"game.md", roms.KindOther}, // ambiguous until its header identifies a ROM
+		{"README.md", roms.KindOther},
+		{"README.MD", roms.KindOther},
 		{"game.gen", roms.KindROM},
 		{"game.smd", roms.KindROM},
 		{"game.chd", roms.KindROM},

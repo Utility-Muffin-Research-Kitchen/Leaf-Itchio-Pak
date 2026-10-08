@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -89,6 +88,14 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 				logger.Warn("download: continuing without Jawaka suspend protection by user request")
 			}
 			s.inhibitBlocked.Store(false)
+			targets, planErr := planInstallTargets(inv, cfg, game, []romDownload{{Upload: upload, DestPath: dest}})
+			if planErr != nil {
+				s.err = planErr
+				s.storeState(dlError)
+				return
+			}
+			target := targets[0]
+			dest := target.download
 			if _, _, preflightErr := validatePlannedPath(dest); preflightErr != nil {
 				s.err = fmt.Errorf("download destination changed before transfer: %w", preflightErr)
 				s.storeState(dlError)
@@ -99,17 +106,10 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 				atomic.StoreInt64(&s.total, total)
 			}
 
-			isAuth := upload.DownloadKeyID != ""
-			logger.Info("download: starting %q file=%s dest=%s auth=%v",
-				game.Title, upload.Filename, dest, isAuth)
+			logger.Info("download: starting %q file=%s dest=%s api=%v",
+				game.Title, upload.Filename, dest, upload.ViaAPI())
 
-			var err error
-			if isAuth {
-				err = client.DownloadAuthUploadContext(ctx, cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
-			} else {
-				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
-				err = client.DownloadFreeContext(ctx, itchUpload, dest, progress)
-			}
+			err := downloadUpload(ctx, client, cfg.Credential(), game.URL, upload, dest, progress)
 
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -123,43 +123,32 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			} else {
 				logger.Info("download: complete file=%s", upload.Filename)
 
-				// Apply unified naming if enabled for this game.
-				finalDest := dest
-				unifiedName := false
-				if cfg.UnifiedNaming && roms.SupportsUnifiedNaming(upload.Filename) {
-					entry, entryExists := inv.Lookup(game.URL)
-					disabled := entryExists && entry.UnifiedNamingDisabled
-					if !disabled {
-						newDest, didRename := roms.ResolveUnifiedDest(dest, game.Title, true)
-						if didRename {
-							if renameErr := os.Rename(dest, newDest); renameErr != nil {
-								logger.Warn("unified-naming: rename failed: %v", renameErr)
-							} else {
-								logger.Info("unified-naming: renamed %q → %q", filepath.Base(dest), filepath.Base(newDest))
-								finalDest = newDest
-								unifiedName = true
-							}
-						} else {
-							unifiedName = true // name already correct
-						}
-					}
-				}
+				finalDest, unifiedName := applyInstallTarget(target)
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
-					Filename:     upload.Filename,
-					DestPath:     finalDest,
-					DownloadedAt: time.Now(),
-					UnifiedName:  unifiedName,
+					UploadID: upload.UploadID, UploadFingerprint: upload.UploadFingerprint,
+					OriginalUpload: upload.Filename,
+					Filename:       upload.Filename,
+					DestPath:       finalDest,
+					DownloadedAt:   time.Now(),
+					UnifiedName:    unifiedName,
 				}
 				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{
+					GameID:   downloadGameID(s.detail),
 					GameURL:  game.URL,
 					Title:    game.Title,
 					Author:   game.Author,
 					CoverURL: game.CoverURL,
 					IsFree:   game.IsFree,
 				}, file)
+				listing, listingSource := installListing(upload)
+				s.inv.CommitUploadInstall(game.URL, inventory.UploadInstall{
+					UploadID: upload.UploadID, Filename: upload.Filename,
+					Fingerprint: upload.UploadFingerprint, Written: []string{finalDest},
+					Listing: listing, ListingSource: listingSource,
+				})
 				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
 					logger.Warn("inventory: save failed: %v", saveErr)
 				} else {
@@ -187,4 +176,33 @@ func (s *DirectDownloadWorker) Cancel() {
 // IsBusy implements BusyChecker. Returns true while a download is in flight.
 func (s *DirectDownloadWorker) IsBusy() bool {
 	return s.loadState() == dlDownloading
+}
+
+// installListing converts the listing an upload was chosen from into the
+// update-check seed for its install.
+func installListing(upload roms.Upload) ([]inventory.UpstreamFile, string) {
+	if upload.Listing == nil {
+		return nil, ""
+	}
+	source := inventory.SourcePage
+	if upload.Listing.API {
+		source = inventory.SourceAPI
+	}
+	files := make([]inventory.UpstreamFile, 0, len(upload.Listing.Uploads))
+	for _, listed := range upload.Listing.Uploads {
+		files = append(files, inventory.UpstreamFile{
+			Filename: listed.Filename, DisplayName: listed.DisplayName, UploadID: listed.UploadID,
+			Fingerprint: listed.Fingerprint, DesktopOrWebOnly: listed.DesktopOrWebOnly,
+			Soundtrack: listed.Soundtrack,
+		})
+	}
+	return files, source
+}
+
+// downloadGameID is empty for offline/legacy detail views without metadata.
+func downloadGameID(detail *itchio.GameDetail) string {
+	if detail == nil {
+		return ""
+	}
+	return detail.GameID
 }

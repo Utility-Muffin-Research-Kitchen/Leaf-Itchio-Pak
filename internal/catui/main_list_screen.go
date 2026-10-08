@@ -89,6 +89,9 @@ func (screen *MainListScreen) Draw() error {
 			{Button: ButtonA, ButtonText: "A", Label: "Go", IsConfirm: true},
 		}
 	}
+	if screen.model.Notice != "" {
+		footer = []FooterHint{{Button: ButtonA, Label: "OK", IsConfirm: true}}
+	}
 	frame, err := screen.ui.BeginScreen(ScreenSpec{
 		Title:           "Itch.io",
 		SubHeaderHeight: screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(10),
@@ -131,6 +134,11 @@ func (screen *MainListScreen) Draw() error {
 		}
 	default:
 		if err := screen.drawReady(frame.Layout.Content); err != nil {
+			return err
+		}
+	}
+	if screen.model.Notice != "" {
+		if err := screen.ui.DrawModal(body, screen.model.NoticeTitle, screen.model.Notice); err != nil {
 			return err
 		}
 	}
@@ -260,6 +268,8 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 		model.SetError("Cloudflare blocked the feed. Visit itch.io on this network, then retry.")
 	case "empty":
 		model.SetItems(nil)
+	case "signed-out":
+		model.NoticeTitle, model.Notice = "Signed out", "itch.io signed you out. Sign in again from Settings."
 	}
 	screen, err := NewMainListScreen(ctx, model, cache)
 	if err != nil {

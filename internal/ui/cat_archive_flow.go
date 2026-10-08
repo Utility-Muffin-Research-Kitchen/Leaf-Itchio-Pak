@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -53,24 +54,37 @@ type CatArchiveFlow struct {
 	choiceExts     []string
 	choiceIndex    int
 	skipROMChoices bool
+
+	// ctx bounds the inspection's requests; Close cancels it.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewCatArchiveFlow(client *itchio.Client, cfg *settings.Config, game itchio.Game,
 	upload roms.Upload, inv *inventory.Inventory, wake func()) *CatArchiveFlow {
 	flow := &CatArchiveFlow{client: client, cfg: cfg, game: game, upload: upload, inv: inv,
 		wake: wake, updates: make(chan catArchiveUpdate, 1)}
+	flow.ctx, flow.cancel = context.WithCancel(context.Background())
 	go flow.inspect()
 	return flow
 }
 
-func (flow *CatArchiveFlow) inspect() {
-	var cdnURL string
-	var err error
-	if flow.upload.DownloadKeyID != "" {
-		cdnURL, err = flow.client.ResolveAuthURL(flow.cfg.APIKey, flow.upload.UploadID, flow.upload.DownloadKeyID)
-	} else {
-		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: flow.upload.Filename, URL: flow.upload.URL})
+// Close stops the inspection's requests when you leave the archive screens.
+func (flow *CatArchiveFlow) Close() {
+	if flow.cancel != nil {
+		flow.cancel()
 	}
+}
+
+func (flow *CatArchiveFlow) requestContext() context.Context {
+	if flow.ctx == nil {
+		return context.Background()
+	}
+	return flow.ctx
+}
+
+func (flow *CatArchiveFlow) inspect() {
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.Credential(), flow.game.URL, flow.upload)
 	if err != nil {
 		flow.publish(catArchiveUpdate{err: err})
 		return
@@ -265,8 +279,11 @@ func (flow *CatArchiveFlow) prepareInitialAction() {
 	if m.IsSingleROMOnly() && !m.HasOtherFiles() {
 		ext := flow.firstROMExt()
 		if ext != ".p8" && ext != ".p8.png" && !strings.EqualFold(filepath.Ext(flow.upload.Filename), ".7z") {
+			// Keep the upload's own source, not the inspected CDN URL: the
+			// worker resolves a fresh URL (a signed URL expires in about a
+			// minute, and a web resolver cannot take a CDN URL), and an API
+			// upload stays in this install's session.
 			patched := flow.upload
-			patched.URL = flow.plan.CDNURL
 			flow.direct = &CatDownloadPlan{Kind: CatDownloadPlanDirect, Uploads: []roms.Upload{patched}}
 			if flow.cfg.ROMLocation == "ask" {
 				flow.direct.Kind = CatDownloadPlanDestination

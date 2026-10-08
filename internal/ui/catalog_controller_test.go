@@ -137,6 +137,146 @@ func TestBackgroundRefreshKeepsCommittedCacheOnError(t *testing.T) {
 	}
 }
 
+func TestCatalogControllerDiscardsValidationFromAReplacedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owned_cache.json")
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		ownedUpdateCh: make(chan map[string]bool, 1), ownedURLs: make(map[string]bool), ownedCachePath: path,
+	}
+	generation := controller.ownedGeneration.Load()
+	controller.ReplaceOwnedGames(nil) // the key changed while validating
+	<-controller.ownedUpdateCh
+	stale := []itchio.OwnedGame{{GameID: 1, URL: "https://old-account.itch.io/game"}}
+	if controller.publishOwnedIfCurrent(generation, stale) {
+		t.Fatal("stale validation was published")
+	}
+	if urls, err := itchio.LoadOwnedCache(path); err != nil || urls != nil {
+		t.Fatalf("owned cache = %v, %v; want nothing written", urls, err)
+	}
+	if !controller.publishOwnedIfCurrent(controller.ownedGeneration.Load(), stale) {
+		t.Fatal("current validation was discarded")
+	}
+}
+
+// R21-3: the detail page's action follows the current account: signing in
+// or out anywhere, or the owned list arriving, updates an open page. A paid
+// game you do not own offers no Download.
+func TestDetailAccessFollowsTheAccount(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &settings.Config{}
+	controller := &CatalogController{
+		cfg: cfg, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		ownedUpdateCh: make(chan map[string]bool, 1),
+	}
+	account := NewAccount(cfg, filepath.Join(dir, "config.json"), filepath.Join(dir, "owned_cache.json"), itchio.NewClientWithBase("https://example.invalid"))
+	account.SetOwnedChanged(controller.ReplaceOwnedGames)
+	paid := appui.DetailGame{Title: "Paid", URL: "https://dev.itch.io/paid"}
+	free := appui.DetailGame{Title: "Free", URL: "https://dev.itch.io/free", IsFree: true}
+	check := func(step string, want appui.DetailGame) {
+		t.Helper()
+		controller.consumeUpdates()
+		got := paid
+		controller.ApplyDetailAccess(&got)
+		if got.CanDownload != want.CanDownload || got.NeedsSignIn != want.NeedsSignIn || got.Owned != want.Owned {
+			t.Fatalf("%s: paid game = download %v sign-in %v owned %v; want %v %v %v", step,
+				got.CanDownload, got.NeedsSignIn, got.Owned, want.CanDownload, want.NeedsSignIn, want.Owned)
+		}
+		gotFree := free
+		controller.ApplyDetailAccess(&gotFree)
+		if !gotFree.CanDownload || gotFree.NeedsSignIn {
+			t.Fatalf("%s: a free game must always download", step)
+		}
+	}
+
+	check("signed out", appui.DetailGame{NeedsSignIn: true})
+	if err := account.Store("new-key"); err != nil {
+		t.Fatal(err)
+	}
+	// The owned list is not known until the account check finishes: the
+	// purchase lookup decides, so Download stays.
+	check("signed in, owned list loading", appui.DetailGame{CanDownload: true})
+	if err := account.Validated("tester", []itchio.OwnedGame{{URL: "https://dev.itch.io/other"}}); err != nil {
+		t.Fatal(err)
+	}
+	check("signed in, not owned", appui.DetailGame{})
+	if err := account.Validated("tester", []itchio.OwnedGame{{URL: paid.URL}}); err != nil {
+		t.Fatal(err)
+	}
+	check("signed in, owned", appui.DetailGame{CanDownload: true, Owned: true})
+	if err := account.SignOut(); err != nil {
+		t.Fatal(err)
+	}
+	check("signed out again", appui.DetailGame{NeedsSignIn: true})
+}
+
+// R21-4: an upgrade from 0.1.0 removes the typed API key, so the app starts
+// signed out. The owned-game cache of that key must not show OWNED badges or
+// fill the Owned sort, and is deleted.
+func TestUpgradeFromATypedKeyDropsItsOwnedCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer srv.Close()
+	dir := t.TempDir()
+	cfgPath, ownedPath := filepath.Join(dir, "config.json"), filepath.Join(dir, "owned_cache.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"api_key":"typed-key-0-1-0","rom_selection":"auto","rom_location":"auto","unified_naming":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := itchio.SaveOwnedCache(ownedPath, []string{"https://dev.itch.io/owned-by-the-old-key"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := settings.Load(cfgPath)
+	if err != nil || cfg.SignedIn() || !cfg.LegacyKeyRemoved {
+		t.Fatalf("loaded config = %+v, %v", cfg, err)
+	}
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	controller := NewCatalogController(itchio.NewClientWithBase(srv.URL), cfg, cfgPath,
+		filepath.Join(dir, "games_cache.json"), inv, filepath.Join(dir, "inventory.json"), nil, ownedPath)
+	if controller.Owned("https://dev.itch.io/owned-by-the-old-key") || controller.ownedKnown() {
+		t.Fatal("the old key's owned games were loaded while signed out")
+	}
+	if _, err := os.Stat(ownedPath); !os.IsNotExist(err) {
+		t.Fatalf("the old key's owned cache is still on the card: %v", err)
+	}
+}
+
+func TestListPriceBadgeUsesFetchedGameData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/paid/data.json":
+			w.Write([]byte(`{"id":1,"price":"€4,99"}`))
+		case "/now-free/data.json":
+			w.Write([]byte(`{"id":2,"price":"$0.00"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := itchio.NewClient()
+	for _, path := range []string{"/paid", "/now-free"} {
+		if _, err := client.FetchGameData(srv.URL + path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller := &CatalogController{
+		client: client, cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: []itchio.Game{
+			{Title: "Paid", URL: srv.URL + "/paid", Price: 5},
+			{Title: "Now free", URL: srv.URL + "/now-free", Price: 3},
+			{Title: "Not opened", URL: srv.URL + "/other", Price: 2},
+		},
+		cacheReady: true, ownedURLs: make(map[string]bool),
+	}
+	controller.rebuildView()
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	badges := make(map[string]string)
+	for _, item := range model.Items {
+		badges[item.Title] = item.Badge
+	}
+	if badges["Paid"] != "€4,99" || badges["Now free"] != "Free" || badges["Not opened"] != "$2.00" {
+		t.Fatalf("badges = %v", badges)
+	}
+}
+
 func TestCatalogControllerSearchesUncachedPreviewLocally(t *testing.T) {
 	controller := &CatalogController{
 		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},

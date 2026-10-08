@@ -19,6 +19,30 @@ type DetailGame struct {
 	Title, Author, URL, Platform    string
 	Price                           float64
 	IsFree, Downloaded, CanDownload bool
+	// NeedsSignIn marks a paid game that can download once the user signs
+	// in with itch.io; A then opens sign-in instead.
+	NeedsSignIn bool
+	// Owned is set when the game is in the signed-in account's owned set.
+	// A paid game that is neither downloadable nor waiting for a sign-in is
+	// one that account does not own (NotOwned).
+	Owned      bool
+	PriceLabel string
+}
+
+// PriceText is the price on the detail line: "Owned" for a paid game the
+// signed-in account owns, else the current price label. It follows the
+// account at draw time, as the page's action does.
+func (game DetailGame) PriceText() string {
+	if game.Owned && !game.IsFree {
+		return "Owned"
+	}
+	return game.PriceLabel
+}
+
+// NotOwned reports a paid game the signed-in account does not own: it has
+// no Download action, and the page points at the itch.io QR code instead.
+func (game DetailGame) NotOwned() bool {
+	return !game.IsFree && !game.CanDownload && !game.NeedsSignIn
 }
 
 type DetailModel struct {
@@ -42,6 +66,7 @@ const (
 	DetailIntentSettings
 	DetailIntentDownload
 	DetailIntentManage
+	DetailIntentSignIn
 )
 
 func NewDetailModel(game DetailGame) *DetailModel {
@@ -84,6 +109,17 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	if event.Button == ButtonStart {
 		return DetailIntentSettings
 	}
+	if event.Button == ButtonX && m.Game.Downloaded && (m.State == DetailReady || m.State == DetailError) {
+		return DetailIntentManage
+	}
+	if m.State == DetailError && (event.Button == ButtonUp || event.Button == ButtonDown) {
+		if event.Button == ButtonUp {
+			m.ScrollLine--
+		} else {
+			m.ScrollLine++
+		}
+		m.clampScroll()
+	}
 	if m.State != DetailReady {
 		return DetailIntentNone
 	}
@@ -104,9 +140,8 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
 		}
-	case ButtonX:
-		if m.Game.Downloaded {
-			return DetailIntentManage
+		if m.Game.NeedsSignIn && !m.BrowserOnly {
+			return DetailIntentSignIn
 		}
 	}
 	return DetailIntentNone

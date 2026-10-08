@@ -7,7 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,9 +19,18 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
+// automaticCheckInterval is how long a launch or an account change trusts an
+// entry's last check. Update Inventory checks every entry regardless.
+const automaticCheckInterval = 6 * time.Hour
+
+// backgroundRequestInterval spaces the requests of one check, so a scan of
+// a large inventory does not trip itch.io's rate limit, whose cooldown also
+// delays the requests you make in the foreground.
+var backgroundRequestInterval = time.Second
+
 // UpdateService checks each inventory entry for missing cover art, removed
-// games, and new upstream files. It runs once at startup and re-runs each time
-// TriggerNow is called.
+// games, and new upstream files. It runs once at startup, again for each
+// TriggerNow or CheckAllNow, and waits while a download runs.
 type UpdateService struct {
 	inv            *Inventory
 	inventoryPath  string
@@ -33,6 +43,35 @@ type UpdateService struct {
 	sources        leaf.SourceList
 	scanLibrary    func() (string, error)
 	artworkChanged bool
+
+	mu        sync.Mutex
+	queued    checkRequest // what the next run checks
+	downloads int          // downloads running; checks wait for zero
+
+	requestInterval time.Duration
+	lastRequest     time.Time // owned by the running check
+}
+
+// checkRequest selects the entries one run checks.
+type checkRequest struct {
+	all       bool            // Update Inventory: every entry
+	automatic bool            // launch or account change: entries not checked recently
+	games     map[string]bool // re-check these games after an install
+}
+
+func (request checkRequest) empty() bool {
+	return !request.all && !request.automatic && len(request.games) == 0
+}
+
+func (request *checkRequest) merge(other checkRequest) {
+	request.all = request.all || other.all
+	request.automatic = request.automatic || other.automatic
+	for game := range other.games {
+		if request.games == nil {
+			request.games = make(map[string]bool)
+		}
+		request.games[game] = true
+	}
 }
 
 func (s *UpdateService) SetSources(sources leaf.SourceList) {
@@ -50,40 +89,43 @@ func (s *UpdateService) SetLibraryScanRequester(request func() (string, error)) 
 // caller without importing SDL here.
 func NewUpdateService(inv *Inventory, inventoryPath string, client *itchio.Client, notify func()) *UpdateService {
 	return &UpdateService{
-		inv:           inv,
-		inventoryPath: inventoryPath,
-		client:        client,
-		notify:        notify,
-		triggerCh:     make(chan struct{}, 1),
-		stopCh:        make(chan struct{}),
+		inv:             inv,
+		inventoryPath:   inventoryPath,
+		client:          client,
+		notify:          notify,
+		triggerCh:       make(chan struct{}, 1),
+		stopCh:          make(chan struct{}),
+		requestInterval: backgroundRequestInterval,
 	}
 }
 
-// Start launches the background goroutine and runs the first check immediately.
-// onDone is called after the first check completes (for tests; may be nil).
+// Start launches the background goroutine and runs the launch check
+// immediately. onDone is called after each run (for tests; may be nil).
 func (s *UpdateService) Start(onDone func()) {
+	s.mu.Lock()
+	s.queued.merge(checkRequest{automatic: true})
+	s.mu.Unlock()
 	go func() {
-		s.running.Store(true)
-		s.runCheck()
-		s.running.Store(false)
-		if onDone != nil {
-			onDone()
+		run := func() {
+			request := s.takeRequest()
+			if request.empty() {
+				return
+			}
+			s.running.Store(true)
+			s.runCheck(request)
+			s.running.Store(false)
+			if onDone != nil {
+				onDone()
+			}
+			if s.notify != nil {
+				s.notify()
+			}
 		}
-		if s.notify != nil {
-			s.notify()
-		}
+		run()
 		for {
 			select {
 			case <-s.triggerCh:
-				s.running.Store(true)
-				s.runCheck()
-				s.running.Store(false)
-				if onDone != nil {
-					onDone()
-				}
-				if s.notify != nil {
-					s.notify()
-				}
+				run()
 			case <-s.stopCh:
 				return
 			}
@@ -91,19 +133,121 @@ func (s *UpdateService) Start(onDone func()) {
 	}()
 }
 
+func (s *UpdateService) takeRequest() checkRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request := s.queued
+	s.queued = checkRequest{}
+	return request
+}
+
+// request queues a check, which starts once no download is running.
+func (s *UpdateService) request(request checkRequest) {
+	s.mu.Lock()
+	s.queued.merge(request)
+	downloading := s.downloads > 0
+	s.mu.Unlock()
+	if !downloading {
+		s.signal()
+	}
+}
+
+func (s *UpdateService) signal() {
+	select {
+	case s.triggerCh <- struct{}{}:
+	default:
+		logger.Debug("update-svc: trigger ignored (check already queued)")
+	}
+}
+
+// DownloadStarted pauses background checks until the returned function is
+// called, once the download has finished, failed, or been cancelled. A check
+// queued meanwhile runs then. Calling the function again does nothing.
+func (s *UpdateService) DownloadStarted() (finished func()) {
+	s.mu.Lock()
+	s.downloads++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			s.downloads--
+			resume := s.downloads == 0 && !s.queued.empty()
+			s.mu.Unlock()
+			if resume {
+				s.signal()
+			}
+		})
+	}
+}
+
+// deferIfDownloading queues request for after the running downloads and
+// reports whether it did.
+func (s *UpdateService) deferIfDownloading(request checkRequest) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.downloads == 0 {
+		return false
+	}
+	s.queued.merge(request)
+	return true
+}
+
+// pace waits until the next background request may start. It reports false
+// when the service stops meanwhile.
+func (s *UpdateService) pace() bool {
+	if s.requestInterval > 0 && !s.lastRequest.IsZero() {
+		if wait := time.Until(s.lastRequest.Add(s.requestInterval)); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-s.stopCh:
+				timer.Stop()
+				return false
+			}
+		}
+	}
+	s.lastRequest = time.Now()
+	return true
+}
+
+// due reports whether request covers entry. An automatic check skips an
+// entry checked in the last six hours, unless signing in or out since then
+// made the other source available.
+func (request checkRequest) due(gameURL string, entry Entry, signedIn bool, now time.Time) bool {
+	if request.all || request.games[gameURL] {
+		return true
+	}
+	if !request.automatic {
+		return false
+	}
+	age := now.Sub(entry.UpdateCheckedAt)
+	if entry.UpdateCheckedAt.IsZero() || age < 0 || age >= automaticCheckInterval {
+		return true
+	}
+	if signedIn {
+		return entry.GameID != "" && entry.UpstreamSource != SourceAPI
+	}
+	return entry.UpstreamSource == SourceAPI
+}
+
 // Stop signals the goroutine to exit. Idempotent — safe to call multiple times.
 func (s *UpdateService) Stop() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 }
 
-// TriggerNow queues a re-check. Non-blocking; a pending check absorbs the signal.
+// TriggerNow queues an automatic check, as after an account change: entries
+// checked in the last six hours are skipped. Non-blocking.
 func (s *UpdateService) TriggerNow() {
-	select {
-	case s.triggerCh <- struct{}{}:
-		logger.Info("update-svc: manual check triggered")
-	default:
-		logger.Debug("update-svc: trigger ignored (check already queued)")
-	}
+	logger.Info("update-svc: automatic check queued")
+	s.request(checkRequest{automatic: true})
+}
+
+// CheckAllNow queues a check of every entry, for Update Inventory.
+// Non-blocking.
+func (s *UpdateService) CheckAllNow() {
+	logger.Info("update-svc: full check queued")
+	s.request(checkRequest{all: true})
 }
 
 // IsRunning reports whether runCheck is currently executing.
@@ -116,31 +260,166 @@ func (s *UpdateService) LatestCheckedAt() time.Time {
 	return s.inv.LatestCheckedAt()
 }
 
-func (s *UpdateService) runCheck() {
+func (s *UpdateService) runCheck(request checkRequest) {
+	if s.deferIfDownloading(request) {
+		logger.Info("update-svc: check waits for the running download")
+		return
+	}
 	s.artworkChanged = false
 	s.inv.VerifyAndCleanWithSources(s.inventoryPath, s.sources)
 
-	s.inv.mu.Lock()
-	urls := make([]string, 0, len(s.inv.Entries))
-	for url := range s.inv.Entries {
-		urls = append(urls, url)
-	}
-	s.inv.mu.Unlock()
-
-	logger.Info("update-svc: checking %d inventory entries", len(urls))
-
-	// Collect upstream file lists during the check loop but do NOT write them
-	// to the inventory yet. Applying them all at once at the end means the UI
-	// never sees a state where badges have changed but sort order has not.
-	pendingFiles := make(map[string][]UpstreamFile)
+	urls := s.inv.AllURLs()
+	token, generation := s.client.AuthSnapshot()
+	now := time.Now()
+	var dueURLs []string
+	gameIDs := make(map[string]string, len(urls))
+	canCheck := true
+	skipped := make(map[string]bool)
+	var ids []string
 	for _, gameURL := range urls {
-		if files := s.checkEntry(gameURL); files != nil {
-			pendingFiles[gameURL] = files
+		s.repairCoverArt(gameURL)
+		entry, ok := s.inv.Lookup(gameURL)
+		if !ok || !request.due(gameURL, entry, token != "", now) {
+			continue
+		}
+		dueURLs = append(dueURLs, gameURL)
+		if token == "" {
+			continue
+		}
+		id := entry.GameID
+		if id == "" && !canCheck {
+			// After a rate limit, look the ID up on the next run; artwork
+			// repair still covers every entry.
+			skipped[gameURL] = true
+		} else if id == "" {
+			// A stable stored ID avoids fetching data.json on every launch.
+			if !s.pace() {
+				return
+			}
+			data, err := s.client.FetchGameData(gameURL)
+			if err != nil && !isGameRemoved(err) {
+				logger.Warn("update-svc: game metadata unavailable: %v", err)
+				skipped[gameURL] = true
+				if errors.Is(err, itchio.ErrRateLimited) {
+					canCheck = false
+				}
+			} else if err == nil && data.ID > 0 {
+				id = strconv.FormatInt(data.ID, 10)
+				s.inv.mu.Lock()
+				if current := s.inv.Entries[gameURL]; current != nil {
+					current.GameID = id
+					current.IsFree = data.Pricing() != itchio.PricingPaid
+				}
+				s.inv.mu.Unlock()
+			}
+		}
+		if id != "" {
+			gameIDs[gameURL] = id
+			ids = append(ids, id)
 		}
 	}
 
-	for gameURL, files := range pendingFiles {
-		s.inv.SetUpstreamFiles(gameURL, files)
+	// Include free games too: a developer may have started charging since the
+	// download. Ownership keys are held only for this check and never saved.
+	var keys map[string]string
+	if canCheck && token != "" && len(ids) > 0 {
+		if !s.pace() {
+			return
+		}
+		var err error
+		keys, err = s.client.OwnedKeysForGames(token, ids)
+		if err != nil {
+			logger.Warn("update-svc: ownership lookup unavailable: %v", err)
+			if errors.Is(err, itchio.ErrNoAccess) {
+				token = ""
+			} else {
+				canCheck = false
+			}
+		}
+	}
+	logger.Info("update-svc: checking %d of %d inventory entries (signed in: %v)", len(dueURLs), len(urls), token != "")
+	pending := make(map[string]upstreamResult, len(dueURLs))
+	for index, gameURL := range dueURLs {
+		if !canCheck || s.client.AuthGeneration() != generation {
+			break
+		}
+		// A download that started meanwhile gets the connection; the rest
+		// of this check runs after it.
+		if s.deferIfDownloading(checkRequest{games: setOf(dueURLs[index:])}) {
+			logger.Info("update-svc: %d entries wait for the running download", len(dueURLs)-index)
+			break
+		}
+		if skipped[gameURL] {
+			continue
+		}
+		entry, exists := s.inv.Lookup(gameURL)
+		if !exists {
+			continue
+		}
+		result, err := s.checkGame(gameURL, gameIDs[gameURL], token, keys[gameIDs[gameURL]])
+		if err == nil && result.source == SourceAPI && !result.complete {
+			result.complete = s.keylessListingComplete(gameURL, entry, result.files)
+		}
+		if err == nil {
+			result.installed = entry.Files
+			pending[gameURL] = result
+		} else {
+			if errors.Is(err, errUpdateStopped) {
+				return
+			}
+			logger.Warn("update-svc: check failed for %s: %v", gameURL, err)
+			if errors.Is(err, itchio.ErrRateLimited) {
+				break
+			}
+		}
+	}
+	// Discard results even after A -> B -> A account changes; comparing tokens
+	// alone would allow the first account's stale scan to publish.
+	staleInstall := make(map[string]bool)
+	applied := s.client.ApplyIfAuthGeneration(generation, func() {
+		s.inv.mu.Lock()
+		defer s.inv.mu.Unlock()
+		for gameURL, result := range pending {
+			entry := s.inv.Entries[gameURL]
+			if entry == nil {
+				continue
+			}
+			// A foreground install can finish while this listing is in flight.
+			// Do not compare its newer version against an older server snapshot.
+			if !slices.Equal(entry.Files, result.installed) {
+				staleInstall[gameURL] = true
+				continue
+			}
+			now := time.Now()
+			if result.removed {
+				markRemovedLocked(entry, RemovedByPage, now)
+				continue
+			}
+			if result.files != nil {
+				s.inv.setUpstreamFilesLocked(entry, result.source, result.files)
+			} else {
+				entry.UpdateCheckedAt = now
+			}
+			evidence := result.files
+			if result.source == SourceAPI && result.files != nil {
+				// The stored rows also carry replaced upload IDs.
+				evidence = entry.KnownUpstreamFiles
+				if result.complete {
+					// R18-3: the upload that replaces an installed one that
+					// is gone shows as an update.
+					markReplacementsLocked(entry, entry.KnownUpstreamFiles, func(int) bool { return true }, now)
+				}
+			}
+			applyRemovalEvidenceLocked(entry, result.source, result.complete, evidence, now)
+		}
+	})
+	if !applied {
+		logger.Debug("update-svc: account changed during the check; scheduling fresh metadata")
+		s.request(request)
+	} else if len(staleInstall) > 0 {
+		// Re-check only the installed games, once their install is done.
+		logger.Debug("update-svc: %d game(s) changed during an install; re-checking them", len(staleInstall))
+		s.request(checkRequest{games: staleInstall})
 	}
 	if err := s.inv.Save(s.inventoryPath); err != nil {
 		logger.Error("update-svc: save: %v", err)
@@ -156,21 +435,13 @@ func (s *UpdateService) runCheck() {
 	logger.Info("update-svc: check complete")
 }
 
-// checkEntry runs cover-art repair and the upstream check for one game.
-// For free games it returns the upstream file list to apply later (batched);
-// for paid games it returns nil.
-func (s *UpdateService) checkEntry(gameURL string) []UpstreamFile {
-	s.inv.mu.Lock()
-	entry, ok := s.inv.Entries[gameURL]
+// repairCoverArt keeps Leaf's source-local artwork and ownership metadata.
+func (s *UpdateService) repairCoverArt(gameURL string) {
+	entry, ok := s.inv.Lookup(gameURL)
 	if !ok {
-		s.inv.mu.Unlock()
-		return nil
+		return
 	}
-	// Snapshot without holding the lock during I/O.
-	coverURL := entry.CoverURL
-	isFree := entry.IsFree
-	files := append([]DownloadedFile(nil), entry.Files...)
-	s.inv.mu.Unlock()
+	coverURL, files := entry.CoverURL, entry.Files
 
 	// 1. Cover art repair.
 	for _, f := range files {
@@ -200,12 +471,6 @@ func (s *UpdateService) checkEntry(gameURL string) []UpstreamFile {
 		}
 	}
 
-	// 2. Upstream check.
-	if isFree {
-		return s.checkFreeGame(gameURL, files)
-	}
-	s.checkPaidGame(gameURL)
-	return nil
 }
 
 func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.ArtworkResult, bool) {
@@ -258,84 +523,110 @@ func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.Artwork
 	return itchio.ArtworkResult{Path: expected, SHA256: actualHash, Created: true}, true
 }
 
+var errUpdateStopped = errors.New("update service stopped")
+
+func setOf(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
+// keylessListingComplete reports whether an upload list fetched without a
+// download key lists every upload, so it can prove a removal: only when the
+// game is free now, not just when it was installed (decision D8). It uses the
+// price data.json gave this session, and fetches it only when the list lacks
+// an installed upload, which is rare. Unknown pricing makes the list
+// incomplete: it can still clear a removal, never set one.
+func (s *UpdateService) keylessListingComplete(gameURL string, entry Entry, files []UpstreamFile) bool {
+	if data, ok := s.client.CachedPrice(gameURL); ok {
+		return data.Pricing() != itchio.PricingPaid
+	}
+	preview := entry // a deep copy from Lookup
+	s.inv.setUpstreamFilesLocked(&preview, SourceAPI, files)
+	if len(missingUploadsLocked(&preview, preview.KnownUpstreamFiles)) == 0 {
+		return false
+	}
+	if !s.pace() {
+		return false
+	}
+	data, err := s.client.FetchGameData(gameURL)
+	if err != nil {
+		logger.Warn("update-svc: current pricing unavailable, not treating the upload list as complete: %v", err)
+		return false
+	}
+	return data.Pricing() != itchio.PricingPaid
+}
+
 // isGameRemoved reports whether err indicates a 404 or 410 HTTP response.
 func isGameRemoved(err error) bool {
 	return errors.Is(err, itchio.ErrGameRemoved)
 }
 
-// checkFreeGame fetches the current upload list and returns it for the caller
-// to apply via SetUpstreamFiles (batched at end-of-check). Returns nil on error.
-func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []DownloadedFile) []UpstreamFile {
-	uploads, err := s.client.FetchUploads(gameURL)
-	if err != nil {
-		if isGameRemoved(err) {
-			s.inv.MarkRemoved(gameURL)
-			logger.Warn("update-svc: game removed (404) %s", gameURL)
-		} else {
-			logger.Warn("update-svc: transient error for %s: %v", gameURL, err)
-		}
-		return nil
-	}
-
-	upstreamFiles := make([]UpstreamFile, 0, len(uploads))
-	upstreamNames := make(map[string]bool, len(uploads)*2)
-	for _, u := range uploads {
-		upstreamFiles = append(upstreamFiles, UpstreamFile{
-			Filename: u.Filename,
-			UploadID: u.UploadID,
-			SeenAt:   time.Now(), // preserved for known files by SetUpstreamFiles
-		})
-		upstreamNames[u.Filename] = true
-		if stem := strings.TrimSuffix(u.Filename, romFileExt(u.Filename)); stem != u.Filename {
-			upstreamNames[stem] = true
-		}
-	}
-
-	// Warn if any downloaded file is no longer offered upstream.
-	// Music files extracted from ZIPs have individual track names that are never
-	// directly listed as upload filenames, so skip them here.
-	for _, f := range downloadedFiles {
-		if f.FileType == FileTypeMusic {
-			continue
-		}
-		// For files extracted from archives (ZIP/7z), check the source archive
-		// name against upstream rather than the extracted ROM's renamed filename
-		// (which may be entirely different due to unified naming).
-		checkName := f.Filename
-		if f.SourceArchive != "" {
-			checkName = f.SourceArchive
-		}
-		stem := strings.TrimSuffix(checkName, romFileExt(checkName))
-		if !upstreamNames[checkName] && !upstreamNames[stem] {
-			s.inv.MarkRemoved(gameURL)
-			logger.Warn("update-svc: downloaded file %q no longer available upstream for %s", checkName, gameURL)
-			return upstreamFiles
-		}
-	}
-
-	// All downloaded files still available — clear any stale removal state.
-	s.inv.MarkReachable(gameURL)
-	logger.Debug("update-svc: %s — %d upstream file(s) recorded", gameURL, len(upstreamFiles))
-	return upstreamFiles
+type upstreamResult struct {
+	installed []DownloadedFile
+	source    string
+	files     []UpstreamFile
+	// complete marks an API listing of every upload: fetched with the
+	// account's download key, or for a game that is free now. Only such a
+	// listing can prove that an installed upload is gone (decision D8).
+	complete bool
+	removed  bool // the game page itself is gone
 }
 
-func (s *UpdateService) checkPaidGame(gameURL string) {
-	_, err := s.client.FetchGameDetail(gameURL)
+// checkGame lists metadata only. No update path creates a download session,
+// resolves a CDN URL, or starts the browser download_url handshake.
+func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamResult, error) {
+	if token != "" && gameID != "" {
+		if !s.pace() {
+			return upstreamResult{}, errUpdateStopped
+		}
+		uploads, err := s.client.FetchUploadsForKey(token, gameID, key)
+		if err == nil {
+			files := make([]UpstreamFile, 0, len(uploads))
+			for _, upload := range uploads {
+				if upload.Type == "html" {
+					continue
+				}
+				files = append(files, UpstreamFile{Filename: upload.Filename, DisplayName: upload.DisplayName,
+					UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
+					DesktopOrWebOnly: upload.DesktopOrWebOnly(), Soundtrack: upload.Type == "soundtrack"})
+			}
+			if len(files) > 0 || key != "" {
+				// The caller decides removal: a complete list that no longer
+				// offers an installed upload, or anything of its kind, proves
+				// it; a replaced upload shows as an update instead.
+				return upstreamResult{source: SourceAPI, files: files, complete: key != ""}, nil
+			}
+			// Without a download key, an empty list may only mean you cannot
+			// access a paid game, including one that started charging after
+			// a free install, so the inventory's free flag cannot vouch for it.
+			logger.Debug("update-svc: empty upload list without a download key, checking public page")
+		} else if !errors.Is(err, itchio.ErrNoAccess) && !isGameRemoved(err) {
+			return upstreamResult{}, err
+		} else {
+			logger.Debug("update-svc: API access unavailable, checking public page: %v", err)
+		}
+	}
+	if !s.pace() {
+		return upstreamResult{}, errUpdateStopped
+	}
+	names, err := s.client.FetchPageUploadNames(gameURL)
 	if err != nil {
 		if isGameRemoved(err) {
-			s.inv.MarkRemoved(gameURL)
-			logger.Warn("update-svc: paid game removed (404) %s", gameURL)
-		} else {
-			logger.Warn("update-svc: transient error for paid game %s: %v", gameURL, err)
+			return upstreamResult{removed: true}, nil
 		}
-		return
+		return upstreamResult{}, err
 	}
-	s.inv.MarkReachable(gameURL)
-
-	s.inv.mu.Lock()
-	if e, ok := s.inv.Entries[gameURL]; ok {
-		e.UpdateCheckedAt = time.Now()
+	if len(names) == 0 {
+		// Public pages may hide paid uploads. Reachability alone cannot prove
+		// removal, content freshness, or the disappearance of a known upload.
+		return upstreamResult{}, nil
 	}
-	s.inv.mu.Unlock()
-	logger.Debug("update-svc: paid game %s reachable, no file diff", gameURL)
+	files := make([]UpstreamFile, 0, len(names))
+	for _, name := range names {
+		files = append(files, UpstreamFile{Filename: name})
+	}
+	return upstreamResult{source: SourcePage, files: files}, nil
 }

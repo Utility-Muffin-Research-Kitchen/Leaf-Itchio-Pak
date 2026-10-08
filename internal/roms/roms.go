@@ -18,12 +18,44 @@ func ROMExt(filename string) string {
 }
 
 type Upload struct {
-	Filename      string
-	URL           string
-	UploadID      string // itch.io upload ID (API-based paid download)
-	DownloadKeyID string // itch.io download key ID (API-based paid download)
-	NeedsFormat   bool   // true if the user must choose a supported format
+	UploadFingerprint string // metadata captured when this version was selected
+	Filename          string
+	URL               string // web resolver URL; empty for API uploads
+	UploadID          string // itch.io upload ID; recorded with each installed file
+	NeedsFormat       bool   // true if the user must choose a supported format
+	// DesktopOrWeb marks a build for a computer, phone or browser, from the
+	// API listing's upload type and traits. Such a file is never chosen
+	// automatically and is listed last.
+	DesktopOrWeb bool
+	// Install is set for uploads listed through the itch.io API and is the
+	// only test for an API download: free API downloads have no purchase ID.
+	// nil means the anonymous web flow.
+	Install *InstallSession
+	// Listing is the list this upload was chosen from, shared by every
+	// upload of that list; nil when the list is unknown. The install uses it
+	// to tell an update, whose old upload the list no longer offers, from
+	// another build the list still offers, and seeds update checks with it.
+	Listing *UploadListing
 }
+
+// UploadListing records what one upload list offered.
+type UploadListing struct {
+	API     bool // listed by api.itch.io; false for the web download page
+	Uploads []ListedUpload
+}
+
+// ListedUpload is one entry of an UploadListing.
+type ListedUpload struct {
+	Filename, DisplayName, UploadID, Fingerprint string
+	// DesktopOrWebOnly marks an upload that only ships desktop or web
+	// builds; a new one never raises an update badge.
+	DesktopOrWebOnly bool
+	// Soundtrack marks an upload itch.io lists as a soundtrack.
+	Soundtrack bool
+}
+
+// ViaAPI reports whether the upload downloads through the itch.io API.
+func (upload Upload) ViaAPI() bool { return upload.Install != nil }
 
 var psxLaunchExts = map[string]bool{
 	".cbn": true, ".chd": true, ".cue": true, ".img": true, ".iso": true,

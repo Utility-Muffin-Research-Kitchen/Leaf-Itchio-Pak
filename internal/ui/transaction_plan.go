@@ -69,8 +69,12 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 	if detail != nil {
 		transaction.GameID = detail.GameID
 	}
+	names := &roms.NameReservations{}
 	for index, upload := range sealed.Uploads {
 		dest := filepath.Clean(sealed.DestPaths[index])
+		if !names.Claim(dest) {
+			return nil, fmt.Errorf("two files in this download would be saved as %s", filepath.Base(dest))
+		}
 		identity, sourceRoot, err := validatePlannedPath(dest)
 		if err != nil {
 			return nil, err
@@ -83,6 +87,7 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 			TempPattern:   filepath.Join(filepath.Dir(dest), ".itchio-download-*.part"),
 			ExpectedBytes: -1, ArtworkPath: inventory.CanonicalArtworkPath(dest),
 			InventoryMutation: inventory.DownloadedFile{
+				UploadID: upload.UploadID, UploadFingerprint: upload.UploadFingerprint,
 				OriginalUpload: upload.Filename, InstalledName: filepath.Base(dest),
 				SourceID: identity.SourceID, RelativePath: identity.RelativePath,
 				CanonicalSystem: identity.CanonicalSystem, DestPath: dest,
@@ -92,8 +97,8 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 			planned.ArtworkPath = ""
 		}
 		transaction.Files = append(transaction.Files, planned)
-		if transaction.PurchaseID == "" {
-			transaction.PurchaseID = upload.DownloadKeyID
+		if transaction.PurchaseID == "" && upload.ViaAPI() {
+			transaction.PurchaseID = upload.Install.DownloadKeyID()
 		}
 	}
 	sealed.Transaction = transaction

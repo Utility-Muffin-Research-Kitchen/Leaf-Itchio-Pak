@@ -73,3 +73,26 @@ func TestMainListLoadingAndErrorGrammar(t *testing.T) {
 		t.Fatalf("error B intent = %v, want exit", got)
 	}
 }
+
+// R21-6: a notice over the list takes A or B to close and blocks the list
+// underneath until then; Quit still exits.
+func TestMainListNoticeClosesWithAOrB(t *testing.T) {
+	press := func(model *MainListModel, button Button) ListIntent {
+		return model.Handle(InputEvent{Button: button, Pressed: true})
+	}
+	for _, button := range []Button{ButtonA, ButtonB} {
+		model := NewMainListModel([]ListItem{{Title: "One"}, {Title: "Two"}})
+		model.NoticeTitle, model.Notice = "Signed out", "Sign in again from Settings."
+		if press(model, ButtonDown) != ListIntentNone || model.Cursor != 0 {
+			t.Fatal("the list moved under the notice")
+		}
+		if press(model, button) != ListIntentCloseNotice {
+			t.Fatalf("button %v did not close the notice", button)
+		}
+	}
+	model := NewMainListModel(nil)
+	model.Notice = "Sign in again from Settings."
+	if press(model, ButtonQuit) != ListIntentExit {
+		t.Fatal("Quit must still exit")
+	}
+}

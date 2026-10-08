@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -109,7 +108,17 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 	}
 	s.inhibitBlocked.Store(false)
 
+	// Choose every destination before any file is written, so nothing in
+	// this batch replaces another game's file or another file of the batch.
+	targets, planErr := planInstallTargets(s.inv, s.cfg, s.game, s.downloads)
+	if planErr != nil {
+		s.err = planErr
+		atomic.StoreInt32(&s.state, int32(multiDLError))
+		return
+	}
+
 	for i, dl := range s.downloads {
+		dl.DestPath = targets[i].download
 		atomic.StoreInt32(&s.currentIdx, int32(i))
 		atomic.StoreInt64(&s.dlProgress, 0)
 		atomic.StoreInt64(&s.dlTotal, 0)
@@ -124,17 +133,10 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			return
 		}
 
-		isAuth := dl.Upload.DownloadKeyID != ""
-		logger.Info("multi-download: [%d/%d] starting %s → %s auth=%v",
-			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, isAuth)
+		logger.Info("multi-download: [%d/%d] starting %s → %s api=%v",
+			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, dl.Upload.ViaAPI())
 
-		var err error
-		if isAuth {
-			err = s.client.DownloadAuthUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.DownloadKeyID, dl.DestPath, progress)
-		} else {
-			itchUpload := itchio.Upload{Filename: dl.Upload.Filename, URL: dl.Upload.URL}
-			err = s.client.DownloadFreeContext(ctx, itchUpload, dl.DestPath, progress)
-		}
+		err := downloadUpload(ctx, s.client, s.cfg.Credential(), s.game.URL, dl.Upload, dl.DestPath, progress)
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -150,43 +152,33 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 
 		logger.Info("multi-download: [%d/%d] complete %s", i+1, len(s.downloads), dl.Upload.Filename)
 
-		finalDest := dl.DestPath
-		unifiedName := false
-		if s.cfg.UnifiedNaming && roms.SupportsUnifiedNaming(dl.Upload.Filename) {
-			entry, entryExists := s.inv.Lookup(s.game.URL)
-			disabled := entryExists && entry.UnifiedNamingDisabled
-			if !disabled {
-				newDest, didRename := roms.ResolveUnifiedDest(dl.DestPath, s.game.Title, true)
-				if didRename {
-					if renameErr := os.Rename(dl.DestPath, newDest); renameErr != nil {
-						logger.Warn("unified-naming: rename failed: %v", renameErr)
-					} else {
-						logger.Info("unified-naming: renamed %q → %q", filepath.Base(dl.DestPath), filepath.Base(newDest))
-						finalDest = newDest
-						unifiedName = true
-					}
-				} else {
-					unifiedName = true
-				}
-			}
-		}
+		finalDest, unifiedName := applyInstallTarget(targets[i])
 
 		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest
 		file := inventory.DownloadedFile{
-			Filename:     dl.Upload.Filename,
-			DestPath:     finalDest,
-			DownloadedAt: time.Now(),
-			UnifiedName:  unifiedName,
+			UploadID: dl.Upload.UploadID, UploadFingerprint: dl.Upload.UploadFingerprint,
+			OriginalUpload: dl.Upload.Filename,
+			Filename:       dl.Upload.Filename,
+			DestPath:       finalDest,
+			DownloadedAt:   time.Now(),
+			UnifiedName:    unifiedName,
 		}
 		applyArtwork(&file, artwork)
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:   downloadGameID(s.detail),
 			GameURL:  s.game.URL,
 			Title:    s.game.Title,
 			Author:   s.game.Author,
 			CoverURL: s.game.CoverURL,
 			IsFree:   s.game.IsFree,
 		}, file)
+		listing, listingSource := installListing(dl.Upload)
+		s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
+			UploadID: dl.Upload.UploadID, Filename: dl.Upload.Filename,
+			Fingerprint: dl.Upload.UploadFingerprint, Written: []string{finalDest},
+			Listing: listing, ListingSource: listingSource,
+		})
 		if saveErr := s.inv.Save(s.invPath); saveErr != nil {
 			logger.Warn("inventory: save failed: %v", saveErr)
 		} else {

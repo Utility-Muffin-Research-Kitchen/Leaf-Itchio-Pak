@@ -2,6 +2,9 @@ package itchio
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,8 +12,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
@@ -22,9 +27,10 @@ type GameDetail struct {
 	Uploads        []Upload
 	GameID         string
 	CSRFToken      string
-	PageTags       []string // itch.io tag labels scraped from the game page
-	BundleNames    []string // names of bundles that include this game (from public page)
-	BrowserOnly    bool     // true when page has HTML5 embed but no downloadable or paid files
+	PageTags       []string  // itch.io tag labels scraped from the game page
+	BundleNames    []string  // names of bundles that include this game (from public page)
+	BrowserOnly    bool      // true when page has HTML5 embed but no downloadable or paid files
+	Data           *GameData // public metadata, nil when unavailable
 }
 
 type Upload struct {
@@ -32,6 +38,58 @@ type Upload struct {
 	URL         string // resolver or CDN URL
 	UploadID    string // itch.io upload ID (from data-upload_id)
 	NeedsFormat bool   // true if extension is unknown and needs a manual format choice
+	Size        int64  // bytes; set for uploads listed through the API, 0 when unknown
+	// Type and Traits are set for uploads listed through the API and empty
+	// for the web flow: the upload's kind ("default", "html", "soundtrack",
+	// ...) and its flags, such as "p_windows" or "demo".
+	Type   string
+	Traits []string
+	// DisplayName, MD5, BuildID and UpdatedAt are also set only for uploads
+	// listed through the API; update checks fingerprint versions with them.
+	DisplayName string
+	MD5         string
+	BuildID     int64
+	UpdatedAt   time.Time
+}
+
+// DesktopOrWebOnly reports whether an upload listed through the API is a
+// build for a computer or phone (trait p_windows, p_linux, p_osx or
+// p_android) or a game played in the browser (type html, flash, unity or
+// java). Neither runs on Leaf. It reads only Type and Traits, so it is false
+// for uploads listed through the web flow, which carry neither.
+func (u Upload) DesktopOrWebOnly() bool {
+	switch u.Type {
+	case "html", "flash", "unity", "java":
+		return true
+	}
+	for _, trait := range u.Traits {
+		switch trait {
+		case "p_windows", "p_linux", "p_osx", "p_android":
+			return true
+		}
+	}
+	return false
+}
+
+// decodeTraits reads an upload's traits: an array of names, or an object
+// (itch.io answers {} for none; a map of true flags is accepted too). Any
+// other shape reads as no traits, so a listing never fails over them.
+func decodeTraits(raw json.RawMessage) []string {
+	var names []string
+	if json.Unmarshal(raw, &names) == nil {
+		return names
+	}
+	var flags map[string]bool
+	if json.Unmarshal(raw, &flags) != nil {
+		return nil
+	}
+	for name, set := range flags {
+		if set {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 var (
@@ -49,15 +107,70 @@ var (
 )
 
 func (c *Client) FetchGameDetail(gameURL string) (*GameDetail, error) {
-	logger.Debug("game: fetching detail %s", gameURL)
-	resp, err := c.http.Get(gameURL)
+	return c.FetchGameDetailContext(context.Background(), gameURL)
+}
+
+// FetchGameDetailContext retains the page for description, browser-only and
+// download controls, and prefers public JSON for fields itch.io exposes there.
+func (c *Client) FetchGameDetailContext(ctx context.Context, gameURL string) (*GameDetail, error) {
+	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
+	defer cancel()
+	detail, err := c.fetchGamePage(ctx, gameURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch game page: %w", err)
+		return nil, err
+	}
+	data, err := c.FetchGameDataContext(ctx, gameURL)
+	if err == nil {
+		detail.Data = data
+		detail.GameID = strconv.FormatInt(data.ID, 10)
+		// Content warnings read these tags, so keep every tag either source
+		// lists.
+		detail.PageTags = unionTags(detail.PageTags, data.Tags)
+		if data.Screenshots != nil {
+			detail.ScreenshotURLs = data.Screenshots
+		}
+	} else if errors.Is(ctx.Err(), context.Canceled) {
+		return nil, context.Canceled
+	} else {
+		logger.Debug("game: public metadata unavailable; retaining page fields")
+	}
+	return detail, nil
+}
+
+// unionTags keeps the first spelling of each tag, ignoring case and spaces.
+func unionTags(lists ...[]string) []string {
+	var tags []string
+	seen := make(map[string]bool)
+	for _, list := range lists {
+		for _, tag := range list {
+			key := strings.ToLower(strings.TrimSpace(tag))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			tags = append(tags, strings.TrimSpace(tag))
+		}
+	}
+	return tags
+}
+
+func (c *Client) fetchGamePage(ctx context.Context, gameURL string) (*GameDetail, error) {
+	logger.Debug("game: fetching detail %s", gameURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gameURL, nil)
+	if err != nil {
+		return nil, safeRequestError("build game page request", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, safeRequestError("fetch game page", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		return nil, fmt.Errorf("fetch game detail: %w", ErrGameRemoved)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("game: detail page", resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("game: detail page HTTP %d for %s", resp.StatusCode, gameURL)
@@ -204,32 +317,44 @@ func extractDescription(pageHTML string) string {
 				return
 			case "p":
 				buf.WriteString("<p>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</p>")
 				return
 			case "h1", "h2", "h3", "h4", "h5", "h6":
 				buf.WriteString("<h2>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</h2>")
 				return
 			case "strong", "b", "em", "i":
 				buf.WriteString("<b>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</b>")
 				return
 			case "ul":
 				buf.WriteString("<ul>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</ul>")
 				return
 			case "ol":
 				buf.WriteString("<ol>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</ol>")
 				return
 			case "li":
 				buf.WriteString("<li>")
-				for c := n.FirstChild; c != nil; c = c.NextSibling { walk(c) }
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
 				buf.WriteString("</li>")
 				return
 			case "tr":
@@ -262,14 +387,25 @@ type DownloadPageResult struct {
 // .gb/.gbc uploads found (with UploadID set) plus the page's CSRF token.
 // The CSRF token must be included in the body of the subsequent file resolver POST.
 func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) {
+	return c.parseDownloadPage(context.Background(), pageURL)
+}
+
+func (c *Client) parseDownloadPage(ctx context.Context, pageURL string) (*DownloadPageResult, error) {
 	// The signed URL contains a download key — do not log it.
 	logger.Debug("download-page: fetching signed download page")
-	resp, err := c.http.Get(pageURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build download page request")
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, safeRequestError("fetch download page", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("download-page", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("download-page: HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch download page: HTTP %d", resp.StatusCode)

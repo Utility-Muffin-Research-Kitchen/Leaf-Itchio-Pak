@@ -61,3 +61,45 @@ func TestDetailManageIntentRequiresDownloadedGame(t *testing.T) {
 		t.Fatalf("not-downloaded X intent = %v, want none", got)
 	}
 }
+
+func TestUnavailableDetailAllowsOnlyLocalManagement(t *testing.T) {
+	for _, downloaded := range []bool{false, true} {
+		model := NewDetailModel(DetailGame{Downloaded: downloaded, CanDownload: true})
+		model.SetError("Game page unavailable")
+		model.SetScrollBounds(2)
+		model.Handle(InputEvent{Button: ButtonDown, Pressed: true})
+		if model.ScrollLine != 1 {
+			t.Fatal("unavailable detail text cannot scroll")
+		}
+		if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != DetailIntentNone {
+			t.Fatalf("unverified download intent = %v", got)
+		}
+		want := DetailIntentNone
+		if downloaded {
+			want = DetailIntentManage
+		}
+		if got := model.Handle(InputEvent{Button: ButtonX, Pressed: true}); got != want {
+			t.Fatalf("downloaded=%v: X intent = %v, want %v", downloaded, got, want)
+		}
+		model.State = DetailWarning
+		if got := model.Handle(InputEvent{Button: ButtonX, Pressed: true}); got != DetailIntentNone {
+			t.Fatalf("warning bypassed by X: %v", got)
+		}
+	}
+}
+
+func TestDetailPriceTextFollowsOwnership(t *testing.T) {
+	game := DetailGame{PriceLabel: "$5.00", Owned: true}
+	if got := game.PriceText(); got != "Owned" {
+		t.Fatalf("owned paid game = %q, want Owned", got)
+	}
+	// Signing out clears Owned at draw time; the price returns.
+	game.Owned = false
+	if got := game.PriceText(); got != "$5.00" {
+		t.Fatalf("after sign-out = %q, want the price", got)
+	}
+	free := DetailGame{PriceLabel: "Free / name your price", Owned: true, IsFree: true}
+	if got := free.PriceText(); got != "Free / name your price" {
+		t.Fatalf("owned free game = %q, want its free label", got)
+	}
+}

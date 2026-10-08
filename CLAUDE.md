@@ -9,7 +9,7 @@ runtime or layout compatibility target.
 - Target only Miniloong Pocket 1 (`PLATFORM=mlp1`, aarch64 RK3566).
 - Package as `Apps/mlp1/Itch-io.pak`; do not add it to Leaf's default apps.
 - Publish through Pak Rat only after every verification gate passes.
-- Keep the Go catalogue, download, inventory, content-filter, GIF, API-key, and
+- Keep the Go catalogue, download, inventory, content-filter, GIF, sign-in, and
   music behavior unless the port plan explicitly replaces it.
 - Keep the single app-local CGo bridge to Catastrophe's box-model GUI; do not
   restore the removed Go/SDL renderer.
@@ -32,13 +32,14 @@ through `jawakad`, and suspend inhibition must use a generic Jawaka contract.
 ```sh
 make test
 make test-race
+make test-native
 make mac
 make package-smoke
 ```
 
-The headless and native race suites are both required. Device packaging is
-MLP1-only; explicit device staging is dispatched through Leaf's `stage-app`
-target and never changes the default Leaf payload.
+The headless (`test-race`) and native (`test-native`) race suites are both
+required. Device packaging is MLP1-only; explicit device staging is dispatched
+through Leaf's `stage-app` target and never changes the default Leaf payload.
 
 ## Code constraints
 

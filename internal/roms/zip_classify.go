@@ -47,6 +47,11 @@ func ClassifyEntry(name string) FileKind {
 		return KindOther
 	}
 	ext := strings.ToLower(ROMExt(name))
+	// Markdown shares the Mega Drive extension. Let the callers' magic-byte
+	// check identify real ROMs by their SEGA header instead of installing READMEs.
+	if ext == ".md" {
+		return KindOther
+	}
 	if romExts[ext] {
 		return KindROM
 	}
