@@ -47,6 +47,8 @@ capture detail-price 960 720 1 2
 capture detail-owned 960 720 1 2
 capture detail-minimum 960 720 1 2
 capture detail-free-sale 960 720 1 2
+capture detail-title-emoji 960 720 1 2
+capture detail-title-cjk 960 720 1 2
 capture detail-unavailable 960 720 1 0
 capture detail-unavailable-downloaded 960 720 1 0
 capture detail-unavailable-downloaded 1280 800 0 5
@@ -89,6 +91,7 @@ capture settings-confirm 960 720 1 0
 capture moderation 960 720 1 0
 capture moderation-tags 1280 800 0 5
 capture about 960 720 1 0
+capture about 960 720 1 2
 capture refresh 960 720 1 0
 capture refresh-done 1280 800 0 5
 capture power-wait 960 720 1 0
