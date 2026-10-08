@@ -117,12 +117,14 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 
 // memberNote names the archive member a file came from, when its name on the
 // card does not already say so: two builds in one archive can install under
-// one title name.
+// one title name. It names the member by its file name, as the member picker
+// does; archive folders can be long enough to push the name off the row.
 func memberNote(member, installedName string) string {
-	if member == "" || strings.EqualFold(path.Base(member), installedName) {
+	base := path.Base(strings.ReplaceAll(member, "\\", "/"))
+	if member == "" || strings.EqualFold(base, installedName) {
 		return ""
 	}
-	return "From " + member
+	return "From " + base
 }
 
 func (flow *CatManageFlow) indicesAvailable(indices []int) bool {

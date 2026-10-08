@@ -180,6 +180,8 @@ func TestCatManageShowsTheArchiveMember(t *testing.T) {
 	gameURL := "https://example.invalid/glory-hunters"
 	for name, member := range map[string]string{
 		"Glory Hunters.gba": "Glory Hunters 1.3 EZ IV Patched.gba",
+		"Glory Hunters.gb":  "Glory Hunters 2.0/Glory Hunters/Glory Hunters Version 2.0.1/Glory Hunters 2.0.1.gb",
+		"Old Hunters.gb":    `Legacy (OLD FILES)\Glory Hunters 1.3.gb`,
 		"Leafbound.gbc":     "release/LEAFBOUND.gbc",
 		"bonus.gb":          "",
 	} {
@@ -211,6 +213,8 @@ func TestCatManageShowsTheArchiveMember(t *testing.T) {
 	}
 	want := map[string]string{
 		"Glory Hunters.gba": "From Glory Hunters 1.3 EZ IV Patched.gba",
+		"Glory Hunters.gb":  "From Glory Hunters 2.0.1.gb",
+		"Old Hunters.gb":    "From Glory Hunters 1.3.gb",
 		"Leafbound.gbc":     "",
 		"bonus.gb":          "",
 	}
