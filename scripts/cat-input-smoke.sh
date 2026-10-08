@@ -47,6 +47,8 @@ capture detail-price 960 720 1 2
 capture detail-owned 960 720 1 2
 capture detail-minimum 960 720 1 2
 capture detail-free-sale 960 720 1 2
+capture detail-title-emoji 960 720 1 2
+capture detail-title-cjk 960 720 1 2
 capture detail-unavailable 960 720 1 0
 capture detail-unavailable-downloaded 960 720 1 0
 capture detail-unavailable-downloaded 1280 800 0 5

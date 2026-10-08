@@ -76,3 +76,32 @@ func TestTriggersMapToPlatformControls(t *testing.T) {
 		t.Fatalf("R2 maps to %v, want app R2", got)
 	}
 }
+
+// F2: a screen title is measured with the fallback fonts it draws with. The
+// theme font has no glyph for an emoji or CJK title and measures it too
+// narrow, so a title that only fits a smaller size must get that size.
+func TestTitleTierUsesTheLargestSizeThatFits(t *testing.T) {
+	widths := map[FontTier]int{FontExtraLarge: 300, FontLarge: 200, FontMedium: 150}
+	measure := func(tier FontTier, title string) int {
+		if title == "↑🐱↑" {
+			return widths[tier]
+		}
+		return 0
+	}
+	cases := []struct {
+		width int
+		want  FontTier
+	}{
+		{400, FontExtraLarge},
+		{300, FontExtraLarge},
+		{250, FontLarge},
+		{150, FontMedium},
+		// Too wide for every size: the smallest, clipped by the draw.
+		{100, FontMedium},
+	}
+	for _, tc := range cases {
+		if got := titleTier("↑🐱↑", tc.width, measure); got != tc.want {
+			t.Errorf("titleTier at width %d = %v, want %v", tc.width, got, tc.want)
+		}
+	}
+}

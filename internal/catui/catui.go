@@ -261,13 +261,30 @@ func (c *Context) Present() error {
 	return statusError(C.catui_present())
 }
 
+// DrawTitleIn draws a screen title, often a game's, with the fallback fonts
+// list rows use, so emoji and CJK titles the theme font lacks are not blank.
 func (c *Context) DrawTitleIn(rect Rect, title string) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
 	}
 	titleC, freeTitle := cString(title)
 	defer freeTitle()
-	return statusError(C.catui_draw_title_in(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H), titleC))
+	tier := titleTier(title, rect.W, c.MeasureFallbackText)
+	return statusError(C.catui_draw_title_in(C.int(rect.X), C.int(rect.Y), C.int(rect.W), C.int(rect.H),
+		titleC, C.int(tier)))
+}
+
+// titleTier picks the largest title size whose width fits, or the smallest
+// size, which the draw clips. measure must be the fallback-font measure the
+// title draws with.
+func titleTier(title string, width int, measure func(FontTier, string) int) FontTier {
+	tiers := []FontTier{FontExtraLarge, FontLarge, FontMedium}
+	for _, tier := range tiers {
+		if measure(tier, title) <= width {
+			return tier
+		}
+	}
+	return tiers[len(tiers)-1]
 }
 
 func (c *Context) TitleHeight() int   { return int(C.catui_title_height()) }
