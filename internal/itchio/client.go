@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -174,10 +175,20 @@ func productUserAgent(version string) string {
 }
 
 // safeRequestError keeps credential-bearing request URLs out of UI/crash
-// messages while retaining the full failure in the local, redacted debug log.
-// Cancellation identity is preserved for transaction rollback logic.
+// messages and out of the log, which gets only the operation, the host and
+// the underlying failure. Cancellation identity is preserved for transaction
+// rollback logic.
 func safeRequestError(operation string, err error) error {
-	logger.Debug("%s request failed: %v", operation, err)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		host := "unknown host"
+		if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil && parsed.Host != "" {
+			host = parsed.Host
+		}
+		logger.Debug("%s request to %s failed: %v", operation, host, urlErr.Err)
+	} else {
+		logger.Debug("%s request failed: %v", operation, err)
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("%s: %w", operation, context.Canceled)
@@ -231,12 +242,23 @@ func newHTTPClient(version string, replayHosts ...string) *http.Client {
 
 type Client struct {
 	http   *http.Client
-	base   string // itch.io/api/1/... base URL
-	butler string // api.itch.io base URL (butler-style endpoints)
+	base   string // itch.io web base URL (pages, feeds, free downloads)
+	butler string // api.itch.io base URL (API v2, bearer-authenticated)
 
 	// Background API key validation state (atomic, written once per session).
 	apiKeyStatus   int32 // stores APIKeyStatus constants
 	apiKeyChecking int32 // 0 = not started, 1 = started (CAS gate)
+
+	// keyGeneration changes whenever the API key is replaced or removed, so
+	// account-derived results computed under an older key are discarded.
+	keyGeneration atomic.Uint64
+	// purchaseCounts maps purchase ID to the number of distinct games it
+	// grants, from the last complete owned-library scan under the current
+	// key. nil until such a scan; never persisted.
+	ownedMu        sync.Mutex
+	purchaseCounts map[int64]int
+	// purchaseCountsPartial marks counts from a scan stopped at the page cap.
+	purchaseCountsPartial bool
 }
 
 func NewClient() *Client {
@@ -254,12 +276,10 @@ func NewClientWithVersion(version string) *Client {
 	}
 }
 
+// NewClientWithBase is used in tests. The API base is the same server, so a
+// test client can never reach the real api.itch.io.
 func NewClientWithBase(base string) *Client {
-	return &Client{
-		http:   newHTTPClient("dev", urlHost(base)),
-		base:   base,
-		butler: apiItchIO,
-	}
+	return NewClientWithBaseAndButler(base, base)
 }
 
 // NewClientWithBaseAndButler is used in tests to override both base URLs.
