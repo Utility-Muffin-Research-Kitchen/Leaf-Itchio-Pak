@@ -279,12 +279,16 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 
 	upstreamFiles := make([]UpstreamFile, 0, len(uploads))
 	upstreamNames := make(map[string]bool, len(uploads)*2)
+	upstreamIDs := make(map[string]bool, len(uploads))
 	for _, u := range uploads {
 		upstreamFiles = append(upstreamFiles, UpstreamFile{
 			Filename: u.Filename,
 			UploadID: u.UploadID,
 			SeenAt:   time.Now(), // preserved for known files by SetUpstreamFiles
 		})
+		if u.UploadID != "" {
+			upstreamIDs[u.UploadID] = true
+		}
 		upstreamNames[u.Filename] = true
 		if stem := strings.TrimSuffix(u.Filename, romFileExt(u.Filename)); stem != u.Filename {
 			upstreamNames[stem] = true
@@ -308,6 +312,12 @@ func (s *UpdateService) checkFreeGame(gameURL string, downloadedFiles []Download
 	// directly listed as upload filenames, so skip them here.
 	for _, f := range downloadedFiles {
 		if f.FileType == FileTypeMusic {
+			continue
+		}
+		// The upload ID matches first: a file downloaded through the API
+		// records the API filename, which the web page may list under
+		// another name.
+		if f.UploadID != "" && upstreamIDs[f.UploadID] {
 			continue
 		}
 		// For files extracted from archives (ZIP/7z), check the source archive

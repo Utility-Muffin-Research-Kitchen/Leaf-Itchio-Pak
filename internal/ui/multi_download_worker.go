@@ -133,17 +133,10 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 			return
 		}
 
-		isAuth := dl.Upload.DownloadKeyID != ""
-		logger.Info("multi-download: [%d/%d] starting %s → %s auth=%v",
-			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, isAuth)
+		logger.Info("multi-download: [%d/%d] starting %s → %s api=%v",
+			i+1, len(s.downloads), dl.Upload.Filename, dl.DestPath, dl.Upload.ViaAPI())
 
-		var err error
-		if isAuth {
-			err = s.client.DownloadAuthUploadContext(ctx, s.cfg.APIKey, dl.Upload.UploadID, dl.Upload.DownloadKeyID, dl.DestPath, progress)
-		} else {
-			itchUpload := itchio.Upload{Filename: dl.Upload.Filename, URL: dl.Upload.URL}
-			err = s.client.DownloadFreeContext(ctx, itchUpload, dl.DestPath, progress)
-		}
+		err := downloadUpload(ctx, s.client, s.cfg.APIKey, s.game.URL, dl.Upload, dl.DestPath, progress)
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -164,11 +157,11 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest
 		file := inventory.DownloadedFile{
+			UploadID:     dl.Upload.UploadID,
 			Filename:     dl.Upload.Filename,
 			DestPath:     finalDest,
 			DownloadedAt: time.Now(),
 			UnifiedName:  unifiedName,
-			UploadID:     dl.Upload.UploadID,
 		}
 		applyArtwork(&file, artwork)
 		s.inv.Add(s.game.URL, inventory.Entry{

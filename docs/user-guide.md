@@ -66,6 +66,10 @@ the same system, such as an update and the original jam release, or offers an
 archive, the app lists every upload instead and downloads only the one you
 choose.
 
+With an API key, the app can tell Windows, macOS, Linux, Android and browser
+builds from the files Leaf can play. It never picks those builds for you. When
+you choose the file yourself, they're listed last, behind **Show all files**.
+
 If you later pick another build for the same system that the page still
 offers, the app keeps both: the first keeps the title name, such as
 `Glory Hunters.gba`, and the next gets its upload name added,
@@ -150,7 +154,11 @@ are fetched again when needed.
 ## API key
 
 Free browsing/downloads work without a key. Add a key to authenticate owned paid
-games:
+games. With a key, free and pay-what-you-want games are also listed through the
+itch.io API, which is quicker than the web download page. If the API fails or
+lists nothing, the app tries the web download page once, and it does the same
+if itch.io lists the game but refuses the download. If itch.io asks the app to
+slow down, it stops and asks you to try again later instead.
 
 1. Open Start > Settings > API Key.
 2. Accept the physical-access warning.

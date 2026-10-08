@@ -46,7 +46,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.12"
+          go-version: "1.27.1"
           cache-dependency-path: Leaf-Itchio-Pak/go.sum
 
       - name: Install SDL development libraries
@@ -67,7 +67,9 @@ jobs:
 
       - name: Run tests
         working-directory: Leaf-Itchio-Pak
-        run: make test-race
+        run: |
+          make test-race
+          make test-native
 
       - name: Build exact MLP1 package
         working-directory: Leaf-Itchio-Pak

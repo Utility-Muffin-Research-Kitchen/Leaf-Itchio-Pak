@@ -186,20 +186,28 @@ stock Leaf defaults resolve these to `.userdata/mlp1/Itch-io` and
 `.userdata/mlp1/logs/itchio-pak.log` at the primary SD root. Settings displays
 the resolved App Data path. No telemetry or UMRK network endpoint exists.
 
+Every request to itch.io identifies the app as `Leaf-Itchio-Pak/<version>` with
+this project's URL, and sends no device or account details in that header. If
+itch.io asks the app to slow down, it pauses requests to that server and retries
+a few times. A catalogue refresh that stays rate limited stops and keeps your
+existing catalogue. If a download server asks the app to slow down, the
+download waits, gets a fresh link once and tries again. If that is refused too,
+the download stops and asks you to wait a minute before you try again.
+
 Info logging is the default. Debug logging is intended for a short reproduction
 of network/download failures; the same secret and private-path redaction applies
 at both levels.
 
 ## Build and test
 
-Native macOS work requires Go 1.22 or newer, `pkg-config`, SDL2, SDL2_image,
+Native macOS work requires Go 1.27 or newer, `pkg-config`, SDL2, SDL2_image,
 SDL2_ttf, and a sibling `../Catastrophe` checkout. The MLP1 lane requires Docker
 or Podman plus the UMRK MLP1 toolchain image.
 
 ```sh
 make test
 make test-race
-go test -count=1 -race ./...
+make test-native
 make native
 make mac
 make run-mac
@@ -211,6 +219,8 @@ make package-smoke
 ```
 
 `make test` and `make test-race` include the durable Cat-only/remnant audit.
+`make test-native` runs the untagged race suite, which is the only one that
+covers the Catastrophe download flows and workers.
 `CATASTROPHE_DIR`, `MLP1_TOOLCHAIN_IMAGE`, `GO_IMAGE`, and
 `CONTAINER_RUNTIME` may be overridden. Unknown package platforms fail closed.
 

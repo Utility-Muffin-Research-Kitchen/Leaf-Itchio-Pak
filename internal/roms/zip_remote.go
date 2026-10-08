@@ -2,6 +2,7 @@ package roms
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 )
 
 // rangePrefetchSize is how many bytes are fetched per HTTP Range request.
@@ -28,6 +30,9 @@ type rangeReaderAt struct {
 	mu         sync.Mutex
 	chunks     []rangeChunk
 	onProgress func(fetched, totalFile int64) // called after each HTTP fetch; nil = no-op
+	// limited keeps the first rate-limit error. archive/zip drops read errors
+	// while sniffing entry contents, so the inspection checks this afterwards.
+	limited error
 }
 
 type rangeChunk struct {
@@ -77,9 +82,17 @@ func (r *rangeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", off, fetchEnd))
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return 0, remoteRequestError("remote ZIP range", err)
+		err = remoteRequestError("remote ZIP range", err)
+		if errors.Is(err, netlimit.ErrRateLimited) {
+			r.limited = err
+		}
+		return 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		r.limited = netlimit.FromResponse("zip-inspect: range read", resp)
+		return 0, r.limited
+	}
 	if resp.StatusCode != http.StatusPartialContent {
 		return 0, fmt.Errorf("range: server returned %d (expected 206)", resp.StatusCode)
 	}
@@ -119,14 +132,23 @@ func (r *rangeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 //     403); the 206 Content-Range header reveals the total file size.
 //  3. Full download — last resort for servers that reject Range entirely.
 //
+// An HTTP 429 at any step ends the inspection with netlimit.ErrRateLimited:
+// a server asking for fewer requests never gets the full download instead.
+//
 // onProgress is called after each HTTP fetch with (bytesRead, totalFileSize).
 // Pass nil to omit progress reporting.
 func InspectRemoteZIP(client *http.Client, cdnURL string, onProgress func(fetched, total int64)) (ZIPManifest, error) {
-	size, ok := probeSizeAndRange(client, cdnURL)
+	size, ok, err := probeSizeAndRange(client, cdnURL)
+	if err != nil {
+		return ZIPManifest{}, err
+	}
 	if ok {
 		m, err := inspectViaRange(client, cdnURL, size, onProgress)
 		if err == nil {
 			return m, nil
+		}
+		if errors.Is(err, netlimit.ErrRateLimited) {
+			return ZIPManifest{}, err
 		}
 		logger.Debug("zip-inspect: range path failed (%v), falling back to full download", err)
 	}
@@ -135,14 +157,18 @@ func InspectRemoteZIP(client *http.Client, cdnURL string, onProgress func(fetche
 
 // probeSizeAndRange returns the total byte size of the remote file and true
 // when the server supports Range requests. It tries HEAD first; if that fails
-// or does not advertise Accept-Ranges, it probes with a Range GET.
-func probeSizeAndRange(client *http.Client, url string) (int64, bool) {
+// or does not advertise Accept-Ranges, it probes with a Range GET. Only rate
+// limiting is returned as an error; anything else means no Range support.
+func probeSizeAndRange(client *http.Client, url string) (int64, bool, error) {
 	if resp, err := client.Head(url); err == nil {
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return 0, false, netlimit.FromResponse("zip-inspect: HEAD", resp)
+		}
 		if resp.StatusCode == http.StatusOK && resp.ContentLength > 0 &&
 			strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes") {
 			logger.Debug("zip-inspect: HEAD ok size=%d range=yes", resp.ContentLength)
-			return resp.ContentLength, true
+			return resp.ContentLength, true, nil
 		}
 		logger.Debug("zip-inspect: HEAD returned status=%d cl=%d accept-ranges=%q — trying range probe",
 			resp.StatusCode, resp.ContentLength, resp.Header.Get("Accept-Ranges"))
@@ -152,26 +178,32 @@ func probeSizeAndRange(client *http.Client, url string) (int64, bool) {
 	// Content-Range header that reveals the total file size.
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return 0, false
+		return 0, false, nil
 	}
 	req.Header.Set("Range", "bytes=-1")
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, false
+		if err = remoteRequestError("zip-inspect: range probe", err); errors.Is(err, netlimit.ErrRateLimited) {
+			return 0, false, err
+		}
+		return 0, false, nil
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 8192)) //nolint:errcheck
 	resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return 0, false, netlimit.FromResponse("zip-inspect: range probe", resp)
+	}
 	if resp.StatusCode != http.StatusPartialContent {
 		logger.Debug("zip-inspect: range probe returned %d — no range support, will full-download", resp.StatusCode)
-		return 0, false
+		return 0, false, nil
 	}
 	total := parseContentRangeTotal(resp.Header.Get("Content-Range"))
 	if total <= 0 {
-		return 0, false
+		return 0, false, nil
 	}
 	logger.Debug("zip-inspect: range probe ok total=%d", total)
-	return total, true
+	return total, true, nil
 }
 
 // parseContentRangeTotal extracts the total size from a Content-Range header
@@ -191,10 +223,17 @@ func parseContentRangeTotal(cr string) int64 {
 func inspectViaRange(client *http.Client, cdnURL string, size int64, onProgress func(int64, int64)) (ZIPManifest, error) {
 	rra := &rangeReaderAt{url: cdnURL, client: client, size: size, onProgress: onProgress}
 	r, err := zip.NewReader(rra, size)
+	if rra.limited != nil {
+		return ZIPManifest{}, rra.limited
+	}
 	if err != nil {
 		return ZIPManifest{}, fmt.Errorf("zip.NewReader: %w", err)
 	}
-	return manifestFromZipReader(r)
+	manifest, err := manifestFromZipReader(r)
+	if rra.limited != nil {
+		return ZIPManifest{}, rra.limited
+	}
+	return manifest, err
 }
 
 func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, error) {
@@ -212,6 +251,9 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 		return ZIPManifest{}, remoteRequestError("remote ZIP download", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ZIPManifest{}, netlimit.FromResponse("zip-inspect: download", resp)
+	}
 
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {

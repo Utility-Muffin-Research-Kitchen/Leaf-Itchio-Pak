@@ -2,6 +2,7 @@ package itchio_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 func captureDebugLog(t *testing.T) *bytes.Buffer {
@@ -48,12 +50,12 @@ func TestSignedURLsAndAPIKeysAreAbsentFromDebugLogs(t *testing.T) {
 	defer srv.Close()
 
 	buf := captureDebugLog(t)
-	client := itchio.NewClientWithBase(srv.URL)
+	client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
 	if _, err := client.FetchFileHeader(srv.URL+"/game.gbc?X-Amz-Signature="+signature, 6); err != nil {
 		t.Fatalf("FetchFileHeader: %v", err)
 	}
-	if _, err := client.ResolveAuthURL(apiKey, "55", "77"); err != nil {
-		t.Fatalf("ResolveAuthURL: %v", err)
+	if _, err := client.ResolveUploadURLContext(context.Background(), apiKey, "55", roms.NewInstallSession("", "77")); err != nil {
+		t.Fatalf("ResolveUploadURLContext: %v", err)
 	}
 
 	out := buf.String()
@@ -98,7 +100,7 @@ func TestCredentialBearingRequestURLsStayOutOfReturnedErrors(t *testing.T) {
 	base := srv.URL
 	srv.Close()
 
-	client := itchio.NewClientWithBase(base)
+	client := itchio.NewClientWithBaseAndButler(base, base)
 	_, headerErr := client.FetchFileHeader(base+"/game.zip?X-Amz-Signature="+signature, 8)
 	_, uploadsErr := client.FetchUploadsForKey(apiKey, "7", downloadID)
 	for name, err := range map[string]error{"signed header": headerErr, "owned uploads": uploadsErr} {

@@ -1,0 +1,43 @@
+{
+  "uploads": [
+    {
+      "id": 9100001,
+      "game_id": 4200001,
+      "filename": "win32.zip",
+      "display_name": "Windows",
+      "size": 31457280,
+      "type": "default",
+      "traits": ["p_windows"],
+      "storage": "hosted",
+      "position": 0,
+      "created_at": "2024-03-02T10:00:00.000000000Z",
+      "updated_at": "2024-03-02T10:00:00.000000000Z"
+    },
+    {
+      "id": 9100002,
+      "game_id": 4200001,
+      "filename": "linux.zip",
+      "display_name": "Linux",
+      "size": 30408704,
+      "type": "default",
+      "traits": ["p_linux"],
+      "storage": "hosted",
+      "position": 1,
+      "created_at": "2024-03-02T10:00:00.000000000Z",
+      "updated_at": "2024-03-02T10:00:00.000000000Z"
+    },
+    {
+      "id": 9100003,
+      "game_id": 4200001,
+      "filename": "ps1.zip",
+      "display_name": "PlayStation disc image",
+      "size": 268435456,
+      "type": "default",
+      "traits": {},
+      "storage": "hosted",
+      "position": 2,
+      "created_at": "2024-03-02T10:00:00.000000000Z",
+      "updated_at": "2024-03-02T10:00:00.000000000Z"
+    }
+  ]
+}

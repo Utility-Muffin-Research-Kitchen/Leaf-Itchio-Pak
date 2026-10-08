@@ -196,6 +196,26 @@ func TestSignedURLCredentialsAreRedacted(t *testing.T) {
 	}
 }
 
+// The API v2 install-session UUID ties requests to one account's download.
+func TestInstallSessionUUIDIsRedacted(t *testing.T) {
+	resetLevel(t)
+	logger.SetLevel(logger.LevelDebug)
+	buf := captureOutput(t)
+
+	logger.Debug("resolve=https://api.itch.io/uploads/9/download?uuid=session-secret-1&page=2")
+	logger.Debug("resolve=https://api.itch.io/uploads/9/download?download_key_id=7&UUID=session-secret-2")
+
+	out := buf.String()
+	for _, secret := range []string{"session-secret-1", "session-secret-2"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("install session UUID %q appeared in output:\n%s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "page=2") {
+		t.Errorf("redaction swallowed the next parameter:\n%s", out)
+	}
+}
+
 func TestCredentialAndPathRedactionAtInfoAndDebugLevels(t *testing.T) {
 	levels := []struct {
 		name  string
