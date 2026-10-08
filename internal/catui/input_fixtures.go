@@ -118,6 +118,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "download-done":
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
+			model.Skipped = []string{"leafbound.GBC"}
 			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
@@ -194,7 +195,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		if config.Screen == "manage-confirm" {
 			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
 		} else if config.Screen == "manage-result" {
-			model.SetResult("Deleted 2 managed ROM files.")
+			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		}
 		screen, screenErr := NewManageScreen(ctx, model)

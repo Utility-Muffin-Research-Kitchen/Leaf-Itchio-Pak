@@ -329,6 +329,15 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		model.SetError("No downloadable files were found for this game.")
 		return
 	}
+	// Every upload carries the listing it is chosen from, so the install can
+	// tell an update (old upload gone) from another build (still offered).
+	listing := make([]roms.Offer, 0, len(uploads))
+	for _, upload := range uploads {
+		listing = append(listing, roms.Offer{Filename: upload.Filename, UploadID: upload.UploadID})
+	}
+	for index := range uploads {
+		uploads[index].Offered = listing
+	}
 	flow.uploads, flow.hidden = uploads, nil
 	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {
 		// BIN is ambiguous: it is commonly a PlayStation companion track, but
@@ -375,7 +384,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		for _, upload := range known {
 			hasArchive = hasArchive || isArchive(upload.Filename)
 		}
-		if !hasArchive {
+		if !hasArchive && !hasAlternativeBuilds(known) {
 			flow.plan = flow.planForUploads(known)
 			return
 		}
@@ -430,6 +439,30 @@ func splitSetAside(uploads []roms.Upload) (kept, aside []roms.Upload) {
 func setAsideLast(uploads []roms.Upload) []roms.Upload {
 	kept, aside := splitSetAside(uploads)
 	return append(kept, aside...)
+}
+
+// hasAlternativeBuilds reports whether two uploads target the same cartridge
+// system, which makes them alternative builds of one game (an update and the
+// original jam release, say) rather than companions for different systems.
+// PlayStation files are left out: CUE/BIN tracks and the discs of one game
+// are a dependent set, not competing builds.
+func hasAlternativeBuilds(uploads []roms.Upload) bool {
+	seen := make(map[string]bool, len(uploads))
+	for _, upload := range uploads {
+		ext := strings.ToLower(roms.ROMExt(upload.Filename))
+		if roms.IsPSXExt(ext) {
+			continue
+		}
+		system := roms.DestinationDir(ext)
+		if system == "" {
+			continue
+		}
+		if seen[system] {
+			return true
+		}
+		seen[system] = true
+	}
+	return false
 }
 
 func isPairedPSXUploadSet(uploads []roms.Upload) bool {

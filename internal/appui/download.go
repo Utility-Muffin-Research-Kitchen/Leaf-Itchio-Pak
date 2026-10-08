@@ -1,5 +1,10 @@
 package appui
 
+import (
+	"fmt"
+	"strings"
+)
+
 type DownloadSelectState uint8
 
 const (
@@ -156,8 +161,22 @@ type DownloadProgressModel struct {
 	Downloaded, Total       int64
 	FileIndex, FileCount    int
 	SavedPaths              []string
-	Locked                  bool // protected operation cannot be cancelled mid-transaction
-	LibraryStatus           string
+	// Skipped names the archive files that were not installed, for
+	// example because another file of the archive already has their name.
+	Skipped       []string
+	Locked        bool // protected operation cannot be cancelled mid-transaction
+	LibraryStatus string
+}
+
+// SkippedFilesLine is the done screen's line for skipped files, or "".
+func SkippedFilesLine(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return "Skipped 1 file: " + names[0]
+	}
+	return fmt.Sprintf("Skipped %d files: %s", len(names), strings.Join(names, ", "))
 }
 
 func (m *DownloadProgressModel) Handle(event InputEvent) DownloadProgressIntent {

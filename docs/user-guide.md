@@ -59,9 +59,22 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
+With **ROM Selection** on `auto`, the app downloads every supported upload
+together when each one is for a different system. A PlayStation game's CUE/BIN
+tracks or discs count as one set. When the game offers more than one build for
+the same system, such as an update and the original jam release, or offers an
+archive, the app lists every upload instead and downloads only the one you
+choose.
+
 With an API key, the app can tell Windows, macOS, Linux, Android and browser
 builds from the files Leaf can play. It never picks those builds for you. When
 you choose the file yourself, they're listed last, behind **Show all files**.
+
+If you later pick another build for the same system that the page still
+offers, the app keeps both: the first keeps the title name, such as
+`Glory Hunters.gba`, and the next gets its upload name added,
+`Glory Hunters (glory_ez4).gba`. An update that replaced the old upload on the
+page replaces the old file instead.
 
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
@@ -123,6 +136,11 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+A new version that replaces a file you downloaded, such as a new `.gb` build
+for your `.gb` or a new archive for your archive, shows as an update. A game is
+marked removed when its page is gone, when it offers no downloads the app can
+use, or when a file you downloaded is gone and nothing of the same kind
+replaces it. A network error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
 
@@ -169,8 +187,19 @@ New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
-names when a rename could break references. Every committed ROM/artwork change
-requests one Jawaka rescan.
+names when a rename could break references. When two files from one download
+or archive would get the same title name, they keep their original names so
+neither replaces the other. FAT32 ignores letter case, so two names that
+differ only in case count as the same file: a download stops before writing
+anything, and an archive skips the later file and lists it on the
+**Download complete** screen. Every committed ROM/artwork change requests one
+Jawaka rescan.
+
+A download never replaces a file that another game installed, or a file the
+app did not install. It saves its own copy as `<Title> - <file name>` instead,
+and downloading the same game again later updates that copy. If two games
+already share a file from an earlier version, deleting one of them in Manage
+keeps the file for the other.
 
 ## Data and logs
 
