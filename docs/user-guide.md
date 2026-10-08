@@ -59,6 +59,10 @@ formats. Depending on Settings and the upload, it may ask for:
 4. a folder inside the canonical system or Music root;
 5. final confirmation of every relative output path.
 
+With an API key, the app can tell Windows, macOS, Linux, Android and browser
+builds from the files Leaf can play. It never picks those builds for you. When
+you choose the file yourself, they're listed last, behind **Show all files**.
+
 The destination is revalidated immediately before transfer and before later
 batch members. If the selected card is removed, the operation fails before
 writing outside the sealed plan. Partial transfer files use the target directory
@@ -125,7 +129,11 @@ are fetched again when needed.
 ## API key
 
 Free browsing/downloads work without a key. Add a key to authenticate owned paid
-games:
+games. With a key, free and pay-what-you-want games are also listed through the
+itch.io API, which is quicker than the web download page. If the API fails or
+lists nothing, the app tries the web download page once, and it does the same
+if itch.io lists the game but refuses the download. If itch.io asks the app to
+slow down, it stops and asks you to try again later instead.
 
 1. Open Start > Settings > API Key.
 2. Accept the physical-access warning.

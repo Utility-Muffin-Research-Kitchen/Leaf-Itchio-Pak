@@ -54,24 +54,37 @@ type CatArchiveFlow struct {
 	choiceExts     []string
 	choiceIndex    int
 	skipROMChoices bool
+
+	// ctx bounds the inspection's requests; Close cancels it.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewCatArchiveFlow(client *itchio.Client, cfg *settings.Config, game itchio.Game,
 	upload roms.Upload, inv *inventory.Inventory, wake func()) *CatArchiveFlow {
 	flow := &CatArchiveFlow{client: client, cfg: cfg, game: game, upload: upload, inv: inv,
 		wake: wake, updates: make(chan catArchiveUpdate, 1)}
+	flow.ctx, flow.cancel = context.WithCancel(context.Background())
 	go flow.inspect()
 	return flow
 }
 
-func (flow *CatArchiveFlow) inspect() {
-	var cdnURL string
-	var err error
-	if flow.upload.ViaAPI() {
-		cdnURL, err = flow.client.ResolveUploadURLContext(context.Background(), flow.cfg.APIKey, flow.upload.UploadID, flow.upload.Install)
-	} else {
-		cdnURL, err = flow.client.ResolveFreeURL(itchio.Upload{Filename: flow.upload.Filename, URL: flow.upload.URL})
+// Close stops the inspection's requests when you leave the archive screens.
+func (flow *CatArchiveFlow) Close() {
+	if flow.cancel != nil {
+		flow.cancel()
 	}
+}
+
+func (flow *CatArchiveFlow) requestContext() context.Context {
+	if flow.ctx == nil {
+		return context.Background()
+	}
+	return flow.ctx
+}
+
+func (flow *CatArchiveFlow) inspect() {
+	cdnURL, err := resolveUploadURL(flow.requestContext(), flow.client, flow.cfg.APIKey, flow.game.URL, flow.upload)
 	if err != nil {
 		flow.publish(catArchiveUpdate{err: err})
 		return

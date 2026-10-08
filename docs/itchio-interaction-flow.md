@@ -66,6 +66,18 @@ The CSRF token extracted here is used in the free download flow (Step 2 below).
 
 **Source:** `download.go` — `FetchUploads` + `DownloadFree`
 
+With an API key and a known game ID, a free or name-your-own-price game is
+listed through `GET api.itch.io/games/{GAME_ID}/uploads` without a
+`download_key_id`, and downloads through an install session with no purchase
+ID (see the paid flow below). That skips this web flow and its
+`download_url` POST. `CatDownloadFlow.fetchFree` falls back to the web flow
+at most once, when the API fails or lists nothing. A rate limit or
+cancellation is final and never tries the other endpoint. When the API
+refused access and the web flow finds no download link either
+(`ErrNoWebDownload`), the access error (`ErrNoAccess`) is reported; any other
+web failure, such as being offline, is reported as is. Signed-out users
+always use the web flow below.
+
 There are six steps. The same `*Client` (and its cookie jar) is used
 throughout, so cookies set in early steps are available in later ones.
 
@@ -260,8 +272,15 @@ GET https://api.itch.io/games/{GAME_ID}/uploads?download_key_id={KEY_ID}
 `download_key_id` is omitted for a free or name-your-own-price game. Uploads
 are classified through the same maintained format/archive rules as anonymous
 downloads, and `size` is kept on each `Upload`. `uploads` may be an array, `{}`,
-`null`, or absent; `errors` is reported generically. Unstable fields such as
-`traits` are not decoded.
+`null`, or absent; `errors` is reported generically. `type` and `traits` are
+read leniently (`traits` is `{}` when empty and an array otherwise; any other
+shape reads as none). `Upload.DesktopOrWebOnly` reports a build for a
+computer or phone (trait `p_windows`, `p_linux`, `p_osx` or `p_android`) or a
+browser game (type `html`, `flash`, `unity` or `java`). The file picker never
+chooses such an archive or unknown-format file automatically: while another
+file is on offer it waits behind a last **Show all files** row, and when only
+such builds remain you choose. A file with a ROM extension is never set
+aside.
 
 ### Step 3 — Begin an install
 
@@ -279,6 +298,12 @@ operation is cancelled, it stops. If a resolve answers 400, 404 or 410 to the
 session's UUID, which a session left unused for long (for example while you
 choose a destination) might get, the install opens one new session and asks
 again; later resolutions use the new one. The UUID is never logged or saved.
+
+The download screens own a context (`CatDownloadFlow.Close`,
+`CatArchiveFlow.Close`) that bounds the upload lookup, the purchase listing,
+the format probe and archive inspection, including any wait before a
+rate-limit retry. Pressing B on those screens cancels it, so no request,
+session or resolve outlives the screen.
 
 Each purchase listing starts one install. Its uploads carry the session by
 pointer (`roms.Upload.Install`), which is also the only test for an API
@@ -302,6 +327,13 @@ archive inspection or the magic-byte probe. Missing locations, rejected
 access, and malformed bodies fail with sanitized errors. Here and in the
 upload list, 404 or 410 reports "This file is no longer on itch.io.", 401 or
 403 the no-access error, and 429 the shared rate-limit message.
+
+A refusal (HTTP 401 or 403, `ErrDownloadRefused`) of a free install, one
+with no `download_key_id`, is retried once through the anonymous web flow:
+the app lists the game's web download page, picks the same upload by ID (or
+by filename) and resolves it there. A purchase is never retried
+anonymously. Resolving a free game without a purchase works today; this
+keeps downloads working if itch.io starts refusing it.
 
 The signed CDN URL expires quickly (60 seconds). It is resolved immediately
 before streaming, not cached.

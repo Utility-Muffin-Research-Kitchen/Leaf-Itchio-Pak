@@ -58,8 +58,18 @@ func presentAbsent(s string) string {
 // The resolver URL is stored as Upload.URL. Pass it to DownloadFree to resolve
 // the actual CDN link and stream the file.
 func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
+	return c.FetchWebUploadsContext(context.Background(), gameURL)
+}
+
+// FetchWebUploadsContext is FetchUploads bounded by ctx, so leaving the
+// download screen stops every step.
+func (c *Client) FetchWebUploadsContext(ctx context.Context, gameURL string) ([]Upload, error) {
 	// Step 1: get CSRF token from game page
-	resp, err := c.http.Get(gameURL)
+	pageReq, err := http.NewRequestWithContext(ctx, http.MethodGet, gameURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build game page request: %w", err)
+	}
+	resp, err := c.http.Do(pageReq)
 	if err != nil {
 		return nil, safeRequestError("fetch game page", err)
 	}
@@ -92,7 +102,12 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 	// Step 2: POST to get the signed download page URL
 	postURL := strings.TrimRight(gameURL, "/") + "/download_url"
 	form := url.Values{"csrf_token": {csrf}, "suggested_amount": {"0"}}
-	postResp, err := c.http.Post(postURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build download_url request: %w", err)
+	}
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postResp, err := c.http.Do(postReq)
 	if err != nil {
 		return nil, safeRequestError("download_url POST", err)
 	}
@@ -112,7 +127,7 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 		return nil, fmt.Errorf("parse download_url response: %w", err)
 	}
 	if dlResult.URL == "" {
-		return nil, fmt.Errorf("download_url returned empty url (game may be paid or require login)")
+		return nil, ErrNoWebDownload
 	}
 	// The signed URL contains a download key — do not log it.
 	logger.Debug("uploads: signed download URL received")
@@ -127,7 +142,7 @@ func (c *Client) FetchUploads(gameURL string) ([]Upload, error) {
 	logger.Debug("uploads: download key extracted")
 
 	// Step 4: parse the signed download page for upload IDs + filenames + CSRF token
-	dlPage, err := c.ParseDownloadPage(dlResult.URL)
+	dlPage, err := c.parseDownloadPage(ctx, dlResult.URL)
 	if errors.Is(err, ErrRateLimited) {
 		return nil, err
 	}

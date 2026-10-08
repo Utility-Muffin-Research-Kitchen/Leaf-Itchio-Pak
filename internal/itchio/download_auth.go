@@ -365,7 +365,7 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 	case http.StatusOK:
 	case http.StatusForbidden, http.StatusUnauthorized:
 		logger.Warn("auth: upload list HTTP %d — key may not grant access to this game", resp.StatusCode)
-		return nil, fmt.Errorf("Game not owned or API key does not grant access to this game's downloads")
+		return nil, ErrNoAccess
 	case http.StatusTooManyRequests:
 		return nil, netlimit.FromResponse("auth: upload list", resp)
 	case http.StatusNotFound, http.StatusGone:
@@ -388,12 +388,14 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		return nil, fmt.Errorf("itch.io rejected the upload list request")
 	}
 
-	// Only the fields used here are decoded. Unstable ones such as "traits"
-	// ({} when empty, an array otherwise) are ignored.
+	// Only the fields used here are decoded. "traits" is unstable ({} when
+	// empty, an array otherwise), so it is read leniently.
 	var items []struct {
-		ID       int64  `json:"id"`
-		Filename string `json:"filename"`
-		Size     int64  `json:"size"`
+		ID       int64           `json:"id"`
+		Filename string          `json:"filename"`
+		Size     int64           `json:"size"`
+		Type     string          `json:"type"`
+		Traits   json.RawMessage `json:"traits"`
 	}
 	if isJSONArray(envelope.Uploads) {
 		if err := json.Unmarshal(envelope.Uploads, &items); err != nil {
@@ -405,7 +407,8 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 
 	var uploads []Upload
 	for _, u := range items {
-		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size}
+		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size,
+			Type: u.Type, Traits: decodeTraits(u.Traits)}
 		ext := strings.ToLower(roms.ROMExt(u.Filename))
 		if roms.IsSupportedUploadExt(ext) {
 			uploads = append(uploads, upload)
@@ -545,7 +548,7 @@ func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID s
 		location = result.URL
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		logger.Warn("auth: CDN resolve HTTP %d", resp.StatusCode)
-		return "", fmt.Errorf("Game not owned or API key does not grant access to this download")
+		return "", ErrDownloadRefused
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return "", netlimit.FromResponse("auth: CDN resolve", resp)
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:

@@ -662,3 +662,40 @@ func TestStaleSessionIsReplacedAtMostOnce(t *testing.T) {
 		t.Fatalf("ungrouped: %d session creates, %d resolves; want none and one", len(sessions), len(uuids))
 	}
 }
+
+// R20-5: the upload's type and traits mark desktop and web builds. traits is
+// an array, or {} when empty; any other shape is ignored, never an error.
+func TestUploadTraitsMarkDesktopAndWebBuilds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"uploads":[
+			{"id":1,"filename":"game.gb","type":"default","traits":{}},
+			{"id":2,"filename":"win.zip","type":"default","traits":["p_windows","demo"]},
+			{"id":3,"filename":"mac.zip","type":"default","traits":["p_osx"]},
+			{"id":4,"filename":"linux.zip","type":"default","traits":{"p_linux":true}},
+			{"id":5,"filename":"game.apk.zip","type":"default","traits":["p_android"]},
+			{"id":6,"filename":"web.zip","type":"html","traits":{}},
+			{"id":7,"filename":"demo.zip","type":"default","traits":["demo"]},
+			{"id":8,"filename":"odd.zip","type":"default","traits":42},
+			{"id":9,"filename":"soundtrack.zip","type":"soundtrack"},
+			{"id":10,"filename":"plain.zip"}
+		]}`)
+	}))
+	defer srv.Close()
+	uploads, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).FetchUploadsForKey(v2Key, "42", "")
+	if err != nil || len(uploads) != 10 {
+		t.Fatalf("uploads %+v err %v", uploads, err)
+	}
+	want := map[string]bool{
+		"game.gb": false, "win.zip": true, "mac.zip": true, "linux.zip": true, "game.apk.zip": true,
+		"web.zip": true, "demo.zip": false, "odd.zip": false, "soundtrack.zip": false, "plain.zip": false,
+	}
+	for _, upload := range uploads {
+		if got := upload.DesktopOrWebOnly(); got != want[upload.Filename] {
+			t.Errorf("%s: DesktopOrWebOnly = %v, want %v (type %q traits %q)", upload.Filename, got,
+				want[upload.Filename], upload.Type, upload.Traits)
+		}
+	}
+	if (itchio.Upload{Filename: "web.gb", URL: "https://dev.itch.io/game/file/1"}).DesktopOrWebOnly() {
+		t.Error("a web-flow upload carries no traits and is never a desktop or web build")
+	}
+}

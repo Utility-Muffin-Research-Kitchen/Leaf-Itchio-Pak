@@ -102,13 +102,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 			logger.Info("download: starting %q file=%s dest=%s api=%v",
 				game.Title, upload.Filename, dest, upload.ViaAPI())
 
-			var err error
-			if upload.ViaAPI() {
-				err = client.DownloadUploadContext(ctx, cfg.APIKey, upload.UploadID, upload.Install, dest, progress)
-			} else {
-				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
-				err = client.DownloadFreeContext(ctx, itchUpload, dest, progress)
-			}
+			err := downloadUpload(ctx, client, cfg.APIKey, game.URL, upload, dest, progress)
 
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -146,6 +140,7 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
+					UploadID:     upload.UploadID,
 					Filename:     upload.Filename,
 					DestPath:     finalDest,
 					DownloadedAt: time.Now(),

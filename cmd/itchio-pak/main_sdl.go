@@ -301,6 +301,20 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	var archiveInspectScreen *catui.DownloadProgressScreen
 	var archiveContentsModel *appui.DownloadSelectModel
 	var archiveContentsScreen *catui.DownloadSelectScreen
+	// leaveDownload drops the download and archive flows and stops their
+	// requests, so a lookup, probe or inspection does not keep creating
+	// install sessions after you go back.
+	leaveDownload := func() {
+		if downloadFlow != nil {
+			downloadFlow.Close()
+		}
+		if archiveFlow != nil {
+			archiveFlow.Close()
+		}
+		downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+		archiveFlow, archiveInspectModel, archiveInspectScreen = nil, nil, nil
+		archiveContentsModel, archiveContentsScreen = nil, nil
+	}
 	var destinationModel *appui.DestinationModel
 	var destinationScreen *catui.DestinationScreen
 	var destinationFlow *ui.CatDestinationFlow
@@ -854,7 +868,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			case catRouteDownloadSelect:
 				switch downloadSelectScreen.HandleInput(event) {
 				case appui.DownloadSelectIntentBack:
-					downloadFlow, downloadSelectScreen, downloadSelectModel = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				case appui.DownloadSelectIntentChoose:
 					downloadFlow.Choose(downloadSelectModel)
@@ -865,15 +879,13 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			case catRouteArchiveInspect:
 				switch archiveInspectScreen.HandleInput(event) {
 				case appui.DownloadProgressIntentCancel, appui.DownloadProgressIntentBack:
-					archiveFlow, archiveInspectModel, archiveInspectScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				}
 			case catRouteArchiveContents:
 				switch archiveContentsScreen.HandleInput(event) {
 				case appui.DownloadSelectIntentBack:
-					archiveFlow, archiveContentsModel, archiveContentsScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				case appui.DownloadSelectIntentChoose:
 					archiveFlow.Choose(archiveContentsModel)
@@ -886,7 +898,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DestinationIntentBack:
 					if destinationFlow.Back(destinationModel) {
 						destinationFlow, destinationModel, destinationScreen, destinationPlan = nil, nil, nil, nil
-						downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+						leaveDownload()
 						route = catRouteDetail
 					}
 				case appui.DestinationIntentActivate:
@@ -947,7 +959,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
 					downloadProgressScreen.Close()
 					downloadBackend, downloadProgressModel, downloadProgressScreen = nil, nil, nil
-					downloadFlow, downloadSelectModel, downloadSelectScreen = nil, nil, nil
+					leaveDownload()
 					route = catRouteDetail
 				}
 			case catRouteManage:
