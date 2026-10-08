@@ -227,7 +227,7 @@ func inspectViaRange(client *http.Client, cdnURL string, size int64, onProgress 
 		return ZIPManifest{}, rra.limited
 	}
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("zip.NewReader: %w", err)
+		return ZIPManifest{}, fmt.Errorf("zip.NewReader: %w", UnreadableArchive(err))
 	}
 	manifest, err := manifestFromZipReader(r)
 	if rra.limited != nil {
@@ -267,7 +267,7 @@ func inspectViaFullDownload(client *http.Client, cdnURL string) (ZIPManifest, er
 
 	r, err := zip.OpenReader(tmpPath)
 	if err != nil {
-		return ZIPManifest{}, fmt.Errorf("zip.OpenReader: %w", err)
+		return ZIPManifest{}, fmt.Errorf("zip.OpenReader: %w", UnreadableArchive(err))
 	}
 	defer r.Close()
 	return manifestFromZipReader(&r.Reader)

@@ -14,6 +14,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -86,12 +87,12 @@ func (flow *CatSettingsFlow) Refresh(model *appui.SettingsModel) {
 		rows = append(rows, appui.SettingsRow{Key: appui.SettingsSignOut, Label: "Sign Out", Value: "", ActionEnabled: true})
 	}
 	rows = append(rows,
-		appui.SettingsRow{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: settingValue(flow.cfg.ROMSelection, "auto"), ActionEnabled: true},
-		appui.SettingsRow{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: settingValue(flow.cfg.ROMLocation, "auto"), ActionEnabled: true},
-		appui.SettingsRow{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: settingValue(flow.cfg.MusicDownload, "off"), ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsROMSelection, Label: "ROM Selection", Value: appui.ChoiceLabel(settingValue(flow.cfg.ROMSelection, "auto")), ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: appui.ChoiceLabel(settingValue(flow.cfg.ROMLocation, "auto")), ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: appui.ChoiceLabel(settingValue(flow.cfg.MusicDownload, "off")), ActionEnabled: true},
 	)
 	if flow.cfg.MusicDownload != "off" {
-		rows = append(rows, appui.SettingsRow{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: settingValue(flow.cfg.MusicLocation, "auto"), ActionEnabled: true})
+		rows = append(rows, appui.SettingsRow{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: appui.ChoiceLabel(settingValue(flow.cfg.MusicLocation, "auto")), ActionEnabled: true})
 	}
 	rows = append(rows,
 		appui.SettingsRow{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: onOff(flow.cfg.UnifiedNaming), ActionEnabled: true},
@@ -219,7 +220,8 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 		if errors.Is(result.err, itchio.ErrSignInRejected) {
 			flow.apiGeneration.Add(1)
 			if err := flow.account.SignOut(); err != nil {
-				model.SetError(err.Error())
+				logger.Error("settings: sign out after a rejected sign-in: %v", err)
+				model.SetError(screentext.FromError(err))
 				return true
 			}
 			flow.Refresh(model)

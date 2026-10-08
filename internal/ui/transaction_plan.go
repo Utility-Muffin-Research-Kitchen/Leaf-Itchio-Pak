@@ -11,6 +11,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 )
 
 type ArchiveLimits struct {
@@ -73,7 +74,7 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 	for index, upload := range sealed.Uploads {
 		dest := filepath.Clean(sealed.DestPaths[index])
 		if !names.Claim(dest) {
-			return nil, fmt.Errorf("two files in this download would be saved as %s", filepath.Base(dest))
+			return nil, duplicateDestinationError(dest)
 		}
 		identity, sourceRoot, err := validatePlannedPath(dest)
 		if err != nil {
@@ -105,6 +106,11 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 	return sealed, nil
 }
 
+// duplicateDestinationError stops a download whose files would share a name.
+func duplicateDestinationError(dest string) error {
+	return screentext.New(fmt.Sprintf("Two files in this download would be saved as %s.", filepath.Base(dest)))
+}
+
 func validatePlannedPath(path string) (roms.PathIdentity, string, error) {
 	identity, ok := roms.DescribeDestination(path)
 	if !ok || identity.SourceID == "" || identity.RelativePath == "" {
@@ -115,7 +121,8 @@ func validatePlannedPath(path string) (roms.PathIdentity, string, error) {
 		return roms.PathIdentity{}, "", fmt.Errorf("download source %q is not configured", identity.SourceID)
 	}
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		return roms.PathIdentity{}, "", fmt.Errorf("download source %q is not mounted", identity.SourceID)
+		return roms.PathIdentity{}, "", screentext.Wrap(fmt.Errorf("download source %q is not mounted", identity.SourceID),
+			"The SD card for this download isn't available. Insert it, then try again.")
 	}
 	if _, err := leaf.RelativeWithin(root, path); err != nil {
 		return roms.PathIdentity{}, "", fmt.Errorf("download destination escapes source %q: %w", identity.SourceID, err)
@@ -156,27 +163,33 @@ func validateArchiveDirectory(dir string) error {
 	return nil
 }
 
+const archiveTooLarge = "This archive is too large to install."
+
 func ValidateArchiveManifest(manifest roms.ZIPManifest, limits ArchiveLimits) error {
 	if limits.MaxEntries > 0 && len(manifest.Entries) > limits.MaxEntries {
-		return fmt.Errorf("archive has %d entries; limit is %d", len(manifest.Entries), limits.MaxEntries)
+		return screentext.Wrap(fmt.Errorf("archive has %d entries; limit is %d", len(manifest.Entries), limits.MaxEntries),
+			"This archive has more files than Leaf can install at once.")
 	}
 	var total uint64
 	for _, entry := range manifest.Entries {
 		if limits.MaxFileBytes > 0 && entry.Size > limits.MaxFileBytes {
-			return fmt.Errorf("archive entry %q exceeds the FAT32-safe file limit", entry.Name)
+			return screentext.Wrap(fmt.Errorf("archive entry %q exceeds the FAT32-safe file limit", entry.Name),
+				"A file in this archive is larger than 4 GB, too large for the SD card.")
 		}
 		if ^uint64(0)-total < entry.Size {
-			return fmt.Errorf("archive uncompressed size overflows")
+			return screentext.Wrap(fmt.Errorf("archive uncompressed size overflows"), archiveTooLarge)
 		}
 		total += entry.Size
 		if limits.MaxTotalBytes > 0 && total > limits.MaxTotalBytes {
-			return fmt.Errorf("archive expands beyond the %d-byte transaction limit", limits.MaxTotalBytes)
+			return screentext.Wrap(fmt.Errorf("archive expands beyond the %d-byte transaction limit", limits.MaxTotalBytes),
+				archiveTooLarge)
 		}
 		if limits.MaxCompressionRatio > 0 && entry.CompressedSize > 0 {
 			quotient := entry.Size / entry.CompressedSize
 			remainder := entry.Size % entry.CompressedSize
 			if quotient > limits.MaxCompressionRatio || quotient == limits.MaxCompressionRatio && remainder != 0 {
-				return fmt.Errorf("archive entry %q exceeds the compression-ratio limit", entry.Name)
+				return screentext.Wrap(fmt.Errorf("archive entry %q exceeds the compression-ratio limit", entry.Name),
+					"This archive looks unsafe to unpack, so it wasn't installed.")
 			}
 		}
 	}

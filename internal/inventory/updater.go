@@ -449,6 +449,9 @@ func (s *UpdateService) repairCoverArt(gameURL string) {
 			roms.IsPSXSupportExt(roms.ROMExt(f.DestPath)) {
 			continue
 		}
+		if artworkCurrent(f) {
+			continue
+		}
 		result, migrated := s.migrateOwnedArtwork(f)
 		var err error
 		if !migrated {
@@ -458,19 +461,76 @@ func (s *UpdateService) repairCoverArt(gameURL string) {
 			logger.Error("update-svc: cover art repair failed for %s: %v", f.Filename, err)
 			continue
 		}
-		if result.Path != "" {
-			created := result.Created
-			if !created && f.ArtworkCreated && filepath.Clean(f.ArtworkPath) == filepath.Clean(result.Path) &&
-				(f.ArtworkHash == "" || f.ArtworkHash == result.SHA256) {
-				created = true
-			}
-			s.inv.SetArtwork(gameURL, f.DestPath, result.Path, result.SHA256, created)
-			if result.Created {
-				s.artworkChanged = true
-			}
+		if result.Path == "" {
+			continue
+		}
+		written := result.Created
+		if !written {
+			result = KeepExistingArtwork(result, []DownloadedFile{f})
+		}
+		s.inv.SetArtwork(gameURL, f.DestPath, result.Path, result.SHA256, result.Created)
+		if written {
+			s.artworkChanged = true
 		}
 	}
+}
 
+// artworkCurrent reports whether a file's recorded launcher art is the
+// canonical image and still has the recorded content, so the cover-art pass
+// has nothing to do. The hash also notices art the user put over the app's
+// own, which then becomes theirs.
+func artworkCurrent(file DownloadedFile) bool {
+	expected := CanonicalArtworkPath(file.DestPath)
+	if expected == "" || file.ArtworkHash == "" ||
+		filepath.Clean(file.ArtworkPath) != filepath.Clean(expected) {
+		return false
+	}
+	hash, err := regularFileSHA256(expected)
+	return err == nil && hash == file.ArtworkHash
+}
+
+// KeepExistingArtwork says whose launcher art EnsureCoverArt found in place
+// and left alone. It is the app's when one of files records creating that
+// image and its recorded hash, if any, still matches; otherwise it is the
+// user's. The art stays either way, and only the app's own moves or goes with
+// its ROM.
+func KeepExistingArtwork(result itchio.ArtworkResult, files []DownloadedFile) itchio.ArtworkResult {
+	for _, file := range files {
+		if file.ArtworkCreated && filepath.Clean(file.ArtworkPath) == filepath.Clean(result.Path) &&
+			(file.ArtworkHash == "" || file.ArtworkHash == result.SHA256) {
+			result.Created = true
+			logger.Debug("cover-art: keeping app artwork %s", result.Path)
+			return result
+		}
+	}
+	result.Created = false
+	logger.Info("cover-art: keeping user artwork %s", result.Path)
+	return result
+}
+
+// regularFileSHA256 hashes a regular file; symlinks and other kinds fail.
+func regularFileSHA256(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.ArtworkResult, bool) {
@@ -494,19 +554,8 @@ func (s *UpdateService) migrateOwnedArtwork(file DownloadedFile) (itchio.Artwork
 	if _, err := leaf.RelativeWithin(source.Root, expected); err != nil {
 		return itchio.ArtworkResult{}, false
 	}
-	info, err := os.Lstat(oldPath)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return itchio.ArtworkResult{}, false
-	}
-	fileHandle, err := os.Open(oldPath)
-	if err != nil {
-		return itchio.ArtworkResult{}, false
-	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, fileHandle)
-	closeErr := fileHandle.Close()
-	actualHash := fmt.Sprintf("%x", hash.Sum(nil))
-	if copyErr != nil || closeErr != nil || actualHash != file.ArtworkHash {
+	actualHash, err := regularFileSHA256(oldPath)
+	if err != nil || actualHash != file.ArtworkHash {
 		return itchio.ArtworkResult{}, false
 	}
 	if _, err := os.Lstat(expected); err == nil || !os.IsNotExist(err) {

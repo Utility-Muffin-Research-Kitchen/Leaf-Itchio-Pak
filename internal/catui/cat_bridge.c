@@ -217,30 +217,26 @@ int catui_present(void) {
     return CATUI_OK;
 }
 
-int catui_draw_title_in(int x, int y, int w, int h, const char *title) {
+static int catui__fallback_text(int tier, const char *text, int draw,
+                                int x, int y, cat_draw_color color, int max_w);
+
+int catui_draw_title_in(int x, int y, int w, int h, const char *title, int tier) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
     /* No status bar in the app: draw the title alone, positioned within the box
        the layout carves for it (x/y/w/h already carry the header padding), and
        vertically centered in that box. cat_draw_screen_title top-aligns at y=0
-       with no band, which reads as sitting high; this follows the box instead. */
+       with no band, which reads as sitting high; this follows the box instead.
+       The Go side picks the tier with the fallback-font measure, and the title
+       draws through the same fallback fonts as list rows, so a game title of
+       emoji or CJK the theme font lacks is not blank. */
     const char *text = title ? title : "";
-    if (text[0] && w > 0) {
-        static const cat_font_tier tiers[] = {
-            CAT_FONT_EXTRA_LARGE, CAT_FONT_LARGE, CAT_FONT_MEDIUM };
-        TTF_Font *font = NULL;
-        for (size_t i = 0; i < sizeof(tiers) / sizeof(tiers[0]); i++) {
-            TTF_Font *cand = cat_get_font(tiers[i]);
-            if (!cand) continue;
-            font = cand;
-            if (cat_measure_text(cand, text) <= w) break;
-        }
-        if (font) {
-            int ty = y + (h - TTF_FontHeight(font)) / 2;
-            if (ty < y) ty = y;
-            cat_draw_text_clipped(font, text, x, ty,
-                                  cat_get_theme()->text, w);
-        }
+    TTF_Font *font = tier >= 0 && tier < CAT_FONT_TIER_COUNT
+        ? cat_get_font((cat_font_tier)tier) : NULL;
+    if (text[0] && w > 0 && font) {
+        int ty = y + (h - TTF_FontHeight(font)) / 2;
+        if (ty < y) ty = y;
+        catui__fallback_text(tier, text, 1, x, ty, cat_get_theme()->text, w);
     }
 #if SDL_VERSION_ATLEAST(2, 0, 10)
     /* A dense fallback-text list can otherwise outlive Cat's queued title and
@@ -263,6 +259,21 @@ int catui_hints_enabled(void) {
 
 int catui_footer_height(void) {
     return catui__guard() == CATUI_OK ? cat_get_footer_height() : 0;
+}
+
+void catui_footer_metrics(int *available_w, int *badge, int *margin) {
+    int ok = catui__guard() == CATUI_OK;
+    /* Mirrors cat_draw_footer: screen-edge padding on both sides, round
+       badges of CAT__BUTTON_SIZE, and CAT__BUTTON_MARGIN between parts. */
+    int padding = ok ? cat_get_footer_height() - cat_device_scale(CAT__PILL_SIZE) : 0;
+    int available = ok ? cat_get_screen_width() - padding * 2 : 0;
+    if (available_w) *available_w = available > 0 ? available : 0;
+    if (badge) *badge = ok ? cat_device_scale(CAT__BUTTON_SIZE) : 0;
+    if (margin) *margin = ok ? cat_device_scale(CAT__BUTTON_MARGIN) : 0;
+}
+
+const char *catui_button_name(int button) {
+    return cat_button_name((cat_button)button);
 }
 
 int catui_draw_footer(const catui_footer_item *items, int count) {
