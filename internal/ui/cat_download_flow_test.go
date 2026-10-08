@@ -323,3 +323,13 @@ func TestCatDownloadFlowRecordsTheListingOnEachUpload(t *testing.T) {
 		}
 	}
 }
+
+// On-screen text follows the writing style: no em dash in the subtitle.
+func TestCatDownloadFlowUndetectedTypeAsksForAFormat(t *testing.T) {
+	flow, model := newCatDownloadFlowForTest(t)
+	flow.updates = make(chan catDownloadUpdate, 1)
+	flow.updates <- catDownloadUpdate{kind: catDownloadUpdateDetected, upload: roms.Upload{Filename: "mystery"}}
+	if !flow.Sync(model) || model.State != appui.DownloadSelectChoices || model.Subtitle != "Type not detected. Choose a format" {
+		t.Fatalf("model = %+v, want the format choice", model)
+	}
+}

@@ -312,7 +312,7 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 				}
 				flow.mode = catDownloadModeFormats
 				flow.uploads = []roms.Upload{update.upload}
-				model.SetChoices("Type not detected — choose a format", []appui.DownloadChoice{{
+				model.SetChoices("Type not detected. Choose a format", []appui.DownloadChoice{{
 					Title: update.upload.Filename, Badge: "P8.PNG",
 					FormatOptions: manualFormatLabels(),
 				}})
