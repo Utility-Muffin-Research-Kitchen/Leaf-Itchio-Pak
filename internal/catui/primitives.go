@@ -585,12 +585,26 @@ func (ui *Composer) DrawWarningCover(bounds Rect, title, body string) error {
 
 func (ui *Composer) DrawProgressView(bounds Rect, title, detail string, progress float32) error {
 	inner := insetRect(bounds, ui.ModalPadding, ui.ModalPadding)
-	y := inner.Y + maxInt(0, (inner.H-ui.ctx.Scale(84))/2)
-	if _, err := ui.ctx.DrawFallbackText(FontLarge, title, inner.X, y,
-		ui.ctx.ThemeColor(RoleEmphasis), inner.W); err != nil {
-		return err
+	titleHeight := ui.ctx.FontHeight(FontLarge)
+	// The title says what is happening to which file ("Inspecting
+	// <upload>.zip"). A long name wraps instead of being cut off; a
+	// one-line title keeps its place.
+	titles := progressTitleLines(title, inner.W, func(value string) int {
+		return ui.ctx.MeasureFallbackText(FontLarge, value)
+	})
+	extra := maxInt(0, len(titles)-1) * titleHeight
+	y := inner.Y + maxInt(0, (inner.H-ui.ctx.Scale(84)-extra)/2)
+	for _, line := range titles {
+		if _, err := ui.ctx.DrawFallbackText(FontLarge, line, inner.X, y,
+			ui.ctx.ThemeColor(RoleEmphasis), inner.W); err != nil {
+			return err
+		}
+		y += titleHeight
 	}
-	y += ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+	if len(titles) == 0 {
+		y += titleHeight
+	}
+	y += ui.BasePadding / 2
 	if _, err := ui.ctx.DrawText(FontSmall, detail, inner.X, y,
 		ui.ctx.ThemeColor(RoleHint), inner.W, true); err != nil {
 		return err
@@ -846,7 +860,7 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 	// stays readable with a larger font. In short bounds, the last line that
 	// fits is ellipsized.
 	maxLines := 1 + maxInt(0, inner.H-titleHeight-gap-detailHeight)/lineHeight
-	lines := stateDetailLines(detail, inner.W, maxLines, func(value string) int {
+	lines := fitLines(detail, inner.W, maxLines, func(value string) int {
 		return ui.ctx.MeasureText(FontSmall, value)
 	})
 	total := titleHeight + gap + detailHeight + maxInt(0, len(lines)-1)*lineHeight
@@ -875,19 +889,54 @@ func (ui *Composer) DrawState(bounds Rect, kind StateKind, title, detail string)
 	return nil
 }
 
-// stateDetailLines wraps a state's detail to width and keeps at most maxLines
-// lines. When the detail needs more, the last kept line carries the rest so
-// the draw call ellipsizes it instead of dropping words silently.
-func stateDetailLines(detail string, width, maxLines int, measure func(string) int) []string {
-	if detail == "" {
+// fitLines wraps a message to width and keeps at most maxLines lines. When
+// the message needs more, the last kept line carries the rest so it can be
+// ellipsized instead of dropping words silently: DrawText does that itself,
+// fallback-font text goes through ellipsizeLine.
+func fitLines(text string, width, maxLines int, measure func(string) int) []string {
+	if text == "" {
 		return nil
 	}
-	lines := wrapText(detail, width, measure)
+	lines := wrapText(text, width, measure)
 	maxLines = maxInt(1, maxLines)
 	if len(lines) > maxLines {
 		lines = append(lines[:maxLines-1], strings.Join(lines[maxLines-1:], " "))
 	}
 	return lines
+}
+
+// progressTitleLines fits a progress title on at most two lines.
+func progressTitleLines(title string, width int, measure func(string) int) []string {
+	lines := fitLines(title, width, 2, measure)
+	if len(lines) > 0 {
+		lines[len(lines)-1] = ellipsizeLine(lines[len(lines)-1], width, measure)
+	}
+	return lines
+}
+
+// ellipsizeLine shortens line to width with a trailing "...", the way Cat
+// ellipsizes DrawText, for fallback-font text that Cat only clips. A width
+// too narrow for "..." leaves the line for the draw call to clip.
+func ellipsizeLine(line string, width int, measure func(string) int) string {
+	if measure(line) <= width {
+		return line
+	}
+	const ellipsis = "..."
+	target := width - measure(ellipsis)
+	if target <= 0 {
+		return line
+	}
+	runes := []rune(line)
+	best, lo, hi := 0, 0, len(runes)
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if measure(string(runes[:mid])) <= target {
+			best, lo = mid, mid+1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return strings.TrimRight(string(runes[:best]), " ") + ellipsis
 }
 
 func (ui *Composer) withClip(rect Rect, draw func() error) error {

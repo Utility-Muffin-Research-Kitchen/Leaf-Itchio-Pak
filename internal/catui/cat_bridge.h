@@ -71,7 +71,7 @@ int catui_keyboard(const char *initial_text, char *out_text,
 
 int catui_clear(void);
 int catui_present(void);
-int catui_draw_title_in(int x, int y, int w, int h, const char *title);
+int catui_draw_title_in(int x, int y, int w, int h, const char *title, int tier);
 int catui_title_height(void);
 int catui_hints_enabled(void);
 int catui_footer_height(void);

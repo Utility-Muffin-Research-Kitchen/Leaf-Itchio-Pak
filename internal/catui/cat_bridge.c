@@ -217,30 +217,26 @@ int catui_present(void) {
     return CATUI_OK;
 }
 
-int catui_draw_title_in(int x, int y, int w, int h, const char *title) {
+static int catui__fallback_text(int tier, const char *text, int draw,
+                                int x, int y, cat_draw_color color, int max_w);
+
+int catui_draw_title_in(int x, int y, int w, int h, const char *title, int tier) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
     /* No status bar in the app: draw the title alone, positioned within the box
        the layout carves for it (x/y/w/h already carry the header padding), and
        vertically centered in that box. cat_draw_screen_title top-aligns at y=0
-       with no band, which reads as sitting high; this follows the box instead. */
+       with no band, which reads as sitting high; this follows the box instead.
+       The Go side picks the tier with the fallback-font measure, and the title
+       draws through the same fallback fonts as list rows, so a game title of
+       emoji or CJK the theme font lacks is not blank. */
     const char *text = title ? title : "";
-    if (text[0] && w > 0) {
-        static const cat_font_tier tiers[] = {
-            CAT_FONT_EXTRA_LARGE, CAT_FONT_LARGE, CAT_FONT_MEDIUM };
-        TTF_Font *font = NULL;
-        for (size_t i = 0; i < sizeof(tiers) / sizeof(tiers[0]); i++) {
-            TTF_Font *cand = cat_get_font(tiers[i]);
-            if (!cand) continue;
-            font = cand;
-            if (cat_measure_text(cand, text) <= w) break;
-        }
-        if (font) {
-            int ty = y + (h - TTF_FontHeight(font)) / 2;
-            if (ty < y) ty = y;
-            cat_draw_text_clipped(font, text, x, ty,
-                                  cat_get_theme()->text, w);
-        }
+    TTF_Font *font = tier >= 0 && tier < CAT_FONT_TIER_COUNT
+        ? cat_get_font((cat_font_tier)tier) : NULL;
+    if (text[0] && w > 0 && font) {
+        int ty = y + (h - TTF_FontHeight(font)) / 2;
+        if (ty < y) ty = y;
+        catui__fallback_text(tier, text, 1, x, ty, cat_get_theme()->text, w);
     }
 #if SDL_VERSION_ATLEAST(2, 0, 10)
     /* A dense fallback-text list can otherwise outlive Cat's queued title and

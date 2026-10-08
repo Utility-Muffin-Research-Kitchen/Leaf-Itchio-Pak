@@ -102,34 +102,115 @@ func TestFetchGamesFromURL_bracketedTitleFallsBackToSlug(t *testing.T) {
 	}
 }
 
-func TestFetchGamesFromURL_emojiOnlyTitleFallsBackToSlug(t *testing.T) {
-	// A developer named their game with only an emoji — no readable title.
-	// The parser should fall back to the URL slug.
-	rssXML := `<?xml version="1.0"?>
-<rss version="2.0"><channel>
-<item>
-  <title>🔴 [Free]</title>
-  <link>https://iansundstrom.itch.io/redcircle</link>
-  <description></description>
-  <price>0.0</price>
-</item>
-</channel></rss>`
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(rssXML))
+// fetchTitles serves one feed page with an item per raw title and returns
+// the parsed titles in order. Item i links to https://dev.itch.io/<slugs[i]>.
+func fetchTitles(t *testing.T, rawTitles, slugs []string) []string {
+	t.Helper()
+	var items strings.Builder
+	for i, raw := range rawTitles {
+		fmt.Fprintf(&items, "<item><title>%s</title><link>https://dev.itch.io/%s</link><price>0.0</price></item>\n", raw, slugs[i])
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel>%s</channel></rss>`, items.String())
 	}))
 	defer srv.Close()
 
-	c := itchio.NewClient()
-	games, err := c.FetchGamesFromURL(srv.URL)
+	games, err := itchio.NewClient().FetchGamesFromURL(srv.URL)
 	if err != nil {
 		t.Fatalf("FetchGamesFromURL: %v", err)
 	}
-	if len(games) != 1 {
-		t.Fatalf("want 1 game, got %d", len(games))
+	if len(games) != len(rawTitles) {
+		t.Fatalf("parsed %d games, want %d", len(games), len(rawTitles))
 	}
-	if games[0].Title != "Redcircle" {
-		t.Errorf("games[0].Title = %q, want %q", games[0].Title, "Redcircle")
+	titles := make([]string, len(games))
+	for i, game := range games {
+		titles[i] = game.Title
+	}
+	return titles
+}
+
+// A title without letters is still a title. Digits, punctuation, symbols and
+// emoji all draw with the bundled fonts, so none of these may become the slug.
+func TestFetchGamesFromURL_keepsTitlesWithoutLetters(t *testing.T) {
+	cases := []struct{ raw, slug, want string }{
+		{"35!", "thirty-five", "35!"},
+		{"7/11", "seven-eleven", "7/11"},
+		{"50%", "fifty-percent", "50%"},
+		{"↑🐱↑", "cat-up", "↑🐱↑"},
+		{"🔴 [Free]", "redcircle", "🔴"},
+	}
+	var raws, slugs []string
+	for _, c := range cases {
+		raws, slugs = append(raws, c.raw), append(slugs, c.slug)
+	}
+	for i, got := range fetchTitles(t, raws, slugs) {
+		if got != cases[i].want {
+			t.Errorf("title %q parsed as %q, want %q", cases[i].raw, got, cases[i].want)
+		}
+	}
+}
+
+// Only a title with nothing to draw falls back to the slug: blank after
+// trimming, or made of control, format, private-use and unassigned code
+// points, or of the replacement character that marks undecodable bytes.
+func TestFetchGamesFromURL_unreadableTitleFallsBackToSlug(t *testing.T) {
+	cases := []struct{ name, raw, slug, want string }{
+		{"blank", " &#xA0; ", "blank-title", "Blank Title"},
+		{"invisible and unassigned", "&#x200B;&#xE000;&#x90;&#x378; &#x200D;", "garbage-title", "Garbage Title"},
+		{"replacement character", "&#xFFFD;&#xFFFD;", "broken-title", "Broken Title"},
+	}
+	var raws, slugs []string
+	for _, c := range cases {
+		raws, slugs = append(raws, c.raw), append(slugs, c.slug)
+	}
+	for i, got := range fetchTitles(t, raws, slugs) {
+		if got != cases[i].want {
+			t.Errorf("%s title parsed as %q, want slug fallback %q", cases[i].name, got, cases[i].want)
+		}
+	}
+}
+
+// itch.io lists one game in several feeds, and past the last page it repeats
+// the final page, so one refresh can parse the same item many times. Each
+// unreadable title is logged once per refresh, and only at debug level.
+func TestFetchAllGames_logsTitleFallbackOncePerURL(t *testing.T) {
+	const gameURL = "https://dev.itch.io/untitled-game"
+	item := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>[Free]</title><link>` + gameURL + `</link><price>0.0</price></item>
+</channel></rss>`
+	emptyFeed := `<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/games/made-with-gb-studio.xml", "/games/tag-gameboy-color.xml", "/games/tag-nes-rom.xml":
+			if r.URL.Query().Get("page") == "1" {
+				w.Write([]byte(item))
+				return
+			}
+		}
+		w.Write([]byte(emptyFeed))
+	}))
+	defer srv.Close()
+
+	logs := captureDebugLog(t)
+	client := itchio.NewClientWithBase(srv.URL)
+	for refresh := 1; refresh <= 2; refresh++ {
+		logs.Reset()
+		games, err := client.FetchAllGames(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("refresh %d: FetchAllGames: %v", refresh, err)
+		}
+		if len(games) != 1 || games[0].Title != "Untitled Game" {
+			t.Fatalf("refresh %d: games = %+v, want one slug-titled game", refresh, games)
+		}
+		var mentions []string
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(line, "untitled-game") && strings.Contains(line, "slug") {
+				mentions = append(mentions, line)
+			}
+		}
+		if len(mentions) != 1 || !strings.HasPrefix(mentions[0], "[DEBUG]") {
+			t.Fatalf("refresh %d: want one DEBUG fallback line for %s, got %q", refresh, gameURL, mentions)
+		}
 	}
 }
 

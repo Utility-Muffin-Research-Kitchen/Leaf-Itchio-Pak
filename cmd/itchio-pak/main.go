@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 )
 
@@ -220,12 +221,18 @@ func platformDescription(platform string) string {
 	}
 }
 
-// readLeafVersion returns a launcher-provided release identifier when present.
+// readLeafVersion returns the installed Leaf release for About and the log.
+// A launcher-exported variable wins; Leaf does not export one today, so the
+// usual source is $UMRK_INTERNAL_DATA_PATH/release.json, shown the way
+// Jawaka's About shows it: the version, plus the release id when it differs.
 func readLeafVersion() string {
 	for _, name := range []string{"LEAF_VERSION", "UMRK_RELEASE_ID"} {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			return value
 		}
+	}
+	if release, err := leaf.InstalledRelease(); err == nil {
+		return release.String()
 	}
 	return "unknown"
 }

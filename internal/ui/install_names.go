@@ -223,7 +223,7 @@ func planInstallTargets(inv *inventory.Inventory, cfg *settings.Config, game itc
 	requested := &roms.NameReservations{}
 	for _, dl := range downloads {
 		if !requested.Claim(dl.DestPath) {
-			return nil, fmt.Errorf("two files in this download would be saved as %s", filepath.Base(dl.DestPath))
+			return nil, duplicateDestinationError(dl.DestPath)
 		}
 	}
 	names := &roms.NameReservations{}

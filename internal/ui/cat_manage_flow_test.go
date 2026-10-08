@@ -12,6 +12,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 )
 
 func configureManageFixture(t *testing.T, sources leaf.SourceList, catalog *leaf.Catalog) {
@@ -157,8 +158,12 @@ func TestCatManageRechecksCardBeforeDeletion(t *testing.T) {
 	if err := os.RemoveAll(sources[1].Root); err != nil {
 		t.Fatal(err)
 	}
-	if allGone, err := flow.Confirm(model); err == nil || allGone {
+	allGone, err := flow.Confirm(model)
+	if err == nil || allGone {
 		t.Fatalf("delete after removal = %v, %v; want blocked", allGone, err)
+	}
+	if got := screentext.FromError(err); got != "Secondary SD isn't available. Insert the card, then try again." {
+		t.Fatalf("screen shows %q", got)
 	}
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || len(entry.Files) != 1 {
@@ -243,7 +248,7 @@ func TestCatManageDisablesFilesOnRemovedSource(t *testing.T) {
 	if _, _, err := flow.Activate(model); err != nil {
 		t.Fatal(err)
 	}
-	if model.State != appui.ManageError || model.Message != "Secondary SD is not mounted" {
+	if model.State != appui.ManageError || model.Message != "Secondary SD isn't available. Insert the card, then try again." {
 		t.Fatalf("unavailable explanation = state %v message %q", model.State, model.Message)
 	}
 }
@@ -326,6 +331,8 @@ func TestCatRenameRechecksCardBeforeMutation(t *testing.T) {
 	}
 	if err := flow.Confirm(model); err == nil {
 		t.Fatal("rename continued after selected card removal")
+	} else if got := screentext.FromError(err); got != "The SD card with this ROM was removed. Insert it, then try again." {
+		t.Fatalf("screen shows %q", got)
 	}
 	entry, ok := inv.Lookup(gameURL)
 	if !ok || entry.Files[0].DestPath != romPath {
@@ -398,5 +405,7 @@ func TestDiscoverRenamePairsRejectsConflict(t *testing.T) {
 	}
 	if _, err := discoverRenamePairs(root, "Old.gbc", "New.gbc", false); err == nil {
 		t.Fatal("existing related-file target was not rejected")
+	} else if got := screentext.FromError(err); got != "A file named New.srm already exists." {
+		t.Fatalf("screen shows %q", got)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -219,7 +220,8 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 		if errors.Is(result.err, itchio.ErrSignInRejected) {
 			flow.apiGeneration.Add(1)
 			if err := flow.account.SignOut(); err != nil {
-				model.SetError(err.Error())
+				logger.Error("settings: sign out after a rejected sign-in: %v", err)
+				model.SetError(screentext.FromError(err))
 				return true
 			}
 			flow.Refresh(model)
