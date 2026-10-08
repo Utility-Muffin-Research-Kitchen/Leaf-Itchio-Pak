@@ -499,6 +499,11 @@ func (c *Client) streamToFileContext(ctx context.Context, srcURL, dest string, p
 			if stalled(ctx, err) {
 				return stallError(ctx, downloaded, err)
 			}
+			// Not a stall, so the caller cancelled: an expected end, not a failure.
+			if ctx.Err() != nil {
+				logger.Info("stream: cancelled after %d bytes", downloaded)
+				return fmt.Errorf("read stream: %w", err)
+			}
 			logger.Error("stream: read error after %d bytes: %v", downloaded, err)
 			return fmt.Errorf("read stream: %w", err)
 		}
