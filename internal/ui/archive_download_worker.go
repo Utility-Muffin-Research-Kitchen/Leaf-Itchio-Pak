@@ -112,7 +112,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	}
 	defer lease.Release()
 	if !lease.Protected {
-		logger.Warn("zip-download: continuing without Jawaka suspend protection by user request")
+		logger.Warn("%s: continuing without Jawaka suspend protection by user request", s.logPrefix())
 	}
 	s.inhibitBlocked.Store(false)
 	s.names, s.keepNames, s.romPaths = &roms.NameReservations{}, nil, nil
@@ -125,7 +125,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	}
 	tmp, err := os.CreateTemp(tempDir, ".itchio-archive-*.part")
 	if err != nil {
-		logger.Error("zip-download: create temp file: %v", err)
+		logger.Error("%s: create temp file: %v", s.logPrefix(), err)
 		s.err = fmt.Errorf("create temp file: %w", err)
 		s.storeState(zipDLError)
 		return
@@ -153,7 +153,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			// Same install session as the inspection that produced this plan.
 			fresh, rerr := s.client.ResolveUploadURLContext(ctx, s.cfg.Credential(), s.plan.Upload.UploadID, s.plan.Upload.Install)
 			if rerr != nil {
-				logger.Warn("zip-download: re-resolve auth URL failed (%v), using cached URL", rerr)
+				logger.Warn("%s: re-resolve auth URL failed (%v), using cached URL", s.logPrefix(), rerr)
 				return s.plan.CDNURL, nil
 			}
 			return fresh, nil
@@ -161,7 +161,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		itchUpload := itchio.Upload{Filename: s.plan.Upload.Filename, URL: s.plan.Upload.URL}
 		fresh, rerr := s.client.ResolveFreeURLContext(ctx, itchUpload)
 		if rerr != nil {
-			logger.Warn("zip-download: re-resolve free URL failed (%v), using cached URL", rerr)
+			logger.Warn("%s: re-resolve free URL failed (%v), using cached URL", s.logPrefix(), rerr)
 			return s.plan.CDNURL, nil
 		}
 		return fresh, nil
@@ -171,13 +171,13 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		atomic.StoreInt64(&s.downloaded, dl)
 		atomic.StoreInt64(&s.total, total)
 	}
-	logger.Info("zip-download: streaming %s → %s", s.plan.Upload.Filename, tmpPath)
+	logger.Info("%s: streaming %s → %s", s.logPrefix(), s.plan.Upload.Filename, tmpPath)
 	err = s.client.DownloadFreshURLContext(s.ctx, resolve, tmpPath, progress)
 	// A cancel that arrives as the transfer ends still wins: nothing is
 	// extracted yet.
 	if s.ctx.Err() != nil {
 		_ = os.Remove(tmpPath)
-		logger.Info("zip-download: cancelled %s", s.plan.Upload.Filename)
+		logger.Info("%s: cancelled %s", s.logPrefix(), s.plan.Upload.Filename)
 		s.storeState(zipDLCancelled)
 		return
 	}
@@ -190,7 +190,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	s.storeState(zipDLExtracting)
 
 	// 7z archives are extracted via sevenzip; everything else uses archive/zip.
-	if strings.ToLower(filepath.Ext(s.plan.Upload.Filename)) == ".7z" {
+	if s.is7z() {
 		s.run7z(tmpPath)
 		return
 	}
@@ -305,11 +305,25 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	s.storeState(zipDLDone)
 }
 
+// is7z reports whether the upload is a 7z archive; anything else is a ZIP.
+func (s *ArchiveDownloadWorker) is7z() bool {
+	return strings.ToLower(filepath.Ext(s.plan.Upload.Filename)) == ".7z"
+}
+
+// logPrefix names the archive type in the log lines that both archive types
+// share.
+func (s *ArchiveDownloadWorker) logPrefix() string {
+	if s.is7z() {
+		return "7z-download"
+	}
+	return "zip-download"
+}
+
 // logFailure logs why a run ended in the error state. Every failure exit
 // then reaches the log with its cause, not only the screen.
 func (s *ArchiveDownloadWorker) logFailure() {
 	if s.loadState() == zipDLError && s.err != nil {
-		logger.Warn("zip-download: %s failed: %v", s.plan.Upload.Filename, s.err)
+		logger.Warn("%s: %s failed: %v", s.logPrefix(), s.plan.Upload.Filename, s.err)
 	}
 }
 
@@ -828,8 +842,8 @@ func (s *ArchiveDownloadWorker) planROMNames(entries []archiveEntry) {
 	}
 }
 
-// extractROMFromOpener is like extractROM but takes an opener func instead of *zip.File.
-// Used by run7z so the same inventory/naming logic applies to 7z entries.
+// extractROMFromOpener extracts one ROM entry of a ZIP or 7z archive through
+// its opener, so both archive types share the inventory and naming logic.
 func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser, error), size int64, entryName, baseName string, now time.Time) (string, error) {
 	ext := strings.ToLower(roms.ROMExt(baseName))
 	dest := s.plannedROMDest(entryName, baseName)
@@ -837,7 +851,7 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 
 	// Skip when an identical ROM already exists.
 	if existing := s.findIdenticalFromOpener(open, size, ext); existing != "" {
-		logger.Info("7z-download: ROM %s: identical file at %s, skipping", baseName, existing)
+		logger.Info("%s: ROM %s: identical file at %s, skipping", s.logPrefix(), baseName, existing)
 		s.backfillSourceArchive(existing)
 		return existing, nil
 	}
@@ -861,10 +875,10 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 		entry, entryExists := s.inv.Lookup(s.game.URL)
 		disabled := entryExists && entry.UnifiedNamingDisabled
 		if !disabled {
-			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download")
+			finalDest, unifiedName = s.unifyArchiveROM(dest, s.logPrefix())
 		}
 	}
-	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
+	logger.Info("%s: ROM extracted → %s (unified=%v)", s.logPrefix(), finalDest, unifiedName)
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
 		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
@@ -1108,7 +1122,7 @@ func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 			f.UploadID = s.plan.Upload.UploadID
 			f.UploadFingerprint = s.plan.Upload.UploadFingerprint
 			s.inv.Add(s.game.URL, entry, f)
-			logger.Debug("zip-download: backfilled SourceArchive=%q for %s",
+			logger.Debug("%s: backfilled SourceArchive=%q for %s", s.logPrefix(),
 				s.plan.Upload.Filename, filepath.Base(destPath))
 			return
 		}
@@ -1116,7 +1130,7 @@ func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 }
 
 // findIdenticalFromOpener checks the inventory for a ROM matching the given
-// opener's content. Used by the 7z extraction path.
+// opener's content.
 func (s *ArchiveDownloadWorker) findIdenticalFromOpener(open func() (io.ReadCloser, error), size int64, ext string) string {
 	entry, ok := s.inv.Lookup(s.game.URL)
 	if !ok {
