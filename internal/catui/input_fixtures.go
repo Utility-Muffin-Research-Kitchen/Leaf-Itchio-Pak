@@ -263,6 +263,29 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
+	case "manage-members":
+		// Files installed under a name other than their archive member's say
+		// which member they came from (F8).
+		model := appui.NewManageModel("Glory Hunters")
+		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "Glory Hunters.gba", Badge: "ROM",
+				Note: "From Glory Hunters 1.3 EZ IV Patched.gba", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "Glory Hunters (v1.2).gba", Badge: "OLD",
+				Note: "From Glory Hunters v1.2 Bonus Levels Edition (Rev A) (English Translation).gba", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "Leafbound 葉.gbc", Badge: "ROM", Note: "From リーフバウンド.gbc", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "01 Theme.ogg", Badge: "MUSIC", Enabled: true},
+			{Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: "1 OLD", Detail: "Left over from an older version", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "3 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "4 FILES", Enabled: true},
+		})
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
 	case "rename-saves", "rename-states", "rename-done":
 		model := appui.NewRenameModel("Leafbound 葉")
 		state, subtitle, heading := appui.RenameConfirmSaves, "Save files", "Rename these save files?"
