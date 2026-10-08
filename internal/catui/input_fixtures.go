@@ -64,7 +64,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
 	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale", "warning",
-		"detail-unavailable", "detail-unavailable-downloaded":
+		"detail-unavailable", "detail-unavailable-downloaded", "detail-title-emoji", "detail-title-cjk":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
 			Platform: "GBC", IsFree: true, CanDownload: true,
@@ -86,6 +86,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.Game.PriceLabel = "$2.00 or more"
 		case "detail-free-sale":
 			model.Game.PriceLabel = "Free (was $5.00)"
+		case "detail-title-emoji":
+			// A title with no letters, which the theme font cannot draw.
+			model.Game.Title = "↑🐱↑"
+		case "detail-title-cjk":
+			model.Game.Title = "葉っぱの冒険"
 		}
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
