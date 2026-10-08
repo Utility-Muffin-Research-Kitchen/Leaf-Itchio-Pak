@@ -85,3 +85,26 @@ func TestReadLeafVersionUnknownWithoutUsableRelease(t *testing.T) {
 		})
 	}
 }
+
+// Jawaka's About shows release.json's version and adds the release id only
+// when it differs; the id alone stands in when the version is missing.
+func TestReadLeafVersionShowsVersionThenDifferingReleaseID(t *testing.T) {
+	tests := []struct{ name, body, want string }{
+		{"same", `{"version": "v0.13.0", "release_id": "v0.13.0"}`, "v0.13.0"},
+		{"different", `{"version": "v0.13.0-dev", "release_id": "2026-07-20-gabc1234"}`, "v0.13.0-dev (2026-07-20-gabc1234)"},
+		{"version missing", `{"release_id": "2026-07-20-gabc1234"}`, "2026-07-20-gabc1234"},
+		{"release_id missing", `{"version": "v0.13.0"}`, "v0.13.0"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearLeafVersionEnv(t)
+			internal := t.TempDir()
+			t.Setenv("UMRK_INTERNAL_DATA_PATH", internal)
+			writeReleaseJSON(t, internal, test.body)
+
+			if got := readLeafVersion(); got != test.want {
+				t.Fatalf("readLeafVersion() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
