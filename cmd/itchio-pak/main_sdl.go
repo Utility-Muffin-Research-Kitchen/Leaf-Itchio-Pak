@@ -20,6 +20,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/power"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/ui"
 )
@@ -643,7 +644,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			sealed, sealErr := plan.Seal(activeGame, activeDetail)
 			if sealErr != nil {
 				if downloadSelectModel != nil {
-					downloadSelectModel.SetError(sealErr.Error())
+					downloadSelectModel.SetError(screenError("cat download plan", sealErr))
 					route = catRouteDownloadSelect
 					return nil
 				}
@@ -674,7 +675,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					sources, catalog, cfg, cfgPath, activeGame.Title, plan.Uploads)
 			}
 			if flowErr != nil {
-				downloadSelectModel.SetError(flowErr.Error())
+				downloadSelectModel.SetError(screenError("cat download destination", flowErr))
 				return nil
 			}
 			destinationScreen, flowErr = catui.NewDestinationScreen(ctx, destinationModel)
@@ -719,7 +720,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				sources, catalog, cfg, cfgPath, activeGame.Title, archiveFlow.ROMExtensions())
 			if flowErr != nil {
 				archiveInspectModel.State = appui.DownloadProgressError
-				archiveInspectModel.Detail = flowErr.Error()
+				archiveInspectModel.Detail = screenError("cat archive destination", flowErr)
 				route = catRouteArchiveInspect
 				return nil
 			}
@@ -735,7 +736,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				sources, cfg, cfgPath, activeGame.Title)
 			if flowErr != nil {
 				archiveInspectModel.State = appui.DownloadProgressError
-				archiveInspectModel.Detail = flowErr.Error()
+				archiveInspectModel.Detail = screenError("cat archive destination", flowErr)
 				route = catRouteArchiveInspect
 				return nil
 			}
@@ -1013,7 +1014,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DestinationIntentActivate:
 					complete, destinationErr := destinationFlow.Activate(destinationModel)
 					if destinationErr != nil {
-						destinationModel.SetError(destinationErr.Error())
+						destinationModel.SetError(screenError("cat destination", destinationErr))
 						break
 					}
 					if complete {
@@ -1088,7 +1089,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					var flowErr error
 					renameFlow, renameModel, flowErr = manageFlow.Activate(manageModel)
 					if flowErr != nil {
-						manageModel.SetError(flowErr.Error())
+						manageModel.SetError(screenError("cat manage", flowErr))
 						break
 					}
 					if renameFlow != nil {
@@ -1100,7 +1101,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					}
 				case appui.ManageIntentConfirm:
 					if _, flowErr := manageFlow.Confirm(manageModel); flowErr != nil {
-						manageModel.SetError(flowErr.Error())
+						manageModel.SetError(screenError("cat manage", flowErr))
 					} else if manageFlow.TakeLibraryScanRequest() {
 						requestManagementScan(manageModel, nil, nil)
 					}
@@ -1119,14 +1120,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					list.ScheduleRebuild()
 				case appui.RenameIntentConfirm:
 					if flowErr := renameFlow.Confirm(renameModel); flowErr != nil {
-						renameModel.SetError(flowErr.Error())
+						renameModel.SetError(screenError("cat rename", flowErr))
 					} else if renameFlow.TakeLibraryScanRequest() {
 						requestManagementScan(nil, renameModel,
 							renameFlow.LibraryTitleGroups())
 					}
 				case appui.RenameIntentSkip:
 					if flowErr := renameFlow.Skip(renameModel); flowErr != nil {
-						renameModel.SetError(flowErr.Error())
+						renameModel.SetError(screenError("cat rename", flowErr))
 					} else if renameFlow.TakeLibraryScanRequest() {
 						requestManagementScan(nil, renameModel,
 							renameFlow.LibraryTitleGroups())
@@ -1144,14 +1145,14 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.SettingsIntentActivate:
 					action, flowErr := settingsFlow.Activate(settingsModel)
 					if flowErr != nil {
-						settingsModel.SetError(flowErr.Error())
+						settingsModel.SetError(screenError("cat settings", flowErr))
 					} else if err := handleSettingsAction(action); err != nil {
 						return err
 					}
 				case appui.SettingsIntentConfirm:
 					action, flowErr := settingsFlow.Confirm(settingsModel)
 					if flowErr != nil {
-						settingsModel.SetError(flowErr.Error())
+						settingsModel.SetError(screenError("cat settings", flowErr))
 					} else if err := handleSettingsAction(action); err != nil {
 						return err
 					}
@@ -1168,7 +1169,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					var flowErr error
 					tagFlow, tagModel, flowErr = moderationFlow.Activate(moderationModel)
 					if flowErr != nil {
-						moderationModel.SetError(flowErr.Error())
+						moderationModel.SetError(screenError("cat moderation", flowErr))
 					} else if tagFlow != nil {
 						tagScreen, flowErr = catui.NewSettingsScreen(ctx, tagModel)
 						if flowErr != nil {
@@ -1185,7 +1186,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 					route = catRouteModeration
 				case appui.SettingsIntentActivate:
 					if flowErr := tagFlow.Activate(tagModel); flowErr != nil {
-						tagModel.SetError(flowErr.Error())
+						tagModel.SetError(screenError("cat moderation", flowErr))
 					}
 				}
 			case catRouteAbout:
@@ -1426,4 +1427,11 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	return nil
+}
+
+// screenError logs err in full under scope and returns the sentence the
+// screen shows for it: never the error's own text.
+func screenError(scope string, err error) string {
+	logger.Warn("%s: %v", scope, err)
+	return screentext.FromError(err)
 }

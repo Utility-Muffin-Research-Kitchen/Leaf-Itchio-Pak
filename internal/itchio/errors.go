@@ -16,6 +16,11 @@ var ErrCloudflareBlocked = errors.New("Cloudflare blocked the request (HTTP 403)
 // internal/roms reports the same error.
 var ErrRateLimited = netlimit.ErrRateLimited
 
+// ErrDownloadStalled is matched by a download that stopped receiving data:
+// the idle guard fired, or the connection timed out or dropped. Its text is
+// shown on screen as is.
+var ErrDownloadStalled = errors.New("Download stalled. Check the connection and try again.")
+
 // ErrUploadGone is returned when the API answers HTTP 404 or 410 for a
 // download. Its text is shown on screen as is.
 var ErrUploadGone = errors.New("This file is no longer on itch.io.")

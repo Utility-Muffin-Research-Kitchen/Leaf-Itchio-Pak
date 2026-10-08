@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"errors"
 	"sort"
 	"sync/atomic"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -92,6 +92,14 @@ func NewCatArchiveDownloadBackend(client *itchio.Client, cfg *settings.Config,
 	return NewArchiveDownloadWorker(client, cfg, game, detail, plan, inv, inventoryPath)
 }
 
+// inhibitBlockedError is a download's failure to get suspend protection
+// from Jawaka. The screen asks whether to continue without it; the log
+// keeps Jawaka's own error.
+func inhibitBlockedError(guardErr error) error {
+	return screentext.Wrap(guardErr, "Jawaka is unavailable, so Leaf can't prevent suspend during this download. "+
+		"Press A to download without that protection, or B to cancel.")
+}
+
 func (s *DirectDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	model := appui.DownloadProgressModel{
 		State: appui.DownloadProgressRunning, Title: s.game.Title, Filename: s.upload.Filename,
@@ -103,9 +111,7 @@ func (s *DirectDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.SavedPaths = []string{s.dest}
 	case dlError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = s.err.Error()
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}
@@ -148,9 +154,7 @@ func (s *MultiDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.SavedPaths = append([]string(nil), s.finalPaths...)
 	case multiDLError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = s.err.Error()
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}
@@ -177,25 +181,6 @@ func (s *MultiDownloadWorker) CatLibraryTitleGroups() []leaf.LibraryTitleGroup {
 	return libraryTitleGroups(s.inv, s.game.URL, s.game.Title, s.finalPaths)
 }
 
-// stepError names the step that failed for the log. The screen shows only
-// the cause, so a message such as "Download stalled. ..." reads as a
-// sentence instead of following an internal prefix.
-type stepError struct {
-	step string
-	err  error
-}
-
-func (e stepError) Error() string { return e.step + ": " + e.err.Error() }
-func (e stepError) Unwrap() error { return e.err }
-
-func screenError(err error) string {
-	var step stepError
-	if errors.As(err, &step) {
-		return step.err.Error()
-	}
-	return err.Error()
-}
-
 func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 	state := s.loadState()
 	model := appui.DownloadProgressModel{
@@ -212,9 +197,7 @@ func (s *ArchiveDownloadWorker) CatSnapshot() appui.DownloadProgressModel {
 		model.Skipped = append([]string(nil), s.skipped...)
 	case zipDLError:
 		model.State = appui.DownloadProgressError
-		if s.err != nil {
-			model.Detail = screenError(s.err)
-		}
+		model.Detail = screentext.FromError(s.err)
 		if s.inhibitBlocked.Load() {
 			model.State = appui.DownloadProgressInhibitBlocked
 		}

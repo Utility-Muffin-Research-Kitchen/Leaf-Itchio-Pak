@@ -3,13 +3,13 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
@@ -82,13 +82,16 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 
 // unavailableDetail says why the game page could not load and what to do.
 // Reopening never brings back a removed game, and retrying at once is what
-// the rate limiter exists to prevent.
+// the rate limiter exists to prevent. Here, trying again means reopening
+// the page.
 func unavailableDetail(err error) string {
-	switch {
-	case errors.Is(err, itchio.ErrGameRemoved):
-		return "This game was removed from itch.io."
-	case errors.Is(err, itchio.ErrRateLimited):
+	switch screentext.Classify(err) {
+	case screentext.GameRemoved:
+		return screentext.FromError(err)
+	case screentext.RateLimited:
 		return "itch.io is limiting requests. Wait a minute, then reopen this game."
+	case screentext.Network:
+		return "Can't reach itch.io. Check the connection, then reopen this game."
 	default:
 		return "Go back and reopen this game to try again."
 	}
