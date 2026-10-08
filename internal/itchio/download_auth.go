@@ -309,10 +309,8 @@ func (c *Client) DownloadAuthUpload(apiKey, uploadID, downloadKeyID, dest string
 }
 
 func (c *Client) DownloadAuthUploadContext(ctx context.Context, apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	cdnURL, err := c.ResolveAuthURLContext(ctx, apiKey, uploadID, downloadKeyID)
-	if err != nil {
-		return err
-	}
 	logger.Info("auth: streaming to %s", dest)
-	return c.streamToFileContext(ctx, cdnURL, dest, progress)
+	return c.streamFreshURL(ctx, func(ctx context.Context) (string, error) {
+		return c.ResolveAuthURLContext(ctx, apiKey, uploadID, downloadKeyID)
+	}, dest, progress)
 }

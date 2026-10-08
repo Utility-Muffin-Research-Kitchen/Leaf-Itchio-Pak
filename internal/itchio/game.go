@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
@@ -58,6 +59,9 @@ func (c *Client) FetchGameDetail(gameURL string) (*GameDetail, error) {
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		return nil, fmt.Errorf("fetch game detail: %w", ErrGameRemoved)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("game: detail page", resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("game: detail page HTTP %d for %s", resp.StatusCode, gameURL)
@@ -270,6 +274,9 @@ func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("download-page", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("download-page: HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch download page: HTTP %d", resp.StatusCode)
