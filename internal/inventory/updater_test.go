@@ -32,12 +32,10 @@ func configureUpdaterPaths(t *testing.T, root string) {
 		images[id] = filepath.Join(root, "Images", id)
 	}
 	systems["GB"] = root
-	if err := roms.ConfigurePaths(roms.PathConfig{
+	configureTestPaths(t, roms.PathConfig{
 		SystemDirs: systems, ImageDirs: images, SourceID: "primary", PrimaryRoot: root,
 		MusicRoot: filepath.Join(root, "Music"), StatesRoot: filepath.Join(root, "States"),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 }
 
 // minimalPNG returns the bytes of a 1x1 white PNG.
