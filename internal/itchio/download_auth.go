@@ -484,44 +484,36 @@ func (c *Client) checkDownloadURL(location *url.URL) error {
 // answers with a redirect to the CDN, which is read, not followed: the
 // caller gets the URL first for archive inspection or the magic-byte probe,
 // and the Authorization header never reaches the CDN.
-func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID string, session *InstallSession) (string, error) {
+func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID string, session *roms.InstallSession) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("resolve upload %s: no install session", uploadID)
 	}
-	uuid, err := session.resolveUUID(ctx, func(ctx context.Context, gameID, downloadKeyID string) (string, error) {
+	create := func(ctx context.Context, gameID, downloadKeyID string) (string, error) {
 		return c.createInstallSession(ctx, apiKey, gameID, downloadKeyID)
-	})
+	}
+	uuid, err := session.ResolveUUID(ctx, create)
 	if err != nil {
 		return "", err
 	}
-	query := url.Values{}
-	if session.downloadKeyID != "" {
-		query.Set("download_key_id", session.downloadKeyID)
-	}
-	if uuid != "" {
-		query.Set("uuid", uuid)
-	}
-	resolveURL := fmt.Sprintf("%s/uploads/%s/download", c.butler, url.PathEscape(uploadID))
-	if len(query) > 0 {
-		resolveURL += "?" + query.Encode()
-	}
-	logger.Debug("auth: resolving CDN for upload id=%s session=%s", uploadID, presentAbsent(uuid))
-
-	req, err := c.newAPIRequest(ctx, http.MethodGet, resolveURL, nil, apiKey)
+	req, resp, err := c.requestDownloadLocation(ctx, apiKey, uploadID, session.DownloadKeyID(), uuid)
 	if err != nil {
-		return "", fmt.Errorf("build resolve request: %w", err)
+		return "", err
 	}
-	noFollow := &http.Client{
-		Transport: c.http.Transport,
-		Jar:       c.http.Jar,
-		Timeout:   c.http.Timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := noFollow.Do(req)
-	if err != nil {
-		return "", safeRequestError("resolve authenticated CDN URL", err)
+	if uuid != "" && refusedSessionStatus(resp.StatusCode) {
+		// itch.io may refuse a session that sat unused for long, for example
+		// while you chose a destination. Ask once more in a new session.
+		fresh, retry, err := session.RenewUUID(ctx, uuid, create)
+		if err != nil {
+			resp.Body.Close()
+			return "", err
+		}
+		if retry {
+			logger.Warn("auth: CDN resolve HTTP %d within the install session; retrying in a new one", resp.StatusCode)
+			resp.Body.Close()
+			if req, resp, err = c.requestDownloadLocation(ctx, apiKey, uploadID, session.DownloadKeyID(), fresh); err != nil {
+				return "", err
+			}
+		}
 	}
 	defer resp.Body.Close()
 
@@ -575,32 +567,53 @@ func (c *Client) ResolveUploadURLContext(ctx context.Context, apiKey, uploadID s
 	return parsed.String(), nil
 }
 
+// refusedSessionStatus reports the statuses a resolve may answer when it no
+// longer accepts the install session's UUID.
+func refusedSessionStatus(status int) bool {
+	return status == http.StatusBadRequest || status == http.StatusNotFound || status == http.StatusGone
+}
+
+// requestDownloadLocation sends GET api.itch.io/uploads/{id}/download without
+// following its redirect. uuid is the install session, "" for none.
+func (c *Client) requestDownloadLocation(ctx context.Context, apiKey, uploadID, downloadKeyID, uuid string) (*http.Request, *http.Response, error) {
+	query := url.Values{}
+	if downloadKeyID != "" {
+		query.Set("download_key_id", downloadKeyID)
+	}
+	if uuid != "" {
+		query.Set("uuid", uuid)
+	}
+	resolveURL := fmt.Sprintf("%s/uploads/%s/download", c.butler, url.PathEscape(uploadID))
+	if len(query) > 0 {
+		resolveURL += "?" + query.Encode()
+	}
+	logger.Debug("auth: resolving CDN for upload id=%s session=%s", uploadID, presentAbsent(uuid))
+
+	req, err := c.newAPIRequest(ctx, http.MethodGet, resolveURL, nil, apiKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build resolve request: %w", err)
+	}
+	noFollow := &http.Client{
+		Transport: c.http.Transport,
+		Jar:       c.http.Jar,
+		Timeout:   c.http.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noFollow.Do(req)
+	if err != nil {
+		return nil, nil, safeRequestError("resolve authenticated CDN URL", err)
+	}
+	return req, resp, nil
+}
+
 // DownloadUploadContext resolves an upload within session and streams it to
 // dest. The CDN request carries no Authorization header. After a CDN 429 it
 // resolves a fresh URL in the same session once (see streamFreshURL).
-func (c *Client) DownloadUploadContext(ctx context.Context, apiKey, uploadID string, session *InstallSession, dest string, progress func(int64, int64)) error {
+func (c *Client) DownloadUploadContext(ctx context.Context, apiKey, uploadID string, session *roms.InstallSession, dest string, progress func(int64, int64)) error {
 	logger.Info("auth: streaming to %s", dest)
 	return c.streamFreshURL(ctx, func(ctx context.Context) (string, error) {
 		return c.ResolveUploadURLContext(ctx, apiKey, uploadID, session)
 	}, dest, progress)
-}
-
-// ResolveAuthURL, ResolveAuthURLContext and DownloadAuthUploadContext resolve
-// through API v2 without grouping requests into an install session. They
-// keep the download flows working until each flow carries one session per
-// install.
-func (c *Client) ResolveAuthURL(apiKey, uploadID, downloadKeyID string) (string, error) {
-	return c.ResolveAuthURLContext(context.Background(), apiKey, uploadID, downloadKeyID)
-}
-
-func (c *Client) ResolveAuthURLContext(ctx context.Context, apiKey, uploadID, downloadKeyID string) (string, error) {
-	return c.ResolveUploadURLContext(ctx, apiKey, uploadID, NewInstallSession("", downloadKeyID))
-}
-
-func (c *Client) DownloadAuthUpload(apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	return c.DownloadAuthUploadContext(context.Background(), apiKey, uploadID, downloadKeyID, dest, progress)
-}
-
-func (c *Client) DownloadAuthUploadContext(ctx context.Context, apiKey, uploadID, downloadKeyID, dest string, progress func(int64, int64)) error {
-	return c.DownloadUploadContext(ctx, apiKey, uploadID, NewInstallSession("", downloadKeyID), dest, progress)
 }

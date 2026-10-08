@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 const v2Key = "v2-api-secret-5be1"
@@ -35,6 +36,12 @@ type fakeAPI struct {
 	blockSession  chan struct{}
 	dropResolve   bool // close the connection instead of answering a resolve
 	requestURLs   []string
+	// nextUUIDs are handed out by session creates in order, then the
+	// default UUID.
+	nextUUIDs []string
+	// rejectUUIDs answers a resolve sending one of these UUIDs with the
+	// mapped status, as itch.io might for an expired session.
+	rejectUUIDs map[string]int
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
@@ -68,14 +75,25 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 				w.WriteHeader(status)
 				return
 			}
+			uuid := "install-uuid-7f3a"
+			f.mu.Lock()
+			if len(f.nextUUIDs) > 0 {
+				uuid, f.nextUUIDs = f.nextUUIDs[0], f.nextUUIDs[1:]
+			}
+			f.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"uuid":"install-uuid-7f3a"}`)
+			fmt.Fprintf(w, `{"uuid":%q}`, uuid)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/uploads/") && strings.HasSuffix(r.URL.Path, "/download"):
 			f.mu.Lock()
 			f.resolveUUIDs = append(f.resolveUUIDs, r.URL.Query().Get("uuid"))
 			f.resolveKeys = append(f.resolveKeys, r.URL.Query().Get("download_key_id"))
 			drop := f.dropResolve
+			reject := f.rejectUUIDs[r.URL.Query().Get("uuid")]
 			f.mu.Unlock()
+			if reject != 0 {
+				w.WriteHeader(reject)
+				return
+			}
 			if drop {
 				conn, _, err := w.(http.Hijacker).Hijack()
 				if err == nil {
@@ -106,7 +124,7 @@ func (f *fakeAPI) snapshot() (sessions, uuids, keys, cdnAuth, urls []string) {
 
 func TestResolveReadsRedirectWithoutFetchingTheCDN(t *testing.T) {
 	f := newFakeAPI(t)
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	cdnURL, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", session)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +140,7 @@ func TestResolveReadsRedirectWithoutFetchingTheCDN(t *testing.T) {
 func TestDownloadSendsTheKeyOnlyToTheAPIOrigin(t *testing.T) {
 	f := newFakeAPI(t)
 	dest := filepath.Join(t.TempDir(), "game.gbc")
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", session, dest, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +161,7 @@ func TestDownloadSendsTheKeyOnlyToTheAPIOrigin(t *testing.T) {
 func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 	f := newFakeAPI(t)
 	client := f.client()
-	session := itchio.NewInstallSession("42", "777")
+	session := roms.NewInstallSession("42", "777")
 	var wg sync.WaitGroup
 	for index := range 6 {
 		wg.Add(1)
@@ -166,7 +184,7 @@ func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 	}
 
 	// A new install gets its own session.
-	if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "1", itchio.NewInstallSession("42", "777")); err != nil {
+	if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "1", roms.NewInstallSession("42", "777")); err != nil {
 		t.Fatal(err)
 	}
 	if sessions, _, _, _, _ := f.snapshot(); len(sessions) != 2 {
@@ -176,7 +194,7 @@ func TestInstallSessionIsCreatedOnceAndSharedByEveryResolution(t *testing.T) {
 
 func TestFreeAPIDownloadHasNoPurchaseID(t *testing.T) {
 	f := newFakeAPI(t)
-	if _, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "")); err != nil {
+	if _, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("42", "")); err != nil {
 		t.Fatal(err)
 	}
 	sessions, uuids, keys, _, urls := f.snapshot()
@@ -195,7 +213,7 @@ func TestFailedSessionCreationDegradesToUngroupedDownloads(t *testing.T) {
 		f := newFakeAPI(t)
 		f.sessionStatus = status
 		client := f.client()
-		session := itchio.NewInstallSession("42", "777")
+		session := roms.NewInstallSession("42", "777")
 		for range 3 {
 			if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", session); err != nil {
 				t.Fatalf("HTTP %d session: %v", status, err)
@@ -220,7 +238,7 @@ func TestCancellationDuringSessionCreationStopsTheOperation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.client().ResolveUploadURLContext(ctx, v2Key, "9", itchio.NewInstallSession("42", "777"))
+		_, err := f.client().ResolveUploadURLContext(ctx, v2Key, "9", roms.NewInstallSession("42", "777"))
 		done <- err
 	}()
 	for {
@@ -260,7 +278,7 @@ func TestResolverRejectsUnusableResponses(t *testing.T) {
 	for name, handler := range cases {
 		srv := httptest.NewServer(handler)
 		client := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL)
-		_, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("", "777"))
+		_, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("", "777"))
 		srv.Close()
 		if err == nil {
 			t.Errorf("%s: accepted", name)
@@ -278,7 +296,7 @@ func TestSessionUUIDAndKeyStayOutOfLogs(t *testing.T) {
 	f := newFakeAPI(t)
 	buf := captureDebugLog(t)
 	dest := filepath.Join(t.TempDir(), "game.gbc")
-	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "777"), dest, nil); err != nil {
+	if err := f.client().DownloadUploadContext(context.Background(), v2Key, "9", roms.NewInstallSession("42", "777"), dest, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, secret := range []string{"install-uuid-7f3a", v2Key, "signed-8d2c", "X-Amz-Signature"} {
@@ -506,7 +524,7 @@ func TestTransportFailureLogsNoSessionUUID(t *testing.T) {
 	f := newFakeAPI(t)
 	f.dropResolve = true
 	buf := captureDebugLog(t)
-	_, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", itchio.NewInstallSession("42", "777"))
+	_, err := f.client().ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("42", "777"))
 	if err == nil {
 		t.Fatal("resolve over a dropped connection succeeded")
 	}
@@ -591,5 +609,56 @@ func TestUnownedGameKeepsCachedBundleSizes(t *testing.T) {
 	}
 	if got := bundleSizes(keys); got[2] != 3 || owned.fullScans.Load() != before {
 		t.Fatalf("bundle sizes = %v after %d new scan page(s); want the cached 3 and no scan", got, owned.fullScans.Load()-before)
+	}
+}
+
+// itch.io may refuse a session UUID that sat unused too long, for example
+// while you chose a destination. The resolve opens one new session and
+// retries; later resolutions of the install reuse the new session.
+func TestStaleSessionIsReplacedOnce(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusGone} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := newFakeAPI(t)
+			f.nextUUIDs = []string{"stale-uuid-1", "fresh-uuid-2"}
+			f.rejectUUIDs = map[string]int{"stale-uuid-1": status}
+			client := f.client()
+			session := roms.NewInstallSession("42", "777")
+			for range 2 {
+				if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", session); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sessions, uuids, _, _, _ := f.snapshot()
+			if len(sessions) != 2 || strings.Join(uuids, ",") != "stale-uuid-1,fresh-uuid-2,fresh-uuid-2" {
+				t.Fatalf("session creates = %d, resolve uuids = %q; want one replacement then reuse", len(sessions), uuids)
+			}
+		})
+	}
+}
+
+// A refusal that persists with the new session is reported, after one
+// replacement only. Without a session there is nothing to replace.
+func TestStaleSessionIsReplacedAtMostOnce(t *testing.T) {
+	f := newFakeAPI(t)
+	f.nextUUIDs = []string{"stale-uuid-1", "fresh-uuid-2"}
+	f.rejectUUIDs = map[string]int{"stale-uuid-1": http.StatusNotFound, "fresh-uuid-2": http.StatusNotFound, "": http.StatusNotFound}
+	client := f.client()
+	session := roms.NewInstallSession("42", "777")
+	for range 2 {
+		if _, err := client.ResolveUploadURLContext(context.Background(), v2Key, "9", session); !errors.Is(err, itchio.ErrUploadGone) {
+			t.Fatalf("err = %v, want ErrUploadGone", err)
+		}
+	}
+	if sessions, _, _, _, _ := f.snapshot(); len(sessions) != 2 {
+		t.Fatalf("session creates = %d, want the first and one replacement", len(sessions))
+	}
+
+	ungrouped := newFakeAPI(t)
+	ungrouped.rejectUUIDs = map[string]int{"": http.StatusNotFound}
+	if _, err := ungrouped.client().ResolveUploadURLContext(context.Background(), v2Key, "9", roms.NewInstallSession("", "777")); !errors.Is(err, itchio.ErrUploadGone) {
+		t.Fatalf("ungrouped err = %v, want ErrUploadGone", err)
+	}
+	if sessions, uuids, _, _, _ := ungrouped.snapshot(); len(sessions) != 0 || len(uuids) != 1 {
+		t.Fatalf("ungrouped: %d session creates, %d resolves; want none and one", len(sessions), len(uuids))
 	}
 }

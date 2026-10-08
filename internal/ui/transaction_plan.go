@@ -92,8 +92,8 @@ func (plan *CatDownloadPlan) Seal(game itchio.Game, detail *itchio.GameDetail) (
 			planned.ArtworkPath = ""
 		}
 		transaction.Files = append(transaction.Files, planned)
-		if transaction.PurchaseID == "" {
-			transaction.PurchaseID = upload.DownloadKeyID
+		if transaction.PurchaseID == "" && upload.ViaAPI() {
+			transaction.PurchaseID = upload.Install.DownloadKeyID()
 		}
 	}
 	sealed.Transaction = transaction

@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // newClockedClient returns a client for srv, standing in for itch.io, whose
@@ -229,7 +231,7 @@ func TestCDNRateLimitResolvesAFreshURLOnce(t *testing.T) {
 			return client.DownloadFreeContext(context.Background(), Upload{URL: "https://itch.io/game/file/7?key=k&csrf=c"}, dest, nil)
 		},
 		"owned": func(client *Client, dest string) error {
-			return client.DownloadAuthUploadContext(context.Background(), "api-key", "7", "42", dest, nil)
+			return client.DownloadUploadContext(context.Background(), "api-key", "7", roms.NewInstallSession("", "42"), dest, nil)
 		},
 	}
 	for name, download := range downloads {
