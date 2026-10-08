@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/bodgit/sevenzip"
 )
 
@@ -31,6 +32,9 @@ func InspectRemote7z(client *http.Client, cdnURL string) (ZIPManifest, error) {
 		return ZIPManifest{}, remoteRequestError("download 7z", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ZIPManifest{}, netlimit.FromResponse("7z-inspect: download", resp)
+	}
 
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {

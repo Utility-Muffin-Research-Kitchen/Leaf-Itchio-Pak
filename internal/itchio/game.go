@@ -2,6 +2,8 @@ package itchio
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"golang.org/x/net/html"
 )
@@ -32,6 +35,52 @@ type Upload struct {
 	URL         string // resolver or CDN URL
 	UploadID    string // itch.io upload ID (from data-upload_id)
 	NeedsFormat bool   // true if extension is unknown and needs a manual format choice
+	Size        int64  // bytes; set for uploads listed through the API, 0 when unknown
+	// Type and Traits are set for uploads listed through the API and empty
+	// for the web flow: the upload's kind ("default", "html", "soundtrack",
+	// ...) and its flags, such as "p_windows" or "demo".
+	Type   string
+	Traits []string
+}
+
+// DesktopOrWebOnly reports whether an upload listed through the API is a
+// build for a computer or phone (trait p_windows, p_linux, p_osx or
+// p_android) or a game played in the browser (type html, flash, unity or
+// java). Neither runs on Leaf. It reads only Type and Traits, so it is false
+// for uploads listed through the web flow, which carry neither.
+func (u Upload) DesktopOrWebOnly() bool {
+	switch u.Type {
+	case "html", "flash", "unity", "java":
+		return true
+	}
+	for _, trait := range u.Traits {
+		switch trait {
+		case "p_windows", "p_linux", "p_osx", "p_android":
+			return true
+		}
+	}
+	return false
+}
+
+// decodeTraits reads an upload's traits: an array of names, or an object
+// (itch.io answers {} for none; a map of true flags is accepted too). Any
+// other shape reads as no traits, so a listing never fails over them.
+func decodeTraits(raw json.RawMessage) []string {
+	var names []string
+	if json.Unmarshal(raw, &names) == nil {
+		return names
+	}
+	var flags map[string]bool
+	if json.Unmarshal(raw, &flags) != nil {
+		return nil
+	}
+	for name, set := range flags {
+		if set {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 var (
@@ -58,6 +107,9 @@ func (c *Client) FetchGameDetail(gameURL string) (*GameDetail, error) {
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		return nil, fmt.Errorf("fetch game detail: %w", ErrGameRemoved)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("game: detail page", resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("game: detail page HTTP %d for %s", resp.StatusCode, gameURL)
@@ -262,14 +314,25 @@ type DownloadPageResult struct {
 // .gb/.gbc uploads found (with UploadID set) plus the page's CSRF token.
 // The CSRF token must be included in the body of the subsequent file resolver POST.
 func (c *Client) ParseDownloadPage(pageURL string) (*DownloadPageResult, error) {
+	return c.parseDownloadPage(context.Background(), pageURL)
+}
+
+func (c *Client) parseDownloadPage(ctx context.Context, pageURL string) (*DownloadPageResult, error) {
 	// The signed URL contains a download key — do not log it.
 	logger.Debug("download-page: fetching signed download page")
-	resp, err := c.http.Get(pageURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build download page request")
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, safeRequestError("fetch download page", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, netlimit.FromResponse("download-page", resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("download-page: HTTP %d", resp.StatusCode)
 		return nil, fmt.Errorf("fetch download page: HTTP %d", resp.StatusCode)

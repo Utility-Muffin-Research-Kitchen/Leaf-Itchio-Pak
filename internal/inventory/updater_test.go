@@ -723,3 +723,37 @@ func TestIsGameRemoved_SentinelUnwraps(t *testing.T) {
 		t.Error("plain string error should NOT match ErrGameRemoved")
 	}
 }
+
+// R20-2: a game downloaded through the API records the API filename, which
+// may differ from the name on the web download page. The upload ID is the
+// same, so the file is still offered upstream and the game is not removed.
+func TestUpdateService_MatchesInstalledFileByUploadID(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"Web Name.gb"}) // upload ID 100
+	defer srv.Close()
+
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "api-name.gb")
+	os.WriteFile(romPath, []byte("ROM"), 0644)
+	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
+	os.MkdirAll(filepath.Dir(artPath), 0755)
+	os.WriteFile(artPath, minimalPNG(), 0644)
+
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := srv.URL + "/game"
+	inv.Add(gameURL,
+		inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
+		inventory.DownloadedFile{Filename: "api-name.gb", UploadID: "100", DestPath: romPath, DownloadedAt: time.Now()})
+	inv.Save(invPath)
+
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase(srv.URL), nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: the installed upload is still offered under another name")
+	}
+}

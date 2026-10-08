@@ -82,14 +82,18 @@ func (err *metadataHTTPError) Error() string {
 	return fmt.Sprintf("%s: HTTP %d", err.operation, err.status)
 }
 
+// retryableMetadataError reports whether the feed loop should retry. Rate
+// limiting is not retried here: the transport already waited out and replayed
+// the 429s it could, so another layer of retries would multiply them.
 func retryableMetadataError(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrCloudflareBlocked) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, ErrCloudflareBlocked) || errors.Is(err, ErrRateLimited) {
 		return false
 	}
 	var statusErr *metadataHTTPError
 	if errors.As(err, &statusErr) {
 		switch statusErr.status {
-		case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+		case http.StatusRequestTimeout, http.StatusTooEarly,
 			http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			return true
@@ -99,6 +103,14 @@ func retryableMetadataError(err error) bool {
 	}
 	var networkErr net.Error
 	return errors.As(err, &networkErr)
+}
+
+// feedPastEnd reports whether err is the 404/410 itch.io can answer for a page
+// past the end of a feed.
+func feedPastEnd(err error) bool {
+	var statusErr *metadataHTTPError
+	return errors.As(err, &statusErr) &&
+		(statusErr.status == http.StatusNotFound || statusErr.status == http.StatusGone)
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {
@@ -229,6 +241,10 @@ func (c *Client) fetchGamesFromURLOnce(ctx context.Context, url string) ([]Game,
 		logger.Error("feed: HTTP 403 from %s (Cloudflare bot-protection)", url)
 		return nil, ErrCloudflareBlocked
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		logger.Error("feed: HTTP 429 from %s after rate-limit retries", url)
+		return nil, fmt.Errorf("fetch feed: %w", &RateLimitedError{Host: req.URL.Host})
+	}
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("feed: HTTP %d from %s", resp.StatusCode, url)
 		return nil, &metadataHTTPError{operation: "fetch feed", status: resp.StatusCode}
@@ -314,6 +330,12 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 		}
 		url := fmt.Sprintf("%s/games/%s.xml?page=%d", c.base, slug, page)
 		pageGames, err := c.FetchGamesFromURLContext(ctx, url)
+		if err != nil && page > 1 && feedPastEnd(err) {
+			// A missing later page ends the feed; a missing first page is
+			// still an error.
+			logger.Info("feed: platform=%s slug=%s page=%d: %v, treating as end of feed", platformCode, slug, page, err)
+			break
+		}
 		if err != nil {
 			logger.Warn("feed: platform=%s slug=%s page=%d error: %v", platformCode, slug, page, err)
 			return games, fmt.Errorf("platform=%s slug=%s page %d: %w", platformCode, slug, page, err)
@@ -346,13 +368,18 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 // parallel (up to feedConcurrency slugs at a time), deduplicates games by URL
 // across platforms, and returns the merged list. progress is called after each
 // slug completes. If a slug errors, its games are skipped and the error is
-// recorded; partial results from other slugs are always returned.
+// recorded; partial results from other slugs are always returned. Rate
+// limiting is the exception: the first slug that fails with ErrRateLimited
+// stops the whole refresh, and all slugs together wait out at most
+// refreshCooldownBudget of cooldown.
 func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game)) ([]Game, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
 	}
+	ctx, cancel := context.WithCancel(withCooldownBudget(ctx, refreshCooldownBudget))
+	defer cancel()
 
 	// Enumerate all (platform, slug) pairs.
 	type slugSpec struct {
@@ -418,7 +445,7 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 		case r := <-resultCh:
 			remaining--
 			if r.err != nil {
-				if errors.Is(r.err, context.Canceled) {
+				if errors.Is(r.err, context.Canceled) || errors.Is(r.err, ErrRateLimited) {
 					return all, r.err
 				}
 				lastErr = r.err

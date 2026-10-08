@@ -106,17 +106,10 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 				atomic.StoreInt64(&s.total, total)
 			}
 
-			isAuth := upload.DownloadKeyID != ""
-			logger.Info("download: starting %q file=%s dest=%s auth=%v",
-				game.Title, upload.Filename, dest, isAuth)
+			logger.Info("download: starting %q file=%s dest=%s api=%v",
+				game.Title, upload.Filename, dest, upload.ViaAPI())
 
-			var err error
-			if isAuth {
-				err = client.DownloadAuthUploadContext(ctx, cfg.APIKey, upload.UploadID, upload.DownloadKeyID, dest, progress)
-			} else {
-				itchUpload := itchio.Upload{Filename: upload.Filename, URL: upload.URL}
-				err = client.DownloadFreeContext(ctx, itchUpload, dest, progress)
-			}
+			err := downloadUpload(ctx, client, cfg.APIKey, game.URL, upload, dest, progress)
 
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -134,11 +127,11 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
+					UploadID:     upload.UploadID,
 					Filename:     upload.Filename,
 					DestPath:     finalDest,
 					DownloadedAt: time.Now(),
 					UnifiedName:  unifiedName,
-					UploadID:     upload.UploadID,
 				}
 				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{
