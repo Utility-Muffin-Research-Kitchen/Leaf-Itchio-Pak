@@ -7,20 +7,25 @@ SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || printf 0)
 WORKSPACE_ROOT ?= $(abspath ..)
 CATASTROPHE_DIR ?= $(WORKSPACE_ROOT)/Catastrophe
 MLP1_TOOLCHAIN_IMAGE ?= ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
-GO_IMAGE ?= docker.io/library/golang:1.22.12-bookworm
-MLP1_BUILD_IMAGE ?= leaf-itchio-pak-mlp1-go1.22.12
+GO_IMAGE ?= docker.io/library/golang:1.27.1-bookworm
+MLP1_BUILD_IMAGE ?= leaf-itchio-pak-mlp1-go1.27.1
 
 export APP_VERSION MIN_JAWAKA_VERSION GIT_COMMIT SOURCE_DATE_EPOCH
 export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_IMAGE
 
 .DEFAULT_GOAL := native
-.PHONY: test test-race cat-only-audit public-assets-check pakrat-metadata-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots public-screenshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
+.PHONY: test test-race test-native cat-only-audit public-assets-check pakrat-metadata-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots public-screenshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
 test: cat-only-audit public-assets-check pakrat-metadata-check
 	go test -count=1 -tags headless ./...
 
 test-race: cat-only-audit public-assets-check pakrat-metadata-check
 	go test -count=1 -race -tags headless ./...
+
+# Untagged suite: the Catastrophe download flows and workers build only without
+# the headless tag, so test-race alone does not cover them.
+test-native: check-catastrophe check-sdl
+	CGO_CFLAGS="$${CGO_CFLAGS:-} -I$(CATASTROPHE_DIR)/include" go test -count=1 -race ./...
 
 cat-only-audit:
 	./scripts/cat-only-audit.sh

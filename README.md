@@ -192,14 +192,14 @@ at both levels.
 
 ## Build and test
 
-Native macOS work requires Go 1.22 or newer, `pkg-config`, SDL2, SDL2_image,
+Native macOS work requires Go 1.27 or newer, `pkg-config`, SDL2, SDL2_image,
 SDL2_ttf, and a sibling `../Catastrophe` checkout. The MLP1 lane requires Docker
 or Podman plus the UMRK MLP1 toolchain image.
 
 ```sh
 make test
 make test-race
-go test -count=1 -race ./...
+make test-native
 make native
 make mac
 make run-mac
@@ -211,6 +211,8 @@ make package-smoke
 ```
 
 `make test` and `make test-race` include the durable Cat-only/remnant audit.
+`make test-native` runs the untagged race suite, which is the only one that
+covers the Catastrophe download flows and workers.
 `CATASTROPHE_DIR`, `MLP1_TOOLCHAIN_IMAGE`, `GO_IMAGE`, and
 `CONTAINER_RUNTIME` may be overridden. Unknown package platforms fail closed.
 
