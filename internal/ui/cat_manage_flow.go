@@ -479,7 +479,7 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 		file: file, source: source, enable: !file.UnifiedName,
 	}
 	if flow.enable {
-		flow.targetPath, _ = roms.ResolveUnifiedDest(file.DestPath, entry.Title, false)
+		flow.targetPath, _ = roms.ResolveUnifiedDest(file.DestPath, entry.Title)
 	} else {
 		name := filepath.Base(file.Filename)
 		if name == "." || name == string(filepath.Separator) || name == "" {

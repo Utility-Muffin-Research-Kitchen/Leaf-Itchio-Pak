@@ -43,7 +43,7 @@ func TestResolveUnifiedDest_NoCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	want := filepath.Join(dir, "Doomslinger Dungeon.gb")
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -59,7 +59,7 @@ func TestResolveUnifiedDest_SameNameNoRename(t *testing.T) {
 	if err := os.WriteFile(current, []byte("rom"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	if got != current {
 		t.Errorf("got %q, want %q", got, current)
 	}
@@ -68,9 +68,9 @@ func TestResolveUnifiedDest_SameNameNoRename(t *testing.T) {
 	}
 }
 
-// TestResolveUnifiedDest_Collision_NoOverwrite tests migration context
-// (allowOverwrite=false): a pre-existing file at the target name must not be
-// overwritten — the result is bumped to the next free numbered slot.
+// TestResolveUnifiedDest_Collision_NoOverwrite tests that a pre-existing file
+// at the target name is never overwritten: the result is bumped to the next
+// free numbered slot.
 func TestResolveUnifiedDest_Collision_NoOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "Game Boy ROM.gb")
@@ -82,7 +82,7 @@ func TestResolveUnifiedDest_Collision_NoOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	want := filepath.Join(dir, "Doomslinger Dungeon (2).gb")
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -92,33 +92,9 @@ func TestResolveUnifiedDest_Collision_NoOverwrite(t *testing.T) {
 	}
 }
 
-// TestResolveUnifiedDest_Collision_AllowOverwrite tests download context
-// (allowOverwrite=true): when the target exists and currentPath is not already a
-// numbered slot, the target is returned directly so os.Rename can replace it.
-func TestResolveUnifiedDest_Collision_AllowOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	current := filepath.Join(dir, "game-upload.gb")
-	if err := os.WriteFile(current, []byte("new"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// Existing file at the unified name (e.g. previous download of the same game).
-	if err := os.WriteFile(filepath.Join(dir, "Doomslinger Dungeon.gb"), []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", true)
-	want := filepath.Join(dir, "Doomslinger Dungeon.gb")
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-	if !renamed {
-		t.Error("renamed should be true — caller will overwrite with os.Rename")
-	}
-}
-
-// TestResolveUnifiedDest_CollisionCurrentPathIsSlot tests that a re-download
-// of a game already assigned to a numbered slot (allowOverwrite=true) keeps that
-// slot rather than overwriting the primary name held by a different game.
+// TestResolveUnifiedDest_CollisionCurrentPathIsSlot tests that a ROM already
+// in a numbered slot keeps that slot while a different game holds the primary
+// name.
 func TestResolveUnifiedDest_CollisionCurrentPathIsSlot(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "Doomslinger Dungeon (2).gb")
@@ -130,7 +106,7 @@ func TestResolveUnifiedDest_CollisionCurrentPathIsSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", true)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	if got != current {
 		t.Errorf("got %q, want %q (currentPath)", got, current)
 	}
@@ -145,7 +121,7 @@ func TestResolveUnifiedDest_EmptyTitle_NoRename(t *testing.T) {
 	if err := os.WriteFile(current, []byte("rom"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	got, renamed := roms.ResolveUnifiedDest(current, "", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "")
 	if got != current {
 		t.Errorf("empty title: got %q, want %q", got, current)
 	}
@@ -164,7 +140,7 @@ func TestResolveUnifiedDest_CaseFoldCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	want := filepath.Join(dir, "Doomslinger Dungeon (2).gb")
 	if got != want || !renamed {
 		t.Fatalf("case-fold collision: got (%q, %v), want (%q, true)", got, renamed, want)
@@ -184,7 +160,7 @@ func TestResolveUnifiedDest_CaseFoldNumberedCollision(t *testing.T) {
 		}
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	want := filepath.Join(dir, "Doomslinger Dungeon (3).gb")
 	if got != want || !renamed {
 		t.Fatalf("numbered case-fold collision: got (%q, %v), want (%q, true)", got, renamed, want)
@@ -198,7 +174,7 @@ func TestResolveUnifiedDest_CaseOnlyCurrentNameIsStable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon", false)
+	got, renamed := roms.ResolveUnifiedDest(current, "Doomslinger Dungeon")
 	if got != current || renamed {
 		t.Fatalf("case-only current name: got (%q, %v), want (%q, false)", got, renamed, current)
 	}

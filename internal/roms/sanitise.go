@@ -33,21 +33,16 @@ func SanitiseFilename(title, ext string) string {
 }
 
 // ResolveUnifiedDest returns the desired on-disk path for a ROM after applying
-// unified naming. currentPath is where the file was written. gameTitle is the
-// itch.io game title (used to derive the target filename).
+// unified naming. currentPath is where the file is. gameTitle is the itch.io
+// game title (used to derive the target filename).
 //
 // Returns (currentPath, false) when no rename is needed (name already correct,
-// or title is empty). Returns (targetPath, true) when a rename is required.
+// title is empty, or the file already sits in the numbered slot it would get).
+// Returns (targetPath, true) when a rename is required.
 //
-// If allowOverwrite is true (download context), the returned path may already
-// exist on disk — the caller's os.Rename will atomically replace it. Exception:
-// if currentPath is already a numbered slot for this game (e.g. "Title (2).gb"),
-// the slot is preserved and (currentPath, false) is returned so a re-download
-// does not overwrite a different game occupying the primary name.
-//
-// If allowOverwrite is false (migration context), appends " (2)", " (3)" etc.
-// to avoid colliding with any pre-existing file.
-func ResolveUnifiedDest(currentPath, gameTitle string, allowOverwrite bool) (string, bool) {
+// The returned path never names a different existing file: when the title's
+// name is taken, " (2)", " (3)" etc. is appended until the name is free.
+func ResolveUnifiedDest(currentPath, gameTitle string) (string, bool) {
 	ext := ROMExt(filepath.Base(currentPath))
 	candidate := SanitiseFilename(gameTitle, ext)
 	if candidate == "" || strings.EqualFold(candidate, filepath.Base(currentPath)) {
@@ -56,25 +51,15 @@ func ResolveUnifiedDest(currentPath, gameTitle string, allowOverwrite bool) (str
 	dir := filepath.Dir(currentPath)
 	target := filepath.Join(dir, candidate)
 	if existing, exists := existingCaseFoldPath(dir, candidate); exists && existing != currentPath {
-		if allowOverwrite {
-			stem := strings.TrimSuffix(candidate, ext)
-			if isNumberedSlot(filepath.Base(currentPath), stem, ext) {
-				return currentPath, false
+		stem := strings.TrimSuffix(candidate, ext)
+		for n := 2; ; n++ {
+			candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+			target = filepath.Join(dir, candidate)
+			if _, exists := existingCaseFoldPath(dir, candidate); !exists {
+				break
 			}
-			// Use the existing path's real casing. This gives case-sensitive test
-			// hosts the same collision behavior as the FAT32 target filesystem.
-			target = existing
-		} else {
-			stem := strings.TrimSuffix(candidate, ext)
-			for n := 2; ; n++ {
-				candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
-				target = filepath.Join(dir, candidate)
-				if _, exists := existingCaseFoldPath(dir, candidate); !exists {
-					break
-				}
-				if target == currentPath {
-					return currentPath, false
-				}
+			if target == currentPath {
+				return currentPath, false
 			}
 		}
 	}
@@ -106,27 +91,6 @@ func ExistingFAT32Path(path string) (string, bool) {
 
 // SameFAT32Path reports whether FAT32 stores a and b as one file.
 func SameFAT32Path(a, b string) bool { return sameFAT32Path(a, b) }
-
-// isNumberedSlot reports whether base matches the pattern "stem (N)ext" for
-// some non-empty digit sequence N. Used to detect that a file was deliberately
-// placed in a collision slot and should not be moved to the primary name.
-func isNumberedSlot(base, stem, ext string) bool {
-	prefix := stem + " ("
-	suffix := ")" + ext
-	if !strings.HasPrefix(base, prefix) || !strings.HasSuffix(base, suffix) {
-		return false
-	}
-	mid := base[len(prefix) : len(base)-len(suffix)]
-	if mid == "" {
-		return false
-	}
-	for _, c := range mid {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
 
 // UnifiedTarget returns the path unified naming would give path for
 // gameTitle, ignoring what exists on disk, or "" when no rename applies.
