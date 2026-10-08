@@ -318,7 +318,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return screen.HandleInput(event) != appui.SettingsIntentBack
 		}
 	case "about":
-		screen, screenErr := NewAboutScreen(ctx, "0.1.0", "fixture")
+		screen, screenErr := NewAboutScreen(ctx, "0.1.0", "v0.13.0-dev (2026-07-20-gabc1234)")
 		if screenErr != nil {
 			return screenErr
 		}
