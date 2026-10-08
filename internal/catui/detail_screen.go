@@ -67,9 +67,9 @@ func (screen *DetailScreen) Draw() error {
 		} else if screen.model.Game.NeedsSignIn && !screen.model.BrowserOnly {
 			footer = append(footer, FooterHint{Button: ButtonA, Label: "Sign in"})
 		}
-		if screen.model.Game.Downloaded {
-			footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
-		}
+	}
+	if (screen.model.State == appui.DetailReady || screen.model.State == appui.DetailError) && screen.model.Game.Downloaded {
+		footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
 	}
 	footer = append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set"})
 	frame, err := screen.ui.BeginScreen(ScreenSpec{
@@ -87,12 +87,6 @@ func (screen *DetailScreen) Draw() error {
 	switch screen.model.State {
 	case appui.DetailLoading:
 		err = screen.ui.DrawState(body, StateLoading, "Loading game details", "Reading screenshots, tags, and download metadata…")
-	case appui.DetailError:
-		detail := screen.model.ErrorDetail
-		if detail == "" {
-			detail = "The itch.io page could not be loaded."
-		}
-		err = screen.ui.DrawState(body, StateError, "Could not load details", detail)
 	case appui.DetailWarning:
 		err = screen.ui.DrawWarningCover(body, "Content warning",
 			"This game matches one or more enabled content filters. Return to the list, or review the filter settings before continuing.")
@@ -132,14 +126,26 @@ func (screen *DetailScreen) drawReady(content Box) error {
 	labelHeight := screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(8)
 	imageArea := Rect{X: gallery.X, Y: gallery.Y, W: gallery.W, H: maxInt(0, gallery.H-labelHeight)}
 	if len(screen.model.Images) == 0 {
-		if err := screen.ui.DrawState(imageArea, StateEmpty, "No screenshots", "Scan the QR code to view the itch.io page."); err != nil {
+		title := "No screenshots"
+		if screen.model.State == appui.DetailError {
+			title = "No cached image"
+		}
+		if err := screen.ui.DrawState(imageArea, StateEmpty, title, "Scan the QR code to view the itch.io page."); err != nil {
 			return err
 		}
 	} else {
 		index := screen.model.ImageIndex
 		key := screen.model.Images[index]
-		if texture := screen.cache.Get(key); texture != nil {
+		texture := screen.cache.Peek(key)
+		if texture == nil && screen.model.State != appui.DetailError {
+			texture = screen.cache.Get(key)
+		}
+		if texture != nil {
 			if err := screen.ui.DrawImageFit(texture, imageArea); err != nil {
+				return err
+			}
+		} else if screen.model.State == appui.DetailError {
+			if err := screen.ui.DrawState(imageArea, StateEmpty, "No cached image", ""); err != nil {
 				return err
 			}
 		} else if screen.cache.Failed(key) {
@@ -151,10 +157,16 @@ func (screen *DetailScreen) drawReady(content Box) error {
 		}
 		// Warm only adjacent images. This preserves GIF support without decoding
 		// an entire animated gallery at once on constrained devices.
-		if len(screen.model.Images) > 1 {
+		if len(screen.model.Images) > 1 && screen.model.State != appui.DetailError {
 			screen.cache.Warm(screen.model.Images[(index+1)%len(screen.model.Images)])
 		}
 		label := fmt.Sprintf("Image %d/%d", index+1, len(screen.model.Images))
+		if screen.model.State == appui.DetailError {
+			label = ""
+			if texture != nil {
+				label = "Cached cover"
+			}
+		}
 		y := gallery.Y + gallery.H - labelHeight + screen.ctx.Scale(3)
 		_, err := screen.ctx.DrawText(FontSmall, label, gallery.X, y,
 			screen.ctx.ThemeColor(RoleHint), gallery.W, true)
@@ -192,21 +204,30 @@ func (screen *DetailScreen) drawReady(content Box) error {
 		y += screen.ui.BasePadding / 2
 	}
 	description := Rect{X: panel.X, Y: y, W: panel.W, H: maxInt(0, panel.Y+panel.H-y)}
-	lineHeight := screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(5)
+	heading := "About"
+	paragraphs := screen.model.Description
+	if screen.model.State == appui.DetailError {
+		heading = "Game page unavailable"
+		paragraphs = []string{unavailableText(screen.model.ErrorDetail, screen.model.Game.Downloaded)}
+	} else if len(paragraphs) == 0 {
+		paragraphs = []string{"No description was provided."}
+	}
 	totalLines := 0
-	for _, paragraph := range screen.model.Description {
+	for _, paragraph := range paragraphs {
 		totalLines += len(wrapText(paragraph, description.W, func(value string) int {
 			return screen.ctx.MeasureText(FontSmall, value)
 		})) + 1
 	}
-	visible := 1
-	if lineHeight > 0 {
-		visible = maxInt(1, description.H/lineHeight)
-	}
+	visible := screen.ui.ScrollingBodyRows(description, heading)
 	screen.model.SetScrollBounds(maxInt(0, totalLines-visible))
-	paragraphs := screen.model.Description
-	if len(paragraphs) == 0 {
-		paragraphs = []string{"No description was provided."}
+	return screen.ui.DrawScrollingBody(description, heading, paragraphs, screen.model.ScrollLine)
+}
+
+// unavailableText follows the reason the game page is unavailable with what
+// you can still do on this screen.
+func unavailableText(reason string, downloaded bool) string {
+	if downloaded {
+		return reason + " You can still manage your files."
 	}
-	return screen.ui.DrawScrollingBody(description, "About", paragraphs, screen.model.ScrollLine)
+	return reason
 }

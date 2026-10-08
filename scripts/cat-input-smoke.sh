@@ -41,6 +41,11 @@ capture filter 1280 800 0 5
 capture filter-psx 960 720 1 0
 capture detail 960 720 1 0
 capture detail 1280 800 0 5
+capture detail-unavailable 960 720 1 0
+capture detail-unavailable-downloaded 960 720 1 0
+capture detail-unavailable-downloaded 1280 800 0 5
+capture detail-unavailable 960 720 1 2
+capture detail-unavailable-downloaded 960 720 1 2
 capture warning 960 720 1 0
 capture download-select 960 720 1 0
 capture download-select 1280 800 0 5
