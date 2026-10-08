@@ -157,20 +157,28 @@ func (s *MultiDownloadWorker) runDownloads(ctx context.Context, allowUninhibited
 		artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 		s.finalPaths[i] = finalDest
 		file := inventory.DownloadedFile{
-			UploadID:     dl.Upload.UploadID,
-			Filename:     dl.Upload.Filename,
-			DestPath:     finalDest,
-			DownloadedAt: time.Now(),
-			UnifiedName:  unifiedName,
+			UploadID: dl.Upload.UploadID, UploadFingerprint: dl.Upload.UploadFingerprint,
+			OriginalUpload: dl.Upload.Filename,
+			Filename:       dl.Upload.Filename,
+			DestPath:       finalDest,
+			DownloadedAt:   time.Now(),
+			UnifiedName:    unifiedName,
 		}
 		applyArtwork(&file, artwork)
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:   downloadGameID(s.detail),
 			GameURL:  s.game.URL,
 			Title:    s.game.Title,
 			Author:   s.game.Author,
 			CoverURL: s.game.CoverURL,
 			IsFree:   s.game.IsFree,
 		}, file)
+		listing, listingSource := installListing(dl.Upload)
+		s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
+			UploadID: dl.Upload.UploadID, Filename: dl.Upload.Filename,
+			Fingerprint: dl.Upload.UploadFingerprint, Written: []string{finalDest},
+			Listing: listing, ListingSource: listingSource,
+		})
 		if saveErr := s.inv.Save(s.invPath); saveErr != nil {
 			logger.Warn("inventory: save failed: %v", saveErr)
 		} else {

@@ -269,16 +269,16 @@ func sameFAT32(a, b string) bool {
 }
 
 // offers is the listing a page showed, by upload name.
-func offers(names ...string) []roms.Offer {
-	listing := make([]roms.Offer, 0, len(names))
+func offers(names ...string) *roms.UploadListing {
+	listing := &roms.UploadListing{Uploads: make([]roms.ListedUpload, 0, len(names))}
 	for _, name := range names {
-		listing = append(listing, roms.Offer{Filename: name})
+		listing.Uploads = append(listing.Uploads, roms.ListedUpload{Filename: name})
 	}
 	return listing
 }
 
-func offeredUpload(upload roms.Upload, listing []roms.Offer) roms.Upload {
-	upload.Offered = listing
+func offeredUpload(upload roms.Upload, listing *roms.UploadListing) roms.Upload {
+	upload.Listing = listing
 	return upload
 }
 
@@ -286,7 +286,7 @@ func offeredUpload(upload roms.Upload, listing []roms.Offer) roms.Upload {
 // first one: both stay, under distinct names (review finding R18-2,
 // decision D2). Without a listing the app cannot tell, and keeps both.
 func TestDirectDownloadKeepsBothBuildsOfOneSystem(t *testing.T) {
-	for _, listing := range [][]roms.Offer{offers("glory.gba", "glory_ez4.gba"), nil} {
+	for _, listing := range []*roms.UploadListing{offers("glory.gba", "glory_ez4.gba"), nil} {
 		primary, _ := transactionPaths(t)
 		gbaDir := filepath.Join(primary, "Roms", "GBA")
 		inv, invPath := collisionInventory(t)
@@ -356,7 +356,7 @@ func TestArchiveUpdateReplacesTheSupersededArchivesROM(t *testing.T) {
 		gbDir := filepath.Join(primary, "Roms", "GB")
 		inv, invPath := collisionInventory(t)
 		listing := func(name string) func(*ZIPPlan, string) {
-			return func(plan *ZIPPlan, _ string) { plan.Upload.Offered = offers(name) }
+			return func(plan *ZIPPlan, _ string) { plan.Upload.Listing = offers(name) }
 		}
 		cfg := &settings.Config{UnifiedNaming: unified}
 		runArchiveFor(t, primary, ownerGame, inv, invPath, "moss-1.0.zip",
@@ -387,10 +387,10 @@ func TestPico8ArchiveReplacesItsOwnGamesFilesFromAnotherUpload(t *testing.T) {
 	primary, _ := transactionPaths(t)
 	inv, invPath := collisionInventory(t)
 	gameDir := filepath.Join(primary, "Roms", "PICO8", "Moss Garden")
-	pico8 := func(listing []roms.Offer) func(*ZIPPlan, string) {
+	pico8 := func(listing *roms.UploadListing) func(*ZIPPlan, string) {
 		return func(plan *ZIPPlan, _ string) {
 			plan.Pico8GameDir = gameDir + string(filepath.Separator)
-			plan.Upload.Offered = listing
+			plan.Upload.Listing = listing
 		}
 	}
 	cart := func(tag string) map[string][]byte {

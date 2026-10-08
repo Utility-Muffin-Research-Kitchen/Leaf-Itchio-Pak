@@ -127,20 +127,28 @@ func NewDirectDownloadWorker(client *itchio.Client, cfg *settings.Config, game i
 
 				artwork := ensureROMArtwork(client, s.inv, game, finalDest)
 				file := inventory.DownloadedFile{
-					UploadID:     upload.UploadID,
-					Filename:     upload.Filename,
-					DestPath:     finalDest,
-					DownloadedAt: time.Now(),
-					UnifiedName:  unifiedName,
+					UploadID: upload.UploadID, UploadFingerprint: upload.UploadFingerprint,
+					OriginalUpload: upload.Filename,
+					Filename:       upload.Filename,
+					DestPath:       finalDest,
+					DownloadedAt:   time.Now(),
+					UnifiedName:    unifiedName,
 				}
 				applyArtwork(&file, artwork)
 				s.inv.Add(game.URL, inventory.Entry{
+					GameID:   downloadGameID(s.detail),
 					GameURL:  game.URL,
 					Title:    game.Title,
 					Author:   game.Author,
 					CoverURL: game.CoverURL,
 					IsFree:   game.IsFree,
 				}, file)
+				listing, listingSource := installListing(upload)
+				s.inv.CommitUploadInstall(game.URL, inventory.UploadInstall{
+					UploadID: upload.UploadID, Filename: upload.Filename,
+					Fingerprint: upload.UploadFingerprint, Written: []string{finalDest},
+					Listing: listing, ListingSource: listingSource,
+				})
 				if saveErr := s.inv.Save(s.inventoryPath); saveErr != nil {
 					logger.Warn("inventory: save failed: %v", saveErr)
 				} else {
@@ -168,4 +176,33 @@ func (s *DirectDownloadWorker) Cancel() {
 // IsBusy implements BusyChecker. Returns true while a download is in flight.
 func (s *DirectDownloadWorker) IsBusy() bool {
 	return s.loadState() == dlDownloading
+}
+
+// installListing converts the listing an upload was chosen from into the
+// update-check seed for its install.
+func installListing(upload roms.Upload) ([]inventory.UpstreamFile, string) {
+	if upload.Listing == nil {
+		return nil, ""
+	}
+	source := inventory.SourcePage
+	if upload.Listing.API {
+		source = inventory.SourceAPI
+	}
+	files := make([]inventory.UpstreamFile, 0, len(upload.Listing.Uploads))
+	for _, listed := range upload.Listing.Uploads {
+		files = append(files, inventory.UpstreamFile{
+			Filename: listed.Filename, DisplayName: listed.DisplayName, UploadID: listed.UploadID,
+			Fingerprint: listed.Fingerprint, DesktopOrWebOnly: listed.DesktopOrWebOnly,
+			Soundtrack: listed.Soundtrack,
+		})
+	}
+	return files, source
+}
+
+// downloadGameID is empty for offline/legacy detail views without metadata.
+func downloadGameID(detail *itchio.GameDetail) string {
+	if detail == nil {
+		return ""
+	}
+	return detail.GameID
 }

@@ -89,6 +89,9 @@ type CatDownloadFlow struct {
 
 func NewCatDownloadFlow(client *itchio.Client, cfg *settings.Config, game itchio.Game,
 	detail *itchio.GameDetail, inv *inventory.Inventory, wake func()) *CatDownloadFlow {
+	if detail != nil && detail.Data != nil {
+		game.IsFree = detail.Data.Pricing() != itchio.PricingPaid
+	}
 	flow := &CatDownloadFlow{
 		client: client, cfg: cfg, game: game, detail: detail, inv: inv, wake: wake,
 		updates: make(chan catDownloadUpdate, 2),
@@ -142,14 +145,51 @@ func (flow *CatDownloadFlow) discover() {
 func (flow *CatDownloadFlow) fetchWeb() catDownloadUpdate {
 	uploads, err := flow.client.FetchWebUploadsContext(flow.requestContext(), flow.game.URL)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, webUploadListing(uploads), nil))
+	return update
+}
+
+// listedUploads turns one upload list into the uploads you choose from. It
+// is the one place that gives each upload the list it was chosen from: the
+// install uses that list to tell an update, whose old upload the list no
+// longer offers, from another build it still offers, and seeds update
+// checks with it. install is nil for the web flow.
+func listedUploads(uploads []itchio.Upload, listing *roms.UploadListing, install *roms.InstallSession) []roms.Upload {
+	var listed []roms.Upload
 	for _, upload := range uploads {
-		update.uploads = append(update.uploads, roms.Upload{
-			Filename: upload.Filename, URL: upload.URL, NeedsFormat: upload.NeedsFormat,
-			UploadID: upload.UploadID,
+		listed = append(listed, roms.Upload{
+			Filename: upload.Filename, URL: upload.URL, UploadID: upload.UploadID,
+			UploadFingerprint: upload.Fingerprint(), NeedsFormat: upload.NeedsFormat,
+			DesktopOrWeb: upload.DesktopOrWebOnly(), Install: install, Listing: listing,
 		})
 	}
-	update.uploads = flow.dropTextMarkdown(update.uploads)
-	return update
+	return listed
+}
+
+// apiUploadListing and webUploadListing record what a listing offered, so
+// the install chosen from it can seed update checks. Web builds are left
+// out, as the update check leaves them out.
+func apiUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(true, uploads)
+}
+
+func webUploadListing(uploads []itchio.Upload) *roms.UploadListing {
+	return uploadListing(false, uploads)
+}
+
+func uploadListing(api bool, uploads []itchio.Upload) *roms.UploadListing {
+	listing := &roms.UploadListing{API: api, Uploads: make([]roms.ListedUpload, 0, len(uploads))}
+	for _, upload := range uploads {
+		if upload.Type == "html" {
+			continue
+		}
+		listing.Uploads = append(listing.Uploads, roms.ListedUpload{
+			Filename: upload.Filename, DisplayName: upload.DisplayName,
+			UploadID: upload.UploadID, Fingerprint: upload.Fingerprint(),
+			DesktopOrWebOnly: upload.DesktopOrWebOnly(), Soundtrack: upload.Type == "soundtrack",
+		})
+	}
+	return listing
 }
 
 // fetchFree lists a free or name-your-own-price game through the API when a
@@ -167,17 +207,9 @@ func (flow *CatDownloadFlow) fetchFree() catDownloadUpdate {
 	switch {
 	case err == nil && len(uploads) > 0:
 		logger.Info("cat download: free game_id=%s listed through the API (%d upload(s))", flow.detail.GameID, len(uploads))
-		update := catDownloadUpdate{kind: catDownloadUpdateUploads}
 		install := roms.NewInstallSession(flow.detail.GameID, "")
-		for _, upload := range uploads {
-			update.uploads = append(update.uploads, roms.Upload{
-				Filename: upload.Filename, UploadID: upload.UploadID,
-				NeedsFormat: upload.NeedsFormat, Install: install,
-				DesktopOrWeb: upload.DesktopOrWebOnly(),
-			})
-		}
-		update.uploads = flow.dropTextMarkdown(update.uploads)
-		return update
+		return catDownloadUpdate{kind: catDownloadUpdateUploads,
+			uploads: flow.dropTextMarkdown(listedUploads(uploads, apiUploadListing(uploads), install))}
 	case errors.Is(err, itchio.ErrRateLimited) || errors.Is(err, context.Canceled):
 		return catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	case err != nil:
@@ -200,14 +232,11 @@ func (flow *CatDownloadFlow) fetchForKey(key itchio.OwnedKey) catDownloadUpdate 
 	uploads, err := flow.client.FetchUploadsContext(flow.requestContext(), flow.cfg.Credential(), flow.detail.GameID, downloadKeyID)
 	update := catDownloadUpdate{kind: catDownloadUpdateUploads, err: err}
 	install := roms.NewInstallSession(flow.detail.GameID, downloadKeyID)
-	for _, upload := range uploads {
-		update.uploads = append(update.uploads, roms.Upload{
-			Filename: upload.Filename, UploadID: upload.UploadID,
-			NeedsFormat: upload.NeedsFormat, Install: install,
-			DesktopOrWeb: upload.DesktopOrWebOnly(),
-		})
+	var listing *roms.UploadListing
+	if err == nil {
+		listing = apiUploadListing(uploads)
 	}
-	update.uploads = flow.dropTextMarkdown(update.uploads)
+	update.uploads = flow.dropTextMarkdown(listedUploads(uploads, listing, install))
 	return update
 }
 
@@ -363,15 +392,6 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 	if len(uploads) == 0 {
 		model.SetError("No downloadable files were found for this game.")
 		return
-	}
-	// Every upload carries the listing it is chosen from, so the install can
-	// tell an update (old upload gone) from another build (still offered).
-	listing := make([]roms.Offer, 0, len(uploads))
-	for _, upload := range uploads {
-		listing = append(listing, roms.Offer{Filename: upload.Filename, UploadID: upload.UploadID})
-	}
-	for index := range uploads {
-		uploads[index].Offered = listing
 	}
 	flow.uploads, flow.hidden = uploads, nil
 	if len(uploads) == 1 && roms.IsPSXSupportExt(roms.ROMExt(uploads[0].Filename)) {

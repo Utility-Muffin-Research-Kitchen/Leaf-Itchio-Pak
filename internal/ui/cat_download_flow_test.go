@@ -309,15 +309,17 @@ func TestCatDownloadFlowAsksBetweenAlternativeBuildsOfOneSystem(t *testing.T) {
 // can tell an update from another build (review finding R18-2).
 func TestCatDownloadFlowRecordsTheListingOnEachUpload(t *testing.T) {
 	flow, model := newCatDownloadFlowForTest(t)
-	flow.setUploads(model, []roms.Upload{{Filename: "one.gb", UploadID: "11"}, {Filename: "two.gbc", UploadID: "12"}})
+	listed := []itchio.Upload{{Filename: "one.gb", UploadID: "11"}, {Filename: "two.gbc", UploadID: "12"}}
+	flow.setUploads(model, listedUploads(listed, webUploadListing(listed), nil))
 	plan := flow.TakePlan()
 	if plan == nil || len(plan.Uploads) != 2 {
 		t.Fatalf("plan = %#v", plan)
 	}
 	for _, upload := range plan.Uploads {
-		if len(upload.Offered) != 2 || upload.Offered[0] != (roms.Offer{Filename: "one.gb", UploadID: "11"}) ||
-			upload.Offered[1] != (roms.Offer{Filename: "two.gbc", UploadID: "12"}) {
-			t.Fatalf("%s offered = %+v", upload.Filename, upload.Offered)
+		if upload.Listing == nil || len(upload.Listing.Uploads) != 2 ||
+			upload.Listing.Uploads[0].Filename != "one.gb" || upload.Listing.Uploads[0].UploadID != "11" ||
+			upload.Listing.Uploads[1].Filename != "two.gbc" || upload.Listing.Uploads[1].UploadID != "12" {
+			t.Fatalf("%s listing = %+v", upload.Filename, upload.Listing)
 		}
 	}
 }

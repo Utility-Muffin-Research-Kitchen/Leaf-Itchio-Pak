@@ -18,10 +18,11 @@ func ROMExt(filename string) string {
 }
 
 type Upload struct {
-	Filename    string
-	URL         string // web resolver URL; empty for API uploads
-	UploadID    string // itch.io upload ID; recorded with each installed file
-	NeedsFormat bool   // true if the user must choose a supported format
+	UploadFingerprint string // metadata captured when this version was selected
+	Filename          string
+	URL               string // web resolver URL; empty for API uploads
+	UploadID          string // itch.io upload ID; recorded with each installed file
+	NeedsFormat       bool   // true if the user must choose a supported format
 	// DesktopOrWeb marks a build for a computer, phone or browser, from the
 	// API listing's upload type and traits. Such a file is never chosen
 	// automatically and is listed last.
@@ -30,17 +31,27 @@ type Upload struct {
 	// only test for an API download: free API downloads have no purchase ID.
 	// nil means the anonymous web flow.
 	Install *InstallSession
-	// Offered lists every upload the game's page offered when this one was
-	// chosen. An install uses it to tell an update, whose old upload is
-	// gone from the page, from another build the page still offers. Nil
-	// when the listing is unknown.
-	Offered []Offer
+	// Listing is the list this upload was chosen from, shared by every
+	// upload of that list; nil when the list is unknown. The install uses it
+	// to tell an update, whose old upload the list no longer offers, from
+	// another build the list still offers, and seeds update checks with it.
+	Listing *UploadListing
 }
 
-// Offer identifies one upload a game's page offered.
-type Offer struct {
-	Filename string
-	UploadID string
+// UploadListing records what one upload list offered.
+type UploadListing struct {
+	API     bool // listed by api.itch.io; false for the web download page
+	Uploads []ListedUpload
+}
+
+// ListedUpload is one entry of an UploadListing.
+type ListedUpload struct {
+	Filename, DisplayName, UploadID, Fingerprint string
+	// DesktopOrWebOnly marks an upload that only ships desktop or web
+	// builds; a new one never raises an update badge.
+	DesktopOrWebOnly bool
+	// Soundtrack marks an upload itch.io lists as a soundtrack.
+	Soundtrack bool
 }
 
 // ViaAPI reports whether the upload downloads through the itch.io API.

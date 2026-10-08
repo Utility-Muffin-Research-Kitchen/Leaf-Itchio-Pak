@@ -148,13 +148,32 @@ without deleting downloads.
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
 removed upstream games, and newly offered uploads without deleting local files.
+The app also checks at launch and when you sign in or out, but then skips games
+it checked in the last six hours, and it waits while a download runs.
 A new version that replaces a file you downloaded, such as a new `.gb` build
-for your `.gb` or a new archive for your archive, shows as an update. A game is
-marked removed when its page is gone, when it offers no downloads the app can
-use, or when a file you downloaded is gone and nothing of the same kind
-replaces it. A network error leaves its status as it was.
+for your `.gb` or a new archive for your archive, shows as an update.
+When signed in, it also detects files replaced under the same name, including
+paid games you own. A changed upload marks a game only when you installed that
+upload, so a new Windows or soundtrack build of a game you play as a ROM does
+not. Installing the new version clears the mark. Files the new version no
+longer includes, such as renamed tracks, stay where they are: the app never
+deletes them on its own. A game is marked removed only when its page is gone,
+or when, signed in, itch.io no longer lists your file or anything to replace
+it. These checks read metadata without starting a download.
+When signed out, it can find newly listed filenames on public pages, but cannot
+verify changed file contents or hidden paid downloads. Signing in or out does
+not mark every file as an update, but an installed upload that was replaced in
+the meantime still shows, even before the first check after you download.
+A network error leaves its status as it was.
 **Clear Image Cache** clears decoded in-memory cover/GIF frames; remote images
 are fetched again when needed.
+
+Game details use itch.io's current price and currency when available. A suggested
+contribution still allows a free download. Sale prices show the original amount
+alongside the current price, a minimum price you may exceed shows as
+"$2.00 or more", and a paid game you own shows **Owned**. Once you open a game,
+the list shows that current price too. If that metadata cannot load, you still
+get the available game-page details.
 
 ## Sign in with itch.io
 
@@ -209,9 +228,9 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
-When you download an archive again, files of its earlier version that the new
-install no longer uses stay on your card. For example, an older version of this
-app put every soundtrack track in one folder, and the new install keeps
+When you download an archive or file again, files of its earlier version that
+the new install no longer uses stay on your card. For example, an older version
+of this app put every soundtrack track in one folder, and the new install keeps
 same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
 **OLD** and offers **Delete left-over files**. Nothing is deleted until you
 choose it.

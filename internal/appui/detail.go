@@ -25,7 +25,18 @@ type DetailGame struct {
 	// Owned is set when the game is in the signed-in account's owned set.
 	// A paid game that is neither downloadable nor waiting for a sign-in is
 	// one that account does not own (NotOwned).
-	Owned bool
+	Owned      bool
+	PriceLabel string
+}
+
+// PriceText is the price on the detail line: "Owned" for a paid game the
+// signed-in account owns, else the current price label. It follows the
+// account at draw time, as the page's action does.
+func (game DetailGame) PriceText() string {
+	if game.Owned && !game.IsFree {
+		return "Owned"
+	}
+	return game.PriceLabel
 }
 
 // NotOwned reports a paid game the signed-in account does not own: it has

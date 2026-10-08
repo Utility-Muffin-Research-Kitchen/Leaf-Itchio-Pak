@@ -10,7 +10,7 @@ Leaf-Itchio-Pak is a hard fork of
 | Local fork-point tag | `upstream-v1.0.19` |
 | Fork established | 2026-07-09 |
 | Local repository | `Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak` |
-| Last upstream review | 2026-09-25, through `v1.0.25` (`123e01c`); adopted in stages, one review-record row per merged change |
+| Last upstream review | 2026-10-03, through `v1.1.0-rc3` (`53a8da8`); adopted in stages, one review-record row per merged change |
 | Next review | 2026-12-25 |
 
 ## Review record
@@ -30,6 +30,7 @@ Leaf-Itchio-Pak is a hard fork of
 | QR sign-in verification (2026-10-03) | Corrected instructions for the [official device-login contract](https://itch.io/docs/api/oauth): scan `verification_uri_complete` and match `user_code` on the phone | Full device sign-in, phone approval and live token exchange remain untested | The client approval prerequisite in the 2026-09-26 review is met. Leaf's registered redirect URI is `urn:itchio:poll`; a live `POST /oauth/device` returned HTTP 200 with the required fields, `expires_in=600` and `interval=5`, without logging codes or credentials. The bare `verification_uri` has no code entry, so manual-entry instructions and the unused URL field are removed |
 | `v1.1.0-rc3` download inactivity (2026-10-03) | Adapted `9e9b8fd`, `dc820dc`, and `b9524ae`: stop a download after 30 seconds without response data, including waiting for headers, while pausing the clock during rate-limit cooldowns | Upstream's global network state and partial-file journal | You can download a large file for as long as data keeps arriving. A stalled download preserves the installed file; Leaf keeps its caller cancellation, power protection, storage checks, and atomic writer |
 | `v1.1.0-rc3` unavailable game page (2026-10-03) | Adapted `efb81b111a08d96f6f57502b5ea4123b94eddceb` and `8b0d548ef2a08dc6aa32846de18f676715966c4c`: keep cached metadata, QR, cached artwork, and local file management after a failed detail fetch | Global connection tracking, automatic reconnect/reload, and downloads without loaded details | Leaf's existing Catastrophe error state now keeps X Manage available for installed games, even signed out. Cached advisory tags still gate the page, error text excludes request URLs, and artwork is read only from the cache. Failed-loader and local rename/delete tests reproduce the old blocked flow; input fixtures cover reduced pages at both desktop sizes |
+| `v1.1.0-rc3` metadata and inventory (2026-10-03) | Adapted `7f17dae` and `fea9438` (bounded public game metadata), `6147816` and `225263e` (metadata-only API update checks and legacy baselines) | Full upstream renderer, global connectivity monitor, app updater, and clearing every pending file after one download | Leaf keeps HTML-only fields, its inventory schema and both storage sources. Current prices control download routing; anonymous checks use public pages only. Upload fingerprints flow through direct, multi-file and archive installs, and only the installed version is acknowledged. Account changes discard in-flight scans. |
 
 Future reviews append a row here. Do not rewrite old decisions.
 

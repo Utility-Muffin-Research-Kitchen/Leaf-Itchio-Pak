@@ -3,7 +3,6 @@ package inventory_test
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -13,6 +12,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +47,12 @@ func minimalPNG() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+// laterLaunch makes the next launch happen more than six hours after the
+// last check, so its automatic check covers the entry again.
+func laterLaunch(inv *inventory.Inventory, gameURL string) {
+	inv.Entries[gameURL].UpdateCheckedAt = time.Now().Add(-7 * time.Hour)
 }
 
 func TestUpdateService_RepairsMissingCoverArt(t *testing.T) {
@@ -231,87 +238,33 @@ func TestUpdateServiceMigratesOwnedMediaArtworkAndRequestsScan(t *testing.T) {
 	}
 }
 
-// freeGameServer builds an httptest.Server that mimics a free itch.io game page
-// with the given upload filenames. Pass status 404 to simulate a removed game.
+// freeGameServer exposes public upload names without starting any download.
 func freeGameServer(t *testing.T, status int, filenames []string) *httptest.Server {
 	t.Helper()
-	var srv *httptest.Server
-	mux := http.NewServeMux()
-
-	if status != http.StatusOK {
-		mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "not found", status)
-		})
-		srv = httptest.NewServer(mux)
-		return srv
-	}
-
-	var srvURL string
-
-	// GET /game — game page with CSRF token
-	mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><head><meta name="csrf_token" value="TESTCSRF"/></head></html>`))
-	})
-
-	// POST /game/download_url — returns signed URL (last path segment is the key)
-	mux.HandleFunc("/game/download_url", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		data, _ := json.Marshal(map[string]string{"url": srvURL + "/dl/TESTKEY"})
-		w.Write(data)
-	})
-
-	// GET /dl/TESTKEY — signed download page with upload list
-	mux.HandleFunc("/dl/TESTKEY", func(w http.ResponseWriter, r *http.Request) {
-		var body bytes.Buffer
-		body.WriteString(`<html><head><meta name="csrf_token" value="DLCSRF"/></head><body>`)
-		for i, fn := range filenames {
-			body.WriteString(`<div class="upload"><div class="info_column"><div class="upload_name">`)
-			body.WriteString(`<strong class="name" title="` + fn + `">` + fn + `</strong>`)
-			body.WriteString(`</div></div><div class="actions">`)
-			body.WriteString(fmt.Sprintf(`<a class="button download_btn" href="javascript:void(0);" data-upload_id="%d">Download</a>`, 100+i))
-			body.WriteString(`</div></div>`)
-		}
-		body.WriteString(`</body></html>`)
-		w.Write(body.Bytes())
-	})
-
-	srv = httptest.NewServer(mux)
-	srvURL = srv.URL
-	return srv
+	return publicGameServer(t, status, &filenames)
 }
 
-// freeGameServerDynamic is like freeGameServer but reads filenames from the
-// pointed-to slice at request time, so callers can mutate it between runs.
 func freeGameServerDynamic(t *testing.T, filenames *[]string) *httptest.Server {
 	t.Helper()
-	var srvURL string
-	mux := http.NewServeMux()
+	return publicGameServer(t, http.StatusOK, filenames)
+}
 
-	mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><head><meta name="csrf_token" value="TESTCSRF"/></head></html>`))
-	})
-	mux.HandleFunc("/game/download_url", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		data, _ := json.Marshal(map[string]string{"url": srvURL + "/dl/TESTKEY"})
-		w.Write(data)
-	})
-	mux.HandleFunc("/dl/TESTKEY", func(w http.ResponseWriter, r *http.Request) {
-		var body bytes.Buffer
-		body.WriteString(`<html><head><meta name="csrf_token" value="DLCSRF"/></head><body>`)
-		for i, fn := range *filenames {
-			body.WriteString(`<div class="upload"><div class="info_column"><div class="upload_name">`)
-			body.WriteString(`<strong class="name" title="` + fn + `">` + fn + `</strong>`)
-			body.WriteString(`</div></div><div class="actions">`)
-			body.WriteString(fmt.Sprintf(`<a class="button download_btn" href="javascript:void(0);" data-upload_id="%d">Download</a>`, 100+i))
-			body.WriteString(`</div></div>`)
+func publicGameServer(t *testing.T, status int, filenames *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/game" {
+			t.Errorf("background check started an unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
 		}
-		body.WriteString(`</body></html>`)
-		w.Write(body.Bytes())
-	})
-
-	srv := httptest.NewServer(mux)
-	srvURL = srv.URL
-	return srv
+		if status != http.StatusOK {
+			http.Error(w, "not found", status)
+			return
+		}
+		for _, name := range *filenames {
+			fmt.Fprintf(w, `<div class="upload"><strong class="name" title="%s">%s</strong></div>`, name, name)
+		}
+	}))
 }
 
 func TestUpdateService_Marks404AsRemoved(t *testing.T) {
@@ -382,6 +335,7 @@ func TestUpdateService_DiffAddsNewFile(t *testing.T) {
 
 	// Developer publishes game-v2.gb.
 	filenames = append(filenames, "game-v2.gb")
+	laterLaunch(inv, srv.URL+"/game")
 
 	// Second check: game-v2.gb appears and is flagged as genuinely new.
 	done2 := make(chan struct{})
@@ -418,6 +372,7 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 		{Filename: "game.gb", UploadID: "100", SeenAt: time.Now().Add(-time.Hour)},
 		{Filename: "game-v2.gb", UploadID: "101", SeenAt: time.Now().Add(-time.Hour)},
 	})
+	laterLaunch(inv, srv.URL+"/game")
 	inv.Save(invPath)
 
 	client := itchio.NewClientWithBase(srv.URL)
@@ -435,15 +390,16 @@ func TestUpdateService_DiffPrunesVanishedFile(t *testing.T) {
 	}
 }
 
-// runFreeGameCheck seeds one downloaded free game and runs a full update
-// check against srv. prior, when set, seeds an earlier check's upload list.
+// runFreeGameCheck seeds one downloaded free game and runs a launch check
+// against srv. prior, when set, seeds an earlier check's upload list.
 func runFreeGameCheck(t *testing.T, srv *httptest.Server, prior []string, removed bool) (*inventory.Inventory, string) {
 	t.Helper()
 	return runFreeGameCheckFor(t, srv, inventory.DownloadedFile{Filename: "game.gb"}, prior, removed)
 }
 
 // runFreeGameCheckFor is runFreeGameCheck for a game whose one downloaded
-// file is installed (Filename and SourceArchive set by the caller).
+// file is installed (Filename and SourceArchive set by the caller). The
+// seeded check is aged, so the launch check covers the entry again.
 func runFreeGameCheckFor(t *testing.T, srv *httptest.Server, installed inventory.DownloadedFile, prior []string, removed bool) (*inventory.Inventory, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -465,6 +421,7 @@ func runFreeGameCheckFor(t *testing.T, srv *httptest.Server, installed inventory
 			files = append(files, inventory.UpstreamFile{Filename: name, UploadID: fmt.Sprint(100 + index), SeenAt: time.Now().Add(-time.Hour)})
 		}
 		inv.SetUpstreamFiles(gameURL, files)
+		laterLaunch(inv, gameURL)
 	}
 	if removed {
 		inv.MarkRemoved(gameURL)
@@ -474,6 +431,58 @@ func runFreeGameCheckFor(t *testing.T, srv *httptest.Server, installed inventory
 	done := make(chan struct{})
 	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase(srv.URL), nil)
 	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+	return inv, gameURL
+}
+
+// runSignedInCheckFor installs one file of game 42 and runs two checks
+// signed in, with a download key for the game, so each upload list is
+// complete (decision D8). first is the upload list JSON of the first check,
+// which sets the baseline; then is the list the second check sees.
+func runSignedInCheckFor(t *testing.T, installed inventory.DownloadedFile, first, then string) (*inventory.Inventory, string) {
+	t.Helper()
+	var mu sync.Mutex
+	uploads := first
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			fmt.Fprint(w, `{"owned_keys":[{"id":123,"game_id":42,"purchase_id":456}],"per_page":100}`)
+		case "/games/42/uploads":
+			mu.Lock()
+			defer mu.Unlock()
+			fmt.Fprint(w, uploads)
+		default:
+			t.Errorf("signed-in check made an unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "game.gb")
+	os.WriteFile(romPath, []byte("ROM"), 0644)
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := srv.URL + "/game"
+	installed.DestPath, installed.DownloadedAt = romPath, time.Now()
+	inv.Add(gameURL, inventory.Entry{GameID: "42", Title: "G"}, installed)
+	inv.Save(invPath)
+
+	client := itchio.NewClientWithBase(srv.URL)
+	client.SetAuthToken("A")
+	done := make(chan struct{}, 2)
+	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc.Start(func() { done <- struct{}{} })
+	<-done
+	if inv.IsRemoved(gameURL) || inv.HasPendingUpdates(gameURL) {
+		t.Fatalf("the first check changed the game's state: removed=%v pending=%+v", inv.IsRemoved(gameURL), inv.PendingUpdateFiles(gameURL))
+	}
+	mu.Lock()
+	uploads = then
+	mu.Unlock()
+	svc.CheckAllNow()
 	<-done
 	svc.Stop()
 	return inv, gameURL
@@ -504,24 +513,29 @@ func TestUpdateService_SupersededUploadClearsAStaleRemoval(t *testing.T) {
 	}
 }
 
-func TestUpdateService_ReachablePageWithoutDownloadsIsARemoval(t *testing.T) {
+// A public page that loads but lists no downloads does not mark the game
+// removed: it can hide paid uploads, and a signed-out page check never marks
+// it (decisions D5 and D8). A missing page or a complete API listing does.
+func TestUpdateService_ReachablePageWithoutDownloadsIsNotARemoval(t *testing.T) {
 	srv := freeGameServer(t, http.StatusOK, nil)
 	defer srv.Close()
 
 	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb"}, false)
-	if !inv.IsRemoved(gameURL) {
-		t.Error("IsRemoved: want true when the game page offers no downloads")
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: a public page without downloads marked the game removed")
 	}
 }
 
-// A deleted upload is superseded only by a new upload of the same kind. A
-// page that still lists other platforms' builds does not hide the removal
-// (review finding R18-3).
+// A deleted upload is superseded only by a new upload of the same kind, so
+// other platforms' builds still listed are no update. Signed in, a complete
+// listing that no longer has the installed upload and offers nothing of its
+// kind proves the removal (review finding R18-3, decision D8).
 func TestUpdateService_DeletedUploadWithoutAReplacementIsARemoval(t *testing.T) {
-	srv := freeGameServer(t, http.StatusOK, []string{"game_win.zip", "game_mac.zip"})
-	defer srv.Close()
-
-	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb", "game_win.zip", "game_mac.zip"}, false)
+	installed := inventory.DownloadedFile{Filename: "game.gb", OriginalUpload: "game.gb", UploadID: "1"}
+	inv, gameURL := runSignedInCheckFor(t, installed,
+		`{"uploads":[{"id":1,"filename":"game.gb"},{"id":2,"filename":"game_win.zip","traits":["p_windows"]},
+			{"id":3,"filename":"game_mac.zip","traits":["p_osx"]}]}`,
+		`{"uploads":[{"id":2,"filename":"game_win.zip","traits":["p_windows"]},{"id":3,"filename":"game_mac.zip","traits":["p_osx"]}]}`)
 	if !inv.IsRemoved(gameURL) {
 		t.Error("IsRemoved: the downloaded upload is gone and nothing replaces it")
 	}
@@ -530,13 +544,53 @@ func TestUpdateService_DeletedUploadWithoutAReplacementIsARemoval(t *testing.T) 
 	}
 }
 
+// The signed-out counterpart: the public page cannot prove the deletion, as it
+// can hide paid uploads, so the game is not marked removed (decision D8), and
+// the other platforms' builds are still no update (review finding R18-3).
+func TestUpdateService_PublicPageCannotProveADeletedUpload(t *testing.T) {
+	srv := freeGameServer(t, http.StatusOK, []string{"game_win.zip", "game_mac.zip"})
+	defer srv.Close()
+
+	inv, gameURL := runFreeGameCheck(t, srv, []string{"game.gb", "game_win.zip", "game_mac.zip"}, false)
+	if inv.HasPendingUpdates(gameURL) {
+		t.Error("HasPendingUpdates: other platforms' builds were offered as an update")
+	}
+	if inv.IsRemoved(gameURL) {
+		t.Error("IsRemoved: a public page that omits the upload marked the game removed")
+	}
+}
+
 // The replacement is flagged even when the first check after the download
-// already sees only the new upload.
+// already sees only the new upload: the install seeds the listing it was
+// chosen from, so that check compares instead of starting a baseline
+// (review finding R25-3).
 func TestUpdateService_SupersededUploadIsAnUpdateOnTheFirstCheck(t *testing.T) {
 	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
 	defer srv.Close()
 
-	inv, gameURL := runFreeGameCheck(t, srv, nil, false)
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "game.gb")
+	os.WriteFile(romPath, []byte("ROM"), 0644)
+	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
+	os.MkdirAll(filepath.Dir(artPath), 0755)
+	os.WriteFile(artPath, minimalPNG(), 0644)
+
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := srv.URL + "/game"
+	inv.Add(gameURL, inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
+		inventory.DownloadedFile{Filename: "game.gb", OriginalUpload: "game.gb", DestPath: romPath, DownloadedAt: time.Now()})
+	inv.CommitUploadInstall(gameURL, inventory.UploadInstall{Filename: "game.gb", Written: []string{romPath},
+		Listing: []inventory.UpstreamFile{{Filename: "game.gb"}}, ListingSource: inventory.SourcePage})
+	laterLaunch(inv, gameURL)
+	inv.Save(invPath)
+
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, itchio.NewClientWithBase(srv.URL), nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
 	if inv.IsRemoved(gameURL) {
 		t.Error("IsRemoved: a superseded upload marked the game removed")
 	}
@@ -566,6 +620,7 @@ func TestUpdateService_DownloadedReplacementKeepsTheGameReachable(t *testing.T) 
 			inventory.DownloadedFile{Filename: name, DestPath: path, DownloadedAt: time.Now()})
 	}
 	inv.SetUpstreamFiles(gameURL, []inventory.UpstreamFile{{Filename: "game-v2.gb", UploadID: "101", SeenAt: time.Now().Add(-time.Hour)}})
+	laterLaunch(inv, gameURL)
 	inv.Save(invPath)
 
 	done := make(chan struct{})
@@ -579,24 +634,55 @@ func TestUpdateService_DownloadedReplacementKeepsTheGameReachable(t *testing.T) 
 }
 
 // An archive is replaced by an archive; a ROM of another kind does not
-// replace it.
+// replace it. When only the ROM is left, a complete listing signed in proves
+// the archive removed; a signed-out page check never marks it (decision D8).
 func TestUpdateService_ArchiveIsSupersededOnlyByAnArchive(t *testing.T) {
-	installed := inventory.DownloadedFile{Filename: "Game.gb", SourceArchive: "game-1.0.zip"}
-	srv := freeGameServer(t, http.StatusOK, []string{"game-1.1.zip"})
-	inv, gameURL := runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip"}, false)
-	srv.Close()
-	if inv.IsRemoved(gameURL) || !inv.HasPendingUpdates(gameURL) {
-		t.Errorf("new archive: removed=%v update=%v, want an update", inv.IsRemoved(gameURL), inv.HasPendingUpdates(gameURL))
-	}
+	t.Run("signed out", func(t *testing.T) {
+		installed := inventory.DownloadedFile{Filename: "Game.gb", SourceArchive: "game-1.0.zip"}
+		srv := freeGameServer(t, http.StatusOK, []string{"game-1.1.zip"})
+		inv, gameURL := runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip"}, false)
+		srv.Close()
+		if inv.IsRemoved(gameURL) || !inv.HasPendingUpdates(gameURL) {
+			t.Errorf("new archive: removed=%v update=%v, want an update", inv.IsRemoved(gameURL), inv.HasPendingUpdates(gameURL))
+		}
 
-	srv = freeGameServer(t, http.StatusOK, []string{"game.nes"})
-	inv, gameURL = runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip", "game.nes"}, false)
-	srv.Close()
-	if !inv.IsRemoved(gameURL) {
-		t.Error("IsRemoved: an archive was treated as replaced by a ROM upload")
-	}
+		// The page now lists only a ROM upload. It does not replace the
+		// archive, so it is no update, and the page cannot prove a removal.
+		srv = freeGameServer(t, http.StatusOK, []string{"game.nes"})
+		inv, gameURL = runFreeGameCheckFor(t, srv, installed, []string{"game-1.0.zip", "game.nes"}, false)
+		srv.Close()
+		if inv.HasPendingUpdates(gameURL) {
+			t.Error("HasPendingUpdates: an archive was treated as replaced by a ROM upload")
+		}
+		if inv.IsRemoved(gameURL) {
+			t.Error("IsRemoved: a public page that omits the archive marked the game removed")
+		}
+	})
+	t.Run("signed in", func(t *testing.T) {
+		installed := inventory.DownloadedFile{Filename: "Game.gb", OriginalUpload: "game-1.0.zip",
+			SourceArchive: "game-1.0.zip", UploadID: "1"}
+		inv, gameURL := runSignedInCheckFor(t, installed,
+			`{"uploads":[{"id":1,"filename":"game-1.0.zip"}]}`,
+			`{"uploads":[{"id":4,"filename":"game-1.1.zip"}]}`)
+		if inv.IsRemoved(gameURL) || !inv.HasPendingUpdates(gameURL) {
+			t.Errorf("new archive: removed=%v update=%v, want an update", inv.IsRemoved(gameURL), inv.HasPendingUpdates(gameURL))
+		}
+
+		// The complete listing now has only a ROM upload. It does not
+		// replace the archive, so it is no update, and the archive is gone.
+		inv, gameURL = runSignedInCheckFor(t, installed,
+			`{"uploads":[{"id":1,"filename":"game-1.0.zip"},{"id":2,"filename":"game.nes"}]}`,
+			`{"uploads":[{"id":2,"filename":"game.nes"}]}`)
+		if inv.HasPendingUpdates(gameURL) {
+			t.Errorf("HasPendingUpdates: an archive was treated as replaced by a ROM upload: %+v", inv.PendingUpdateFiles(gameURL))
+		}
+		if !inv.IsRemoved(gameURL) {
+			t.Error("IsRemoved: a complete listing without the archive or another archive kept the game")
+		}
+	})
 }
 
+// A server error or a blocked page leaves the removal state as it was.
 func TestUpdateService_TransientFailuresPreserveRemovalState(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
 		for _, removed := range []bool{false, true} {
@@ -607,6 +693,46 @@ func TestUpdateService_TransientFailuresPreserveRemovalState(t *testing.T) {
 				t.Errorf("HTTP %d: IsRemoved = %v, want the prior %v", status, !removed, removed)
 			}
 		}
+	}
+}
+
+// The downloaded upload replaced by a new one is an update, also when the
+// game was marked removed before.
+func TestUpdateService_KeepsReachableWhenDownloadedFileIsSuperseded(t *testing.T) {
+	// Upstream now only has game-v2.gb; the originally downloaded game.gb is gone.
+	srv := freeGameServer(t, http.StatusOK, []string{"game-v2.gb"})
+	defer srv.Close()
+
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	romPath := filepath.Join(dir, "game.gb")
+	os.WriteFile(romPath, []byte("ROM"), 0644)
+	artPath := inventory.CoverArtPath(srv.URL+"/cover.png", romPath)
+	os.MkdirAll(filepath.Dir(artPath), 0755)
+	os.WriteFile(artPath, minimalPNG(), 0644)
+
+	invPath := filepath.Join(dir, "inventory.json")
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	inv.Add(srv.URL+"/game",
+		inventory.Entry{Title: "G", IsFree: true, CoverURL: srv.URL + "/cover.png"},
+		inventory.DownloadedFile{Filename: "game.gb", DestPath: romPath, DownloadedAt: time.Now()})
+	inv.SetUpstreamFiles(srv.URL+"/game", []inventory.UpstreamFile{{Filename: "game.gb"}})
+	laterLaunch(inv, srv.URL+"/game")
+	inv.MarkRemoved(srv.URL + "/game")
+	inv.Save(invPath)
+
+	client := itchio.NewClientWithBase(srv.URL)
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+
+	if inv.IsRemoved(srv.URL + "/game") {
+		t.Error("IsRemoved: want false when another upload supersedes the downloaded file")
+	}
+	if !inv.HasPendingUpdates(srv.URL + "/game") {
+		t.Error("HasPendingUpdates: the replacement upload should remain an update")
 	}
 }
 
@@ -681,6 +807,7 @@ func TestUpdateService_DismissedUpdateDoesNotReappearOnRestart(t *testing.T) {
 
 	// Developer publishes game-v2.gb.
 	filenames = append(filenames, "game-v2.gb")
+	laterLaunch(inv, gameURL)
 
 	// Second check: game-v2.gb detected as genuinely new.
 	done2 := make(chan struct{})
@@ -703,6 +830,7 @@ func TestUpdateService_DismissedUpdateDoesNotReappearOnRestart(t *testing.T) {
 
 	// Simulate app restart: reload inventory from disk, run third check.
 	inv3, _ := inventory.Load(invPath)
+	laterLaunch(inv3, gameURL)
 	done3 := make(chan struct{})
 	svc3 := inventory.NewUpdateService(inv3, invPath, client, nil)
 	svc3.Start(func() { close(done3) })
@@ -755,5 +883,61 @@ func TestUpdateService_MatchesInstalledFileByUploadID(t *testing.T) {
 
 	if inv.IsRemoved(gameURL) {
 		t.Error("IsRemoved: the installed upload is still offered under another name")
+	}
+}
+
+func TestUpdateServiceRepairsArtworkAfterMetadataRateLimit(t *testing.T) {
+	pngData := minimalPNG()
+	var mu sync.Mutex
+	metadataRequests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/cover.png":
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(pngData)
+		case strings.HasSuffix(r.URL.Path, "/data.json"):
+			mu.Lock()
+			metadataRequests++
+			mu.Unlock()
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	configureUpdaterPaths(t, dir)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	var roms []string
+	for _, name := range []string{"one", "two", "three"} {
+		rom := filepath.Join(dir, name+".gb")
+		if err := os.WriteFile(rom, []byte("ROM"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		roms = append(roms, rom)
+		inv.Add(srv.URL+"/"+name, inventory.Entry{Title: name, CoverURL: srv.URL + "/cover.png"},
+			inventory.DownloadedFile{Filename: name + ".gb", DestPath: rom})
+	}
+	invPath := filepath.Join(dir, "inventory.json")
+	client := itchio.NewClientWithBase(srv.URL)
+	client.HTTPClient().Transport = http.DefaultTransport // deterministic 429; transport retries have their own tests
+	client.SetAuthToken("A")
+	done := make(chan struct{})
+	svc := inventory.NewUpdateService(inv, invPath, client, nil)
+	svc.Start(func() { close(done) })
+	<-done
+	svc.Stop()
+	for _, rom := range roms {
+		if art := inventory.CanonicalArtworkPath(rom); art == "" {
+			t.Fatalf("no artwork path for %s", rom)
+		} else if _, err := os.Stat(art); err != nil {
+			t.Errorf("artwork for %s was not repaired after a metadata rate limit: %v", filepath.Base(rom), err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if metadataRequests != 1 {
+		t.Fatalf("made %d metadata requests, want the rest deferred after the first 429", metadataRequests)
 	}
 }

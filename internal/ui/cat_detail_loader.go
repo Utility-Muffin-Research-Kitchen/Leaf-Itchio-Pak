@@ -57,6 +57,17 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		}
 		detail := result.detail
 		loader.detail = detail
+		if data := detail.Data; data != nil {
+			// The current price decides IsFree. The page's action follows
+			// from it and the account when CatalogController.ApplyDetailAccess
+			// runs before each draw.
+			loader.game.IsFree = data.Pricing() != itchio.PricingPaid
+			model.Game.IsFree = loader.game.IsFree
+			if data.CoverImage != "" {
+				loader.game.CoverURL = data.CoverImage
+			}
+			model.Game.PriceLabel = detailPriceLabel(data)
+		}
 		images := dedupeStrings(append([]string{loader.game.CoverURL}, detail.ScreenshotURLs...))
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
 		// Catalogue and page tags together, so a tag that warns on the
@@ -83,9 +94,42 @@ func unavailableDetail(err error) string {
 	}
 }
 
+// detailPriceLabel is the price shown on the detail page. Labels stay short:
+// the subtitle line also carries the author and platform. Ownership is not
+// part of it: DetailGame.PriceText shows "Owned" from the current account.
+func detailPriceLabel(data *itchio.GameData) string {
+	onSale := data.OriginalPrice != "" && data.OriginalPrice != data.Price
+	switch data.Pricing() {
+	case itchio.PricingPaid:
+		switch {
+		case onSale:
+			return data.Price + " (was " + data.OriginalPrice + ")"
+		case data.SuggestedPrice != "":
+			// A suggestion above a non-zero price means you pay at least it.
+			return data.Price + " or more"
+		}
+		return data.Price
+	case itchio.PricingNameYourOwnPrice:
+		switch {
+		case onSale:
+			return "Free (was " + data.OriginalPrice + ")"
+		case data.SuggestedPrice != "":
+			return "Free / suggested " + data.SuggestedPrice
+		}
+		return "Free / name your price"
+	}
+	if onSale {
+		return "Free (was " + data.OriginalPrice + ")"
+	}
+	return "Free"
+}
+
 // Detail returns the fully scraped detail after Sync publishes a ready model.
 // It is only read and written by the Cat owner thread.
 func (loader *CatDetailLoader) Detail() *itchio.GameDetail { return loader.detail }
+
+// Game preserves inventory identity while refreshing mutable public fields.
+func (loader *CatDetailLoader) Game() itchio.Game { return loader.game }
 
 func dedupeStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))

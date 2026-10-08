@@ -63,12 +63,30 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
-	case "detail", "warning", "detail-unavailable", "detail-unavailable-downloaded":
+	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale", "warning",
+		"detail-unavailable", "detail-unavailable-downloaded":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
 			Platform: "GBC", IsFree: true, CanDownload: true,
-			Downloaded: config.Screen == "detail" || config.Screen == "detail-unavailable-downloaded",
+			Downloaded: config.Screen == "detail" || config.Screen == "detail-owned" ||
+				config.Screen == "detail-unavailable-downloaded",
 		})
+		switch config.Screen {
+		case "detail-price":
+			model.Game.IsFree = false
+			model.Game.CanDownload = false
+			model.Game.PriceLabel = "€2,50 (was €5,00)"
+		case "detail-donation":
+			model.Game.PriceLabel = "Free / suggested $3.00"
+		case "detail-owned":
+			model.Game.IsFree, model.Game.Owned = false, true
+			model.Game.PriceLabel = "$5.00"
+		case "detail-minimum":
+			model.Game.IsFree = false
+			model.Game.PriceLabel = "$2.00 or more"
+		case "detail-free-sale":
+			model.Game.PriceLabel = "Free (was $5.00)"
+		}
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
 			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")

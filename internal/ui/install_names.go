@@ -30,11 +30,11 @@ type installNamer struct {
 	gameURL string
 	title   string
 	upload  string
-	// uploadID and offered come from the listing the user chose from;
-	// offered is nil when that listing is unknown, and then another
-	// upload's file is never treated as superseded.
+	// uploadID and listing come from the list the user chose from; listing
+	// is nil when that list is unknown, and then another upload's file is
+	// never treated as superseded.
 	uploadID string
-	offered  []roms.Offer
+	listing  *roms.UploadListing
 	// anyUpload accepts every file of this game as replaceable. Music
 	// records do not say which upload they came from.
 	anyUpload bool
@@ -48,7 +48,7 @@ func newInstallNamer(inv *inventory.Inventory, game itchio.Game, upload string, 
 
 // withListing records the chosen upload's ID and the listing it came from.
 func (n *installNamer) withListing(upload roms.Upload) *installNamer {
-	n.uploadID, n.offered = upload.UploadID, upload.Offered
+	n.uploadID, n.listing = upload.UploadID, upload.Listing
 	return n
 }
 
@@ -60,13 +60,13 @@ func (n *installNamer) sameUpload(file inventory.DownloadedFile) bool {
 // superseded reports whether the listing no longer offers file's upload, so
 // installing this upload updates that build rather than adding another.
 func (n *installNamer) superseded(file inventory.DownloadedFile) bool {
-	if n.offered == nil {
+	if n.listing == nil {
 		return false
 	}
 	name := file.UploadName()
 	stem := strings.TrimSuffix(name, roms.ROMExt(name))
-	for _, offer := range n.offered {
-		if file.UploadID != "" && offer.UploadID == file.UploadID || offer.Filename == name || offer.Filename == stem {
+	for _, listed := range n.listing.Uploads {
+		if file.UploadID != "" && listed.UploadID == file.UploadID || listed.Filename == name || listed.Filename == stem {
 			return false
 		}
 	}

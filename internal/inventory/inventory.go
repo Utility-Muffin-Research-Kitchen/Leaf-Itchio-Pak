@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -59,19 +61,20 @@ func romFileExt(filename string) string {
 }
 
 type DownloadedFile struct {
-	UpdatedAt       time.Time `json:"updated_at,omitempty"`
-	ContentKind     string    `json:"content_kind"`
-	SourceID        string    `json:"source_id,omitempty"`
-	RelativePath    string    `json:"relative_path,omitempty"`
-	CanonicalSystem string    `json:"canonical_system,omitempty"`
-	OriginalUpload  string    `json:"original_upload,omitempty"`
-	InstalledName   string    `json:"installed_name,omitempty"`
-	UploadID        string    `json:"upload_id,omitempty"`
-	PurchaseID      string    `json:"purchase_id,omitempty"`
-	ContentHash     string    `json:"content_hash,omitempty"`
-	ArtworkPath     string    `json:"artwork_path,omitempty"`
-	ArtworkHash     string    `json:"artwork_hash,omitempty"`
-	ArtworkCreated  bool      `json:"artwork_created,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at,omitempty"`
+	ContentKind       string    `json:"content_kind"`
+	SourceID          string    `json:"source_id,omitempty"`
+	RelativePath      string    `json:"relative_path,omitempty"`
+	CanonicalSystem   string    `json:"canonical_system,omitempty"`
+	OriginalUpload    string    `json:"original_upload,omitempty"`
+	InstalledName     string    `json:"installed_name,omitempty"`
+	UploadID          string    `json:"upload_id,omitempty"`
+	UploadFingerprint string    `json:"upload_fingerprint,omitempty"`
+	PurchaseID        string    `json:"purchase_id,omitempty"`
+	ContentHash       string    `json:"content_hash,omitempty"`
+	ArtworkPath       string    `json:"artwork_path,omitempty"`
+	ArtworkHash       string    `json:"artwork_hash,omitempty"`
+	ArtworkCreated    bool      `json:"artwork_created,omitempty"`
 
 	// Legacy compatibility fields remain available to the existing UI while its
 	// callers move to source-relative Leaf paths during later port phases.
@@ -119,11 +122,32 @@ type FileOwner struct {
 }
 
 type UpstreamFile struct {
-	Filename string    `json:"filename"`
-	UploadID string    `json:"upload_id"`
-	SeenAt   time.Time `json:"seen_at"`
-	IsNew    bool      `json:"is_new,omitempty"`
+	Filename    string    `json:"filename"`
+	UploadID    string    `json:"upload_id"`
+	SeenAt      time.Time `json:"seen_at"`
+	IsNew       bool      `json:"is_new,omitempty"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	Changed     bool      `json:"changed,omitempty"`
+	// PreviousUploadIDs lists the IDs this file had before the developer
+	// replaced it under the same name. A file installed from any of them
+	// still counts as installed from this upload.
+	PreviousUploadIDs []string `json:"previous_upload_ids,omitempty"`
+	// DesktopOrWebOnly marks an upload that only ships desktop or web
+	// builds. A new one never raises an update badge.
+	DesktopOrWebOnly bool `json:"desktop_or_web_only,omitempty"`
+	// Soundtrack marks an upload itch.io lists as a soundtrack. It is music
+	// whatever its file name, so it never replaces a ROM archive.
+	Soundtrack bool `json:"soundtrack,omitempty"`
 }
+
+const (
+	SourcePage = "page"
+	SourceAPI  = "api"
+
+	RemovedByPage    = "page"
+	RemovedByListing = "listing"
+)
 
 type Entry struct {
 	GameID                string           `json:"game_id,omitempty"`
@@ -135,11 +159,42 @@ type Entry struct {
 	VerifiedAt            time.Time        `json:"verified_at,omitempty"`
 	IsFree                bool             `json:"is_free,omitempty"`
 	KnownUpstreamFiles    []UpstreamFile   `json:"known_upstream_files,omitempty"`
+	UpstreamSource        string           `json:"upstream_source,omitempty"`
 	UpdateCheckedAt       time.Time        `json:"update_checked_at,omitempty"`
 	UpdateDismissedAt     time.Time        `json:"update_dismissed_at,omitempty"`
 	GameRemovedAt         time.Time        `json:"game_removed_at,omitempty"`
 	RemovalDismissedAt    time.Time        `json:"removal_dismissed_at,omitempty"`
 	UnifiedNamingDisabled bool             `json:"unified_naming_disabled,omitempty"`
+	// RemovedBy records why GameRemovedAt is set: RemovedByPage when the game
+	// page was gone, RemovedByListing when a complete upload list no longer
+	// offered an installed upload or anything to replace it. A page that
+	// loads cannot clear a listing removal on its own.
+	RemovedBy string `json:"removed_by,omitempty"`
+	// AcknowledgedUploads maps an upload ID to the fingerprint of its last
+	// complete install ("" for a download without one). Update checks compare
+	// the listed version against it rather than against every file ever
+	// recorded for the upload.
+	AcknowledgedUploads map[string]string `json:"acknowledged_uploads,omitempty"`
+}
+
+// UploadInstall describes one upload whose install finished.
+type UploadInstall struct {
+	UploadID    string
+	Filename    string // the upload's filename; matches records without an ID
+	Fingerprint string // "" for a download without version metadata
+	// Written lists every DestPath this install wrote or found identical.
+	Written []string
+	// Replaces reports whether this install would have rewritten an older
+	// file of the same upload had that file still been in it. A partial
+	// install, such as one build picked from an archive, returns false for
+	// files it did not choose. nil means the install replaces every file.
+	Replaces func(DownloadedFile) bool
+	// Listing is the list of uploads the install was chosen from, and
+	// ListingSource where it came from (SourceAPI or SourcePage). When the
+	// game has no update baseline from that source yet, the listing becomes
+	// one, so the first background check compares instead of starting over.
+	Listing       []UpstreamFile
+	ListingSource string
 }
 
 type Inventory struct {
@@ -369,6 +424,7 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 		existing.Author = e.Author
 		existing.CoverURL = e.CoverURL
 	}
+	replaced := false
 	for i, f := range existing.Files {
 		if f.DestPath == file.DestPath || f.Filename == file.Filename {
 			if file.ArtworkPath == "" {
@@ -376,11 +432,78 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 				file.ArtworkHash = f.ArtworkHash
 				file.ArtworkCreated = f.ArtworkCreated
 			}
-			existing.Files[i] = file // overwrite in place (re-download or path change)
-			return
+			existing.Files[i] = file
+			replaced = true
+			break
 		}
 	}
-	existing.Files = append(existing.Files, file)
+	if !replaced {
+		existing.Files = append(existing.Files, file)
+	}
+	// Recording one file does not acknowledge an update: the install may
+	// still fail. CommitUploadInstall does once the whole upload is in.
+}
+
+// CommitUploadInstall acknowledges one upload after every file of its install
+// is recorded. It clears the upload's update unless a newer version was seen
+// while the download ran, and marks files of the same upload that the
+// install did not write as left over from an older version, as MarkLeftOver
+// does. Those files are never deleted here.
+func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall) {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	e, ok := inv.Entries[gameURL]
+	if !ok {
+		return
+	}
+	if install.ListingSource != "" && install.Listing != nil &&
+		(e.UpdateCheckedAt.IsZero() || e.UpstreamSource != install.ListingSource) {
+		inv.setUpstreamFilesLocked(e, install.ListingSource, install.Listing)
+	}
+	identity := UpstreamFile{Filename: install.Filename, UploadID: install.UploadID}
+	if install.UploadID != "" {
+		if e.AcknowledgedUploads == nil {
+			e.AcknowledgedUploads = make(map[string]string)
+		}
+		e.AcknowledgedUploads[install.UploadID] = install.Fingerprint
+	}
+	for index := range e.KnownUpstreamFiles {
+		upload := &e.KnownUpstreamFiles[index]
+		if !sameUpload(identity, *upload) {
+			continue
+		}
+		// An install that started before a newer version was listed does
+		// not acknowledge that version.
+		if newer, conclusive := fingerprintChanged(install.Fingerprint, upload.Fingerprint); !(newer && conclusive) {
+			upload.Changed, upload.IsNew = false, false
+		}
+	}
+
+	// A file of this upload the install wrote is current. One it did not
+	// write is left over when it is older, or when the install would have
+	// rewritten it; another build the install did not pick keeps its mark.
+	written := leftOverKeys(install.Written)
+	belongs := func(file DownloadedFile) bool {
+		if file.DestPath == "" || !fileMatchesUpload(file, identity) {
+			return false
+		}
+		if written[leftOverKey(file.DestPath)] {
+			return true
+		}
+		older, conclusive := fingerprintChanged(file.UploadFingerprint, install.Fingerprint)
+		return (older && conclusive) || install.Replaces == nil || install.Replaces(file)
+	}
+	for _, file := range markLeftOverLocked(e, belongs, written) {
+		logger.Info("inventory: %s is left over from an older version of %s", filepath.Base(file.DestPath), install.Filename)
+	}
+}
+
+// sameUpload matches by upload ID when both sides have one, else by name.
+func sameUpload(a, b UpstreamFile) bool {
+	if a.UploadID != "" && b.UploadID != "" {
+		return a.UploadID == b.UploadID
+	}
+	return fileMatchesUpload(DownloadedFile{OriginalUpload: a.Filename}, b)
 }
 
 // MarkLeftOver records which files of one upload a reinstall left behind.
@@ -390,28 +513,47 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 // it does. Paths compare case-insensitively, as FAT32 does. It returns the
 // flagged files. Nothing is deleted.
 func (inv *Inventory) MarkLeftOver(gameURL, upload, contentKind string, written []string) []DownloadedFile {
-	keep := make(map[string]bool, len(written))
-	for _, path := range written {
-		keep[strings.ToLower(filepath.Clean(path))] = true
-	}
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
 	entry, ok := inv.Entries[gameURL]
 	if !ok || upload == "" {
 		return nil
 	}
+	return markLeftOverLocked(entry, func(file DownloadedFile) bool {
+		return file.UploadName() == upload && (contentKind == "" || file.contentKind() == contentKind)
+	}, leftOverKeys(written))
+}
+
+// markLeftOverLocked flags each file of entry that belongs to a committed
+// install as LeftOver when written does not hold its path, and clears the
+// flag when it does. Files that do not belong keep their flag. It returns
+// the flagged files.
+func markLeftOverLocked(entry *Entry, belongs func(DownloadedFile) bool, written map[string]bool) []DownloadedFile {
 	var flagged []DownloadedFile
 	for index := range entry.Files {
 		file := &entry.Files[index]
-		if file.UploadName() != upload || contentKind != "" && file.contentKind() != contentKind {
+		if !belongs(*file) {
 			continue
 		}
-		file.LeftOver = !keep[strings.ToLower(filepath.Clean(file.DestPath))]
+		file.LeftOver = !written[leftOverKey(file.DestPath)]
 		if file.LeftOver {
 			flagged = append(flagged, *file)
 		}
 	}
 	return flagged
+}
+
+// leftOverKey compares paths case-insensitively, as FAT32 does.
+func leftOverKey(path string) string {
+	return strings.ToLower(filepath.Clean(path))
+}
+
+func leftOverKeys(paths []string) map[string]bool {
+	keys := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		keys[leftOverKey(path)] = true
+	}
+	return keys
 }
 
 // Remove deletes the entry for gameURL.
@@ -431,6 +573,8 @@ func (inv *Inventory) Lookup(gameURL string) (Entry, bool) {
 	}
 	snap := *e
 	snap.Files = append([]DownloadedFile(nil), e.Files...)
+	snap.KnownUpstreamFiles = cloneUpstreamFiles(e.KnownUpstreamFiles)
+	snap.AcknowledgedUploads = maps.Clone(e.AcknowledgedUploads)
 	return snap, true
 }
 
@@ -650,43 +794,116 @@ func sourceUnavailableForFile(file DownloadedFile, sources leaf.SourceList) bool
 	return !ok || !source.Available()
 }
 
-// HasPendingUpdates returns true when any UpstreamFile for gameURL is marked
-// as a new upload (appeared after the first check), has a filename not in the
-// downloaded set, and was seen after UpdateDismissedAt.
-func (inv *Inventory) HasPendingUpdates(gameURL string) bool {
-	inv.mu.Lock()
-	defer inv.mu.Unlock()
-	e, ok := inv.Entries[gameURL]
-	if !ok {
-		return false
+// fileMatchesUpload prefers stable IDs; name fallback supports legacy records
+// and public pages, including original archives and format-picker suffixes.
+func fileMatchesUpload(file DownloadedFile, upload UpstreamFile) bool {
+	if file.UploadID != "" && upload.UploadID != "" {
+		return file.UploadID == upload.UploadID
 	}
-	downloaded := make(map[string]bool, len(e.Files)*3)
-	for _, f := range e.Files {
-		downloaded[f.Filename] = true
-		// Format-picker appends an extension the upload name doesn't carry (e.g.
-		// "Game Boy ROM.gbc" stored vs "Game Boy ROM" upstream). Also index the
-		// stem so the already-downloaded file isn't treated as a new upload.
-		if stem := strings.TrimSuffix(f.Filename, romFileExt(f.Filename)); stem != f.Filename {
-			downloaded[stem] = true
+	for _, name := range []string{file.OriginalUpload, file.SourceArchive, file.Filename} {
+		if name == "" {
+			continue
 		}
-		// For files extracted from archives (ZIP/7z), also index the source archive
-		// filename so an upstream re-upload of the same archive is correctly detected
-		// rather than treated as a missing file.
-		if f.SourceArchive != "" {
-			downloaded[f.SourceArchive] = true
-			if stem := strings.TrimSuffix(f.SourceArchive, filepath.Ext(f.SourceArchive)); stem != f.SourceArchive {
-				downloaded[stem] = true
-			}
-		}
-	}
-	for _, u := range e.KnownUpstreamFiles {
-		// Only flag genuinely new uploads (IsNew = true means appeared after first check).
-		// Files discovered on first check were present when the user downloaded the game.
-		if u.IsNew && !downloaded[u.Filename] && u.SeenAt.After(e.UpdateDismissedAt) {
+		stem := strings.TrimSuffix(name, romFileExt(name))
+		if name == upload.Filename || stem == upload.Filename ||
+			(upload.DisplayName != "" && (name == upload.DisplayName || stem == upload.DisplayName)) {
 			return true
 		}
 	}
 	return false
+}
+
+// fingerprintChanged compares the fingerprints of two listings of one upload.
+// conclusive is false when they cannot be compared: one is missing, or only
+// the form changed, as when itch.io lists an md5 for an upload first seen
+// with a timestamp. A timestamp also moves on metadata-only edits, so two
+// timestamp fingerprints differ only when the size differs; a build ID
+// appearing where there was none means a pushed build.
+func fingerprintChanged(old, current string) (changed, conclusive bool) {
+	if old == "" || current == "" {
+		return false, false
+	}
+	if old == current {
+		return false, true
+	}
+	oldForm, oldValue, _ := strings.Cut(old, ":")
+	currentForm, currentValue, _ := strings.Cut(current, ":")
+	switch {
+	case oldForm == "upd" && currentForm == "upd":
+		return timestampFingerprintSize(oldValue) != timestampFingerprintSize(currentValue), true
+	case oldForm == currentForm:
+		return true, true
+	case oldForm == "upd" && currentForm == "build":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func timestampFingerprintSize(value string) string {
+	if index := strings.LastIndexByte(value, '/'); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
+// HasPendingUpdates reports new uploads and known uploads whose content changed.
+func (inv *Inventory) HasPendingUpdates(gameURL string) bool {
+	return len(inv.PendingUpdateFiles(gameURL)) > 0
+}
+
+// PendingUpdateFiles returns a snapshot suitable for explaining update badges.
+func (inv *Inventory) PendingUpdateFiles(gameURL string) []UpstreamFile {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	e, ok := inv.Entries[gameURL]
+	if !ok {
+		return nil
+	}
+	var pending []UpstreamFile
+	for _, upload := range e.KnownUpstreamFiles {
+		if !upload.SeenAt.After(e.UpdateDismissedAt) {
+			continue
+		}
+		installed := false
+		for _, file := range e.Files {
+			if fileInstalledFrom(file, upload) {
+				installed = true
+				break
+			}
+		}
+		// A change matters only to an upload you installed; a new desktop or
+		// web build never does.
+		if (upload.Changed && installed) || (upload.IsNew && !installed && !upload.DesktopOrWebOnly) {
+			pending = append(pending, cloneUpstreamFile(upload))
+		}
+	}
+	return pending
+}
+
+// fileInstalledFrom also accepts a file installed from an upload ID that the
+// developer has since replaced under the same name.
+func fileInstalledFrom(file DownloadedFile, upload UpstreamFile) bool {
+	if fileMatchesUpload(file, upload) {
+		return true
+	}
+	return file.UploadID != "" && slices.Contains(upload.PreviousUploadIDs, file.UploadID)
+}
+
+func cloneUpstreamFile(file UpstreamFile) UpstreamFile {
+	file.PreviousUploadIDs = slices.Clone(file.PreviousUploadIDs)
+	return file
+}
+
+func cloneUpstreamFiles(files []UpstreamFile) []UpstreamFile {
+	if files == nil {
+		return nil
+	}
+	out := make([]UpstreamFile, len(files))
+	for index, file := range files {
+		out[index] = cloneUpstreamFile(file)
+	}
+	return out
 }
 
 // IsRemoved returns true when the game was detected as 404 upstream and the
@@ -748,59 +965,305 @@ func (inv *Inventory) MarkReachable(gameURL string) {
 	if !ok {
 		return
 	}
-	e.GameRemovedAt = time.Time{}
-	e.RemovalDismissedAt = time.Time{}
+	clearRemovalLocked(e)
 }
 
-// SetUpstreamFiles replaces KnownUpstreamFiles for gameURL and sets
-// UpdateCheckedAt to now. Call this after each successful file-list scrape.
-//
-// SeenAt is PRESERVED for files that were already known so that a dismissed
-// update is not re-triggered on the next check cycle. Only genuinely new files
-// (not previously in KnownUpstreamFiles) receive SeenAt = now.
+// SetUpstreamFiles records a public-page list; retained for callers that do
+// not have API metadata.
 func (inv *Inventory) SetUpstreamFiles(gameURL string, files []UpstreamFile) {
+	inv.SetUpstreamFilesFrom(gameURL, SourcePage, files)
+}
+
+// SetUpstreamFilesFrom compares listings only within the same source. Legacy
+// signed download pages, public pages and the API expose different files, so
+// switching sources establishes a baseline without inventing updates.
+func (inv *Inventory) SetUpstreamFilesFrom(gameURL, source string, files []UpstreamFile) {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
 	e, ok := inv.Entries[gameURL]
 	if !ok {
 		return
 	}
-	// isFirstCheck: no previous update run — files were already present when the
-	// user downloaded the game and are not genuine new uploads.
-	isFirstCheck := e.UpdateCheckedAt.IsZero()
-	type priorInfo struct {
-		seenAt time.Time
-		isNew  bool
+	inv.setUpstreamFilesLocked(e, source, files)
+}
+
+func (inv *Inventory) setUpstreamFilesLocked(e *Entry, source string, files []UpstreamFile) {
+	// The first listing, or the first from another source, is a baseline:
+	// the sources expose different files and metadata. An upload matched by
+	// ID is the same upload in either, so it is still compared.
+	firstCheck := e.UpdateCheckedAt.IsZero()
+	baseline := firstCheck || e.UpstreamSource != source
+	byID := make(map[string]int, len(e.KnownUpstreamFiles))
+	byName := make(map[string]int, len(e.KnownUpstreamFiles)*2)
+	for index, file := range e.KnownUpstreamFiles {
+		if file.UploadID != "" {
+			byID[file.UploadID] = index
+		}
+		byName[file.Filename] = index
+		if file.DisplayName != "" {
+			byName[file.DisplayName] = index
+		}
 	}
-	prior := make(map[string]priorInfo, len(e.KnownUpstreamFiles))
-	for _, f := range e.KnownUpstreamFiles {
-		prior[f.Filename] = priorInfo{seenAt: f.SeenAt, isNew: f.IsNew}
+	now := time.Now()
+	files = cloneUpstreamFiles(files)
+	listedIDs := make(map[string]bool, len(files))
+	for _, file := range files {
+		if file.UploadID != "" {
+			listedIDs[file.UploadID] = true
+		}
 	}
+	// A name match is a replacement only when the earlier upload is gone; a
+	// second upload under a name that is still listed is a new upload.
+	byNameIfGone := func(name string) (int, bool) {
+		index, ok := byName[name]
+		if ok && listedIDs[e.KnownUpstreamFiles[index].UploadID] {
+			return 0, false
+		}
+		return index, ok
+	}
+	matched := make(map[int]bool, len(files))
+	knownByID := make([]bool, len(files))
 	for i := range files {
-		if p, ok := prior[files[i].Filename]; ok {
-			files[i].SeenAt = p.seenAt // preserve original first-seen time
-			if files[i].IsNew && !p.isNew {
-				// The check found this known upload replacing a downloaded
-				// file; it is new from now on.
-				files[i].SeenAt = time.Now()
+		file := &files[i]
+		index, known := 0, false
+		if file.UploadID != "" {
+			index, known = byID[file.UploadID]
+			knownByID[i] = known
+		}
+		if !known {
+			index, known = byNameIfGone(file.Filename)
+		}
+		if !known && file.DisplayName != "" {
+			index, known = byNameIfGone(file.DisplayName)
+		}
+		file.IsNew, file.Changed, file.SeenAt = false, false, now
+		if known {
+			prior := e.KnownUpstreamFiles[index]
+			matched[index] = true
+			file.IsNew, file.Changed, file.SeenAt = prior.IsNew, prior.Changed, prior.SeenAt
+			file.PreviousUploadIDs = slices.Clone(prior.PreviousUploadIDs)
+			if file.UploadID == "" {
+				file.UploadID = prior.UploadID
 			}
-			files[i].IsNew = files[i].IsNew || p.isNew // preserve new-upload flag
-		} else if !isFirstCheck {
-			// Genuinely new file appearing after the first check — flag it.
-			files[i].IsNew = true
-			if files[i].SeenAt.IsZero() {
-				files[i].SeenAt = time.Now()
+			compare := !firstCheck && (!baseline || knownByID[i])
+			if file.Fingerprint == "" {
+				file.Fingerprint = prior.Fingerprint
+			} else if changed, _ := fingerprintChanged(prior.Fingerprint, file.Fingerprint); compare && changed {
+				file.Changed, file.SeenAt = true, now
+			}
+			if file.UploadID != "" && prior.UploadID != "" && file.UploadID != prior.UploadID {
+				// Upload IDs mean the same in every source, so a replacement
+				// counts even on a baseline. Keep the replaced ID so its
+				// installed files still match.
+				if !slices.Contains(file.PreviousUploadIDs, prior.UploadID) {
+					file.PreviousUploadIDs = append(file.PreviousUploadIDs, prior.UploadID)
+				}
+				file.Changed, file.SeenAt = true, now
+			}
+		} else if !baseline {
+			file.IsNew = true
+		}
+		// The version of the last complete install also proves a change
+		// before the first background baseline, and clears one it installed.
+		if acknowledged, ok := e.AcknowledgedUploads[file.UploadID]; ok && file.UploadID != "" {
+			if changed, conclusive := fingerprintChanged(acknowledged, file.Fingerprint); conclusive && !changed {
+				file.IsNew, file.Changed = false, false
+			} else if conclusive && source == SourceAPI && !file.Changed {
+				file.Changed, file.SeenAt = true, now
+			}
+		} else if file.Fingerprint != "" {
+			// Inventories from before per-upload acknowledgement: every
+			// tracked file must carry the listed version.
+			anyInstalled, allCurrent, hasOlderVersion := false, true, false
+			for _, installed := range e.Files {
+				if !fileMatchesUpload(installed, *file) || installed.LeftOver {
+					continue
+				}
+				anyInstalled = true
+				if changed, conclusive := fingerprintChanged(installed.UploadFingerprint, file.Fingerprint); changed || !conclusive {
+					allCurrent = false
+					hasOlderVersion = hasOlderVersion || changed
+				}
+			}
+			if anyInstalled && allCurrent {
+				file.IsNew, file.Changed = false, false
+			} else if source == SourceAPI && hasOlderVersion && !file.Changed {
+				file.Changed, file.SeenAt = true, now
 			}
 		}
-		// if isFirstCheck: IsNew stays as the caller set it. Files already
-		// present at download time are false; an upload found replacing a
-		// downloaded file is true.
-		if files[i].IsNew && files[i].SeenAt.IsZero() {
-			files[i].SeenAt = time.Now()
+
+	}
+	if source == SourceAPI && baseline {
+		markReplacementsOfMissingUploadsLocked(e, files, knownByID, now)
+	}
+	if source == SourcePage {
+		// A public page can hide paid/API uploads. Omission cannot acknowledge
+		// a known update; only an authoritative API list may prune it.
+		for index, prior := range e.KnownUpstreamFiles {
+			if !matched[index] && (prior.Changed || prior.IsNew) {
+				files = append(files, prior)
+			}
 		}
 	}
 	e.KnownUpstreamFiles = files
-	e.UpdateCheckedAt = time.Now()
+	e.UpstreamSource = source
+	e.UpdateCheckedAt = now
+}
+
+// markReplacementsOfMissingUploadsLocked handles an API baseline, which has
+// no earlier listing to compare: an installed upload missing from the
+// complete list was replaced, so an upload of the same kind that you have
+// not installed and that was not known before is new.
+func markReplacementsOfMissingUploadsLocked(e *Entry, files []UpstreamFile, knownByID []bool, now time.Time) {
+	markReplacementsLocked(e, files, func(index int) bool { return !knownByID[index] }, now)
+}
+
+// markReplacementsLocked flags as new each eligible listed upload that can
+// replace an installed upload missing from files: one of the same kind that
+// you have not installed and that is not a desktop or web build. A kind you
+// still have a listed install of needs no replacement.
+func markReplacementsLocked(e *Entry, files []UpstreamFile, eligible func(int) bool, now time.Time) {
+	kinds := replaceableKindsLocked(e, files)
+	if len(kinds) == 0 {
+		return
+	}
+	for index := range files {
+		file := &files[index]
+		if !eligible(index) || file.UploadID == "" || file.DesktopOrWebOnly || file.IsNew || !kinds[upstreamKind(*file)] {
+			continue
+		}
+		if !installedFromAnyLocked(e, *file) {
+			file.IsNew, file.SeenAt = true, now
+		}
+	}
+}
+
+// missingUploadsLocked returns the installed files whose upload, by ID or a
+// replaced ID, files no longer lists. Files without an upload ID cannot be
+// matched by ID, and left over files belong to an upload already handled.
+func missingUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
+	var missing []DownloadedFile
+	for _, installed := range e.Files {
+		if installed.UploadID == "" || installed.LeftOver {
+			continue
+		}
+		if !slices.ContainsFunc(files, func(file UpstreamFile) bool { return fileInstalledFrom(installed, file) }) {
+			missing = append(missing, installed)
+		}
+	}
+	return missing
+}
+
+// replaceableKindsLocked returns the kinds of missing installed uploads that
+// files offers no installed upload of: a listed upload of that kind would
+// replace them.
+func replaceableKindsLocked(e *Entry, files []UpstreamFile) map[string]bool {
+	kinds := make(map[string]bool)
+	for _, installed := range missingUploadsLocked(e, files) {
+		if kind := installedUploadKind(installed); kind != "" {
+			kinds[kind] = true
+		}
+	}
+	for _, file := range files {
+		kind := upstreamKind(file)
+		if kinds[kind] && !file.DesktopOrWebOnly && installedFromAnyLocked(e, file) {
+			delete(kinds, kind)
+		}
+	}
+	return kinds
+}
+
+// unreplacedUploadsLocked returns the installed files whose upload files no
+// longer lists and that no listed upload of the same kind replaces. Desktop
+// and web builds replace nothing. From a complete API listing this proves the
+// game removed (decision D8); from any other listing an empty result is
+// evidence that a removal no longer holds.
+func unreplacedUploadsLocked(e *Entry, files []UpstreamFile) []DownloadedFile {
+	var unreplaced []DownloadedFile
+	for _, installed := range missingUploadsLocked(e, files) {
+		kind := installedUploadKind(installed)
+		replaced := kind != "" && slices.ContainsFunc(files, func(file UpstreamFile) bool {
+			return !file.DesktopOrWebOnly && upstreamKind(file) == kind
+		})
+		if !replaced {
+			unreplaced = append(unreplaced, installed)
+		}
+	}
+	return unreplaced
+}
+
+func installedFromAnyLocked(e *Entry, upload UpstreamFile) bool {
+	return slices.ContainsFunc(e.Files, func(installed DownloadedFile) bool { return fileInstalledFrom(installed, upload) })
+}
+
+// installedUploadKind is the kind of upload an installed file came from:
+// music for a track, even one extracted from an archive.
+func installedUploadKind(installed DownloadedFile) string {
+	if installed.ContentKind == ContentKindMusic || installed.FileType == FileTypeMusic {
+		return "music"
+	}
+	if installed.OriginalUpload != "" {
+		return uploadKind(installed.OriginalUpload)
+	}
+	return uploadKind(installed.Filename)
+}
+
+// upstreamKind is uploadKind for a listed upload, which itch.io may mark as a
+// soundtrack whatever its file name.
+func upstreamKind(file UpstreamFile) string {
+	if file.Soundtrack {
+		return "music"
+	}
+	return uploadKind(file.Filename)
+}
+
+// uploadKind groups uploads that can replace one another: ROMs of the same
+// system, music for music, or any archive for an archive.
+func uploadKind(name string) string {
+	ext := strings.ToLower(romFileExt(name))
+	switch {
+	case ext == ".zip" || ext == ".7z" || ext == ".rar":
+		return "archive"
+	case roms.ClassifyEntry(name) == roms.KindMusic:
+		return "music"
+	}
+	if system, ok := leaf.CanonicalSystemForExtension(ext); ok {
+		return "system:" + system
+	}
+	return ext
+}
+
+// markRemovedLocked records a removal and why; an earlier removal keeps its
+// time, so a dismissal stays in effect.
+func markRemovedLocked(e *Entry, cause string, now time.Time) {
+	if e.GameRemovedAt.IsZero() {
+		e.GameRemovedAt = now
+	}
+	e.RemovedBy = cause
+}
+
+func clearRemovalLocked(e *Entry) {
+	e.GameRemovedAt, e.RemovalDismissedAt, e.RemovedBy = time.Time{}, time.Time{}, ""
+}
+
+// applyRemovalEvidenceLocked settles an entry's removed state from a listing
+// (decision D8): only a complete API listing can prove a removal, and any
+// listing that shows the installed upload, or one that replaces it, clears
+// one. A listing reached at all also clears a removal by a missing page.
+func applyRemovalEvidenceLocked(e *Entry, source string, complete bool, files []UpstreamFile, now time.Time) {
+	if e.RemovedBy != RemovedByListing {
+		clearRemovalLocked(e)
+	}
+	if files == nil {
+		return
+	}
+	unreplaced := unreplacedUploadsLocked(e, files)
+	switch {
+	case source == SourceAPI && complete && (len(files) == 0 || len(unreplaced) > 0):
+		markRemovedLocked(e, RemovedByListing, now)
+	case len(unreplaced) == 0:
+		clearRemovalLocked(e)
+	}
 }
 
 // LatestCheckedAt returns the most recent UpdateCheckedAt across all entries,

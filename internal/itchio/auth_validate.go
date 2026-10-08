@@ -15,10 +15,14 @@ import (
 // Validations and owned-library scans already running under the old key
 // discard their account-derived results instead of storing them.
 func (c *Client) ResetAPIKeyState() {
-	c.keyGeneration.Add(1)
 	c.ownedMu.Lock()
+	defer c.ownedMu.Unlock()
+	c.resetAPIKeyStateLocked()
+}
+
+func (c *Client) resetAPIKeyStateLocked() {
+	c.keyGeneration.Add(1)
 	c.purchaseCounts = nil
-	c.ownedMu.Unlock()
 }
 
 // hasItchIOErrors reports whether body is itch.io's JSON error answer, a

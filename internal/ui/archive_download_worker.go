@@ -256,15 +256,17 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 					logger.Info("zip-download: pico8 m3u written %s (%d carts)", m3uPath, len(p8Files))
 					s.extracted = append(s.extracted, m3uPath)
 					file := inventory.DownloadedFile{
-						UploadID:      s.plan.Upload.UploadID,
-						Filename:      filepath.Base(m3uPath),
-						DestPath:      m3uPath,
-						DownloadedAt:  now,
-						FileType:      inventory.FileTypeM3U,
-						SourceArchive: s.plan.Upload.Filename,
+						UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+						OriginalUpload: s.plan.Upload.Filename,
+						Filename:       filepath.Base(m3uPath),
+						DestPath:       m3uPath,
+						DownloadedAt:   now,
+						FileType:       inventory.FileTypeM3U,
+						SourceArchive:  s.plan.Upload.Filename,
 					}
 					applyArtwork(&file, artwork)
 					s.inv.Add(s.game.URL, inventory.Entry{
+						GameID:  downloadGameID(s.detail),
 						GameURL: s.game.URL, Title: s.game.Title,
 						Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 					}, file)
@@ -277,10 +279,10 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			s.storeState(zipDLError)
 			return
 		}
+		s.commitInstall()
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("zip-download: save inventory: %v", err)
 		}
-		s.recordLeftOvers()
 		logger.Info("zip-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
@@ -288,6 +290,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 
 	s.installEntries(entries, "zip-download")
 
+	s.commitInstall()
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("zip-download: save inventory: %v", err)
 	}
@@ -298,7 +301,6 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		s.storeState(zipDLError)
 		return
 	}
-	s.recordLeftOvers()
 	logger.Info("zip-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
 }
@@ -335,6 +337,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
 		s.extractPico8_7z(r, now)
+		s.commitInstall()
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("7z-download: save inventory: %v", err)
 		}
@@ -344,7 +347,6 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 			s.storeState(zipDLError)
 			return
 		}
-		s.recordLeftOvers()
 		logger.Info("7z-download: pico8 done, extracted %d file(s)", len(s.extracted))
 		s.storeState(zipDLDone)
 		return
@@ -352,6 +354,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 
 	s.installEntries(entries, "7z-download")
 
+	s.commitInstall()
 	if err := s.inv.Save(s.invPath); err != nil {
 		logger.Warn("7z-download: save inventory: %v", err)
 	}
@@ -361,9 +364,44 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 		s.storeState(zipDLError)
 		return
 	}
-	s.recordLeftOvers()
 	logger.Info("7z-download: done, extracted %d file(s)", len(s.extracted))
 	s.storeState(zipDLDone)
+}
+
+// commitInstall acknowledges the upload once the archive is fully extracted,
+// and marks this archive's files the install did not write as left over
+// from an older version, for example a track an older version named
+// differently. Manage offers those files for deletion; nothing is deleted
+// here. A skipped entry means the install did not finish, so the update
+// stays pending, nothing is marked, and a retry can complete it.
+func (s *ArchiveDownloadWorker) commitInstall() {
+	if len(s.extracted) == 0 || len(s.skipped) > 0 {
+		return
+	}
+	if s.plan.DownloadMusic && s.plan.MusicDir != "" && !s.musicFailed {
+		s.adoptUnattributedMusic()
+	}
+	listing, listingSource := installListing(s.plan.Upload)
+	s.inv.CommitUploadInstall(s.game.URL, inventory.UploadInstall{
+		UploadID: s.plan.Upload.UploadID, Filename: s.plan.Upload.Filename,
+		Fingerprint: s.plan.Upload.UploadFingerprint,
+		Written:     append([]string(nil), s.extracted...), Replaces: s.replacesFile,
+		Listing: listing, ListingSource: listingSource,
+	})
+}
+
+// replacesFile reports whether this plan would have rewritten an older file
+// of the same archive. Music is all or nothing; a ROM type with a picked
+// build replaces only the chosen file, so other builds of it are kept.
+func (s *ArchiveDownloadWorker) replacesFile(file inventory.DownloadedFile) bool {
+	if file.ContentKind == inventory.ContentKindMusic || file.FileType == inventory.FileTypeMusic {
+		return s.plan.DownloadMusic && s.plan.MusicDir != ""
+	}
+	if !s.plan.DownloadROMs {
+		return false
+	}
+	_, picked := s.plan.SelectedROMs[strings.ToLower(roms.ROMExt(file.DestPath))]
+	return !picked
 }
 
 // manifestFromZIP classifies a downloaded ZIP's members; see classifyArchive.
@@ -545,16 +583,18 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		logger.Info("7z-download: pico8 extracted %s → %s", base, finalDest)
 		s.extracted = append(s.extracted, finalDest)
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:  downloadGameID(s.detail),
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
-			UploadID:      s.plan.Upload.UploadID,
-			Filename:      filepath.Base(finalDest),
-			DestPath:      finalDest,
-			DownloadedAt:  now,
-			FileType:      inventory.FileTypeROM,
-			UnifiedName:   unifiedName,
-			SourceArchive: s.plan.Upload.Filename,
+			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+			OriginalUpload: s.plan.Upload.Filename,
+			Filename:       filepath.Base(finalDest),
+			DestPath:       finalDest,
+			DownloadedAt:   now,
+			FileType:       inventory.FileTypeROM,
+			UnifiedName:    unifiedName,
+			SourceArchive:  s.plan.Upload.Filename,
 		})
 	}
 }
@@ -827,16 +867,18 @@ func (s *ArchiveDownloadWorker) extractROMFromOpener(open func() (io.ReadCloser,
 	logger.Info("7z-download: ROM extracted → %s (unified=%v)", finalDest, unifiedName)
 	artwork := ensureROMArtwork(s.client, s.inv, s.game, finalDest)
 	file := inventory.DownloadedFile{
-		UploadID:      s.plan.Upload.UploadID,
-		Filename:      filepath.Base(finalDest),
-		DestPath:      finalDest,
-		DownloadedAt:  now,
-		FileType:      inventory.FileTypeROM,
-		UnifiedName:   unifiedName,
-		SourceArchive: s.plan.Upload.Filename,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       filepath.Base(finalDest),
+		DestPath:       finalDest,
+		DownloadedAt:   now,
+		FileType:       inventory.FileTypeROM,
+		UnifiedName:    unifiedName,
+		SourceArchive:  s.plan.Upload.Filename,
 	}
 	applyArtwork(&file, artwork)
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, file)
@@ -998,15 +1040,17 @@ func (s *ArchiveDownloadWorker) extractMusicFromOpener(open func() (io.ReadClose
 		return "", err
 	}
 	s.inv.Add(s.game.URL, inventory.Entry{
+		GameID:  downloadGameID(s.detail),
 		GameURL: s.game.URL, Title: s.game.Title,
 		Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 	}, inventory.DownloadedFile{
-		UploadID:      s.plan.Upload.UploadID,
-		Filename:      s.musicRecordName(dest),
-		DestPath:      dest,
-		DownloadedAt:  now,
-		FileType:      inventory.FileTypeMusic,
-		SourceArchive: s.plan.Upload.Filename,
+		UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+		OriginalUpload: s.plan.Upload.Filename,
+		Filename:       s.musicRecordName(dest),
+		DestPath:       dest,
+		DownloadedAt:   now,
+		FileType:       inventory.FileTypeMusic,
+		SourceArchive:  s.plan.Upload.Filename,
 	})
 	return dest, nil
 }
@@ -1024,32 +1068,6 @@ func (s *ArchiveDownloadWorker) ownMusicPath(dest string) (string, error) {
 		logger.Info("archive: %s belongs to another game; saving as %s", filepath.Base(dest), filepath.Base(path))
 	}
 	return path, err
-}
-
-// recordLeftOvers runs once this archive is installed. Every file the
-// inventory records from this archive, of the kinds this install wrote,
-// that the install did not write or keep is listed as left over from an
-// older version, for example a track an older version named differently.
-// Manage offers those files for deletion; nothing is deleted here.
-func (s *ArchiveDownloadWorker) recordLeftOvers() {
-	var kinds []string
-	if s.plan.DownloadROMs {
-		kinds = append(kinds, inventory.ContentKindROM)
-	}
-	if s.plan.DownloadMusic && s.plan.MusicDir != "" && !s.musicFailed {
-		s.adoptUnattributedMusic()
-		kinds = append(kinds, inventory.ContentKindMusic)
-	}
-	for _, kind := range kinds {
-		for _, file := range s.inv.MarkLeftOver(s.game.URL, s.plan.Upload.Filename, kind, s.extracted) {
-			logger.Info("archive: %s is left over from an older version of %s", filepath.Base(file.DestPath), s.plan.Upload.Filename)
-		}
-	}
-	if len(kinds) > 0 {
-		if err := s.inv.Save(s.invPath); err != nil {
-			logger.Warn("archive: save left-over files: %v", err)
-		}
-	}
 }
 
 // adoptUnattributedMusic attributes this game's tracks that older versions
@@ -1073,10 +1091,8 @@ func (s *ArchiveDownloadWorker) adoptUnattributedMusic() {
 	}
 }
 
-// backfillSourceArchive patches SourceArchive into an existing inventory entry
-// whose DestPath matches. Called when extraction is skipped because an identical
-// file already exists — pre-fix entries have SourceArchive="" which causes the
-// update service to incorrectly mark the game as removed.
+// backfillSourceArchive records the current upload identity when an existing
+// managed ROM was verified byte-for-byte identical to its archive entry.
 func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 	if s.plan.Upload.Filename == "" {
 		return
@@ -1086,9 +1102,12 @@ func (s *ArchiveDownloadWorker) backfillSourceArchive(destPath string) {
 		return
 	}
 	for _, f := range entry.Files {
-		if f.DestPath == destPath && f.SourceArchive == "" {
+		if f.DestPath == destPath {
 			f.SourceArchive = s.plan.Upload.Filename
-			s.inv.UpdateFile(s.game.URL, destPath, f)
+			f.OriginalUpload = s.plan.Upload.Filename
+			f.UploadID = s.plan.Upload.UploadID
+			f.UploadFingerprint = s.plan.Upload.UploadFingerprint
+			s.inv.Add(s.game.URL, entry, f)
 			logger.Debug("zip-download: backfilled SourceArchive=%q for %s",
 				s.plan.Upload.Filename, filepath.Base(destPath))
 			return
@@ -1244,16 +1263,18 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		s.extracted = append(s.extracted, finalDest)
 
 		s.inv.Add(s.game.URL, inventory.Entry{
+			GameID:  downloadGameID(s.detail),
 			GameURL: s.game.URL, Title: s.game.Title,
 			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
 		}, inventory.DownloadedFile{
-			UploadID:      s.plan.Upload.UploadID,
-			Filename:      filepath.Base(finalDest),
-			DestPath:      finalDest,
-			DownloadedAt:  now,
-			FileType:      inventory.FileTypeROM,
-			UnifiedName:   unifiedName,
-			SourceArchive: s.plan.Upload.Filename,
+			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
+			OriginalUpload: s.plan.Upload.Filename,
+			Filename:       filepath.Base(finalDest),
+			DestPath:       finalDest,
+			DownloadedAt:   now,
+			FileType:       inventory.FileTypeROM,
+			UnifiedName:    unifiedName,
+			SourceArchive:  s.plan.Upload.Filename,
 		})
 	}
 }

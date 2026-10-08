@@ -229,6 +229,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	imageCache := catui.NewImageCache(50, client.HTTPClient())
 	defer imageCache.Clear()
 	imageCache.SetNotify(func() { _ = ctx.Wake() })
+	client.SetAuthToken(cfg.AuthToken)
 	updateSvc := inventory.NewUpdateService(inv, inventoryPath, client, func() { _ = ctx.Wake() })
 	updateSvc.SetSources(sources)
 	updateSvc.SetLibraryScanRequester(func() (string, error) {
@@ -243,6 +244,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	list.SetWake(func() { _ = ctx.Wake() })
 	account := ui.NewAccount(cfg, cfgPath, ownedCachePath, client)
 	account.SetOwnedChanged(list.ReplaceOwnedGames)
+	account.SetCredentialChanged(updateSvc.TriggerNow)
 	model := appui.NewMainListModel(nil)
 	model.SetLoading()
 	screen, err := catui.NewMainListScreen(ctx, model, imageCache)
@@ -289,6 +291,15 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 	}
 	libraryScanResults := make(chan libraryScanResult, 1)
 	downloadGeneration := 0
+	// finishDownload resumes background update checks once the running
+	// download ends; nil when none runs.
+	var finishDownload func()
+	endDownload := func() {
+		if finishDownload != nil {
+			finishDownload()
+			finishDownload = nil
+		}
+	}
 	downloadScanStarted := false
 	downloadLibraryStatus := ""
 	type managementScanResult struct {
@@ -480,7 +491,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			}
 			route = catRouteCacheRefresh
 		case ui.CatSettingsUpdateInventory:
-			updateSvc.TriggerNow()
+			updateSvc.CheckAllNow()
 			settingsModel.SetMessage("Inventory update started. Local downloads stay available during the check.")
 		case ui.CatSettingsModeration:
 			return openModeration(catRouteSettings)
@@ -558,6 +569,8 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 	}
 	startBackend := func(backend ui.CatDownloadBackend) error {
+		endDownload()
+		finishDownload = updateSvc.DownloadStarted()
 		downloadBackend = backend
 		downloadGeneration++
 		downloadScanStarted = false
@@ -582,6 +595,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			snapshot.State == appui.DownloadProgressCancelled
 		var titleGroups []leaf.LibraryTitleGroup
 		if terminal {
+			endDownload()
 			titleGroups = downloadBackend.CatLibraryTitleGroups()
 		}
 		if downloadBackend.CatNeedsLibraryScan() && len(titleGroups) > 0 && !downloadScanStarted {
@@ -845,6 +859,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		}
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
@@ -1049,6 +1064,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				case appui.DownloadProgressIntentCancel:
 					downloadBackend.CatCancel()
 				case appui.DownloadProgressIntentBack:
+					endDownload()
 					list.ScheduleRebuild()
 					detailModel.Game.Downloaded = inv.IsPresent(activeGame.URL)
 					downloadProgressScreen.Close()
@@ -1248,6 +1264,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		list.SyncCatModel(model)
 		if detailLoader != nil && detailModel != nil && detailLoader.Sync(detailModel, cfg) {
 			activeDetail = detailLoader.Detail()
+			activeGame = detailLoader.Game()
 			redraw = true
 		}
 		if downloadFlow != nil && downloadSelectModel != nil && downloadFlow.Sync(downloadSelectModel) {
