@@ -213,7 +213,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		handleIntent = func(InputEvent) bool { return true }
-	case "destination-source", "destination-folder", "destination-music", "destination-confirm":
+	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
 		case "destination-source":
@@ -237,11 +237,23 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "destination-confirm":
 			// The names the install writes; a reinstall can replace a file on
 			// the other card.
-			model.SetConfirm("Confirm download destination", "Secondary SD", []string{
-				"Roms/GBC/RPG/Leafbound 葉 (2).gbc",
-				"Roms/GBC/RPG",
-				"Primary SD / Roms/GB/leafbound_bonus_v3.gb",
-				"Roms/GB",
+			model.SetConfirm("Confirm download destination", "Secondary SD", []appui.BodyBlock{
+				appui.ListBlock([]appui.ListEntry{{Text: "Roms/GBC/RPG/Leafbound 葉 (2).gbc"}}),
+				appui.Paragraph("Roms/GBC/RPG"),
+				appui.ListBlock([]appui.ListEntry{{Text: "Primary SD / Roms/GB/leafbound_bonus_v3.gb"}}),
+				appui.Paragraph("Roms/GB"),
+			})
+		case "destination-confirm-multi":
+			// A disc image installs its cue sheet and every track file, one
+			// line each, then the folder they go to.
+			model.SetConfirm("Confirm download destination", "Primary SD", []appui.BodyBlock{
+				appui.ListBlock([]appui.ListEntry{
+					{Text: "Roms/PS/Leafbound/Leafbound.cue"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 1).bin"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 2).bin"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 3).bin"},
+				}),
+				appui.Paragraph("Roms/PS/Leafbound"),
 			})
 		}
 		screen, screenErr := NewDestinationScreen(ctx, model)
@@ -266,10 +278,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
 		})
 		if config.Screen == "manage-confirm" {
-			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+			model.SetConfirm("Delete selected file?", []appui.BodyBlock{appui.ListBlock([]appui.ListEntry{
+				{Text: "Leafbound.gbc", Detail: "Primary SD / Roms/GBC/Leafbound.gbc"}})})
 		} else if config.Screen == "manage-leftover" {
-			model.SetConfirm("Delete selected file?", []string{"Left over from an older version",
-				"forest-theme.ogg", "Primary SD / Music/Leafbound/forest-theme.ogg"})
+			model.SetConfirm("Delete selected file?", []appui.BodyBlock{
+				appui.Paragraph("Left over from an older version"),
+				appui.ListBlock([]appui.ListEntry{{Text: "forest-theme.ogg", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg"}}),
+			})
 		} else if config.Screen == "manage-result" {
 			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
@@ -279,11 +294,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 			// "Delete all downloads" for a game with a 30-track soundtrack,
 			// as CatManageFlow words it: each file's name, then its path.
 			tracks := fixtureSoundtrack()
-			lines := []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"}
+			files := []appui.ListEntry{{Text: "Leafbound.gbc", Detail: "Primary SD / Roms/GBC/Leafbound.gbc"}}
 			for _, track := range tracks {
-				lines = append(lines, track, "Primary SD / Music/Leafbound/"+track)
+				files = append(files, appui.ListEntry{Text: track, Detail: "Primary SD / Music/Leafbound/" + track})
 			}
-			model.SetConfirm(fmt.Sprintf("Delete %d managed files?", len(tracks)+1), lines)
+			model.SetConfirm(fmt.Sprintf("Delete %d managed files?", len(tracks)+1), []appui.BodyBlock{appui.ListBlock(files)})
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
 		if screenErr != nil {
@@ -320,15 +335,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 	case "rename-saves", "rename-states", "rename-done":
 		model := appui.NewRenameModel("Leafbound 葉")
 		state, subtitle, heading := appui.RenameConfirmSaves, "Save files", "Rename these save files?"
-		lines := []string{"Saves/GBC/leafbound.srm", "→ Saves/GBC/Leafbound 葉.srm"}
+		entries := []appui.ListEntry{{Text: "Saves/GBC/leafbound.srm", Detail: "→ Saves/GBC/Leafbound 葉.srm"}}
 		if config.Screen == "rename-states" {
 			state, subtitle, heading = appui.RenameConfirmStates, "Save states", "Rename these state files?"
-			lines = []string{
-				"States/GBC-gambatte/leafbound.state1", "→ States/GBC-gambatte/Leafbound 葉.state1",
-				"States/GBC-gambatte/leafbound.state1.png", "→ States/GBC-gambatte/Leafbound 葉.state1.png",
+			entries = []appui.ListEntry{
+				{Text: "States/GBC-gambatte/leafbound.state1", Detail: "→ States/GBC-gambatte/Leafbound 葉.state1"},
+				{Text: "States/GBC-gambatte/leafbound.state1.png", Detail: "→ States/GBC-gambatte/Leafbound 葉.state1.png"},
 			}
 		}
-		model.SetPrompt(state, subtitle, heading, lines)
+		model.SetPrompt(state, subtitle, heading, entries)
 		if config.Screen == "rename-done" {
 			model.SetDone("ROM renamed, 1 save, 2 state files.")
 			model.SetLibraryStatus("Files changed · automatic rescan failed; use Rescan in Leaf.")

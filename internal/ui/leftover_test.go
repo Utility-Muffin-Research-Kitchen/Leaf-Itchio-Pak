@@ -137,8 +137,9 @@ func TestCatManageOffersLeftOverFiles(t *testing.T) {
 	if _, _, err := flow.Activate(model); err != nil {
 		t.Fatal(err)
 	}
-	if model.State != appui.ManageConfirm || len(model.PromptLines) == 0 || model.PromptLines[0] != "Left over from an older version" {
-		t.Fatalf("confirm = %q %q", model.PromptTitle, model.PromptLines)
+	if model.State != appui.ManageConfirm || len(model.Prompt) < 2 || model.Prompt[0].Text != "Left over from an older version" ||
+		!model.Prompt[1].IsList() {
+		t.Fatalf("confirm = %q %+v, want the left-over sentence, then the files as a list", model.PromptTitle, model.Prompt)
 	}
 	if _, err := flow.Confirm(model); err != nil {
 		t.Fatal(err)

@@ -57,7 +57,7 @@ func (screen *ManageScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	switch screen.model.State {
 	case appui.ManageConfirm:
-		err = screen.ui.DrawScrollingBody(body, screen.model.PromptTitle, screen.model.PromptLines, &screen.model.BodyScroll)
+		err = screen.ui.DrawScrollingBlocks(body, screen.model.PromptTitle, screen.model.Prompt, &screen.model.BodyScroll)
 	case appui.ManageResult:
 		lines := []string{screen.model.Message}
 		if screen.model.LibraryStatus != "" {

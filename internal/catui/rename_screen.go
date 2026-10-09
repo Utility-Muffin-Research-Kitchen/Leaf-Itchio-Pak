@@ -54,11 +54,11 @@ func (screen *RenameScreen) Draw() error {
 	case appui.RenameError:
 		err = screen.ui.DrawState(body, StateError, "Rename failed", screen.model.Message)
 	default:
-		lines := screen.model.Lines
-		if len(lines) == 0 {
-			lines = []string{"No related files were found."}
+		blocks := []appui.BodyBlock{appui.ListBlock(screen.model.Entries)}
+		if len(screen.model.Entries) == 0 {
+			blocks = appui.Prose("No related files were found.")
 		}
-		err = screen.ui.DrawScrollingBody(body, screen.model.Heading, lines, &screen.model.BodyScroll)
+		err = screen.ui.DrawScrollingBlocks(body, screen.model.Heading, blocks, &screen.model.BodyScroll)
 	}
 	if err != nil {
 		return err

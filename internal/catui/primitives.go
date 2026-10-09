@@ -474,7 +474,14 @@ func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycle
 // the launcher scrollbar at rect's right edge, and wrap narrower to leave
 // room for it.
 func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []string, scroll *appui.BodyScroll) error {
-	layout := layoutBody(rect, title, paragraphs, ui.bodyMetrics())
+	return ui.DrawScrollingBlocks(rect, title, appui.Prose(paragraphs...), scroll)
+}
+
+// DrawScrollingBlocks is DrawScrollingBody for blocks of prose and lists.
+// A list's entries follow each other without a blank line, each entry's
+// detail line under its text in the hint color.
+func (ui *Composer) DrawScrollingBlocks(rect Rect, title string, blocks []appui.BodyBlock, scroll *appui.BodyScroll) error {
+	layout := layoutBody(rect, title, blocks, ui.bodyMetrics())
 	offset := 0
 	if scroll != nil {
 		scroll.SetScrollBounds(layout.maxOffset())
@@ -493,9 +500,13 @@ func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []stri
 		y = rect.Y + layout.top
 		lineHeight := ui.bodyLineHeight()
 		for i := offset; i < len(layout.lines) && y+lineHeight <= rect.Y+rect.H; i++ {
-			if layout.lines[i] != "" {
-				if _, err := ui.ctx.DrawFallbackText(FontSmall, layout.lines[i], x, y,
-					ui.ctx.ThemeColor(RoleText), layout.width); err != nil {
+			if line := layout.lines[i]; line.text != "" {
+				role := RoleText
+				if line.detail {
+					role = RoleHint
+				}
+				if _, err := ui.ctx.DrawFallbackText(FontSmall, line.text, x, y,
+					ui.ctx.ThemeColor(role), layout.width); err != nil {
 					return err
 				}
 			}
@@ -542,12 +553,19 @@ type bodyMetrics struct {
 }
 
 // bodyLayout is a scrolling body laid out in a rect: the title lines, the
-// body lines with a blank line between paragraphs, the width the body
-// lines wrap to, how far below the rect's top they start, and how many of
-// them fit.
+// body lines with a blank line between blocks, the width the body lines wrap
+// to, how far below the rect's top they start, and how many of them fit.
 type bodyLayout struct {
-	titleLines, lines []string
-	width, top, rows  int
+	titleLines       []string
+	lines            []bodyLine
+	width, top, rows int
+}
+
+// bodyLine is one line of body text. A detail line is the second line of a
+// list entry, drawn in the hint color.
+type bodyLine struct {
+	text   string
+	detail bool
 }
 
 func (layout bodyLayout) overflows() bool { return len(layout.lines) > layout.rows }
@@ -555,7 +573,7 @@ func (layout bodyLayout) overflows() bool { return len(layout.lines) > layout.ro
 // maxOffset is the first line that puts the last line at the bottom.
 func (layout bodyLayout) maxOffset() int { return maxInt(0, len(layout.lines)-layout.rows) }
 
-func layoutBody(rect Rect, title string, paragraphs []string, metrics bodyMetrics) bodyLayout {
+func layoutBody(rect Rect, title string, blocks []appui.BodyBlock, metrics bodyMetrics) bodyLayout {
 	layout := bodyLayout{width: rect.W}
 	if title != "" {
 		// A title wider than a narrow column wraps instead of being cut off.
@@ -566,25 +584,68 @@ func layoutBody(rect Rect, title string, paragraphs []string, metrics bodyMetric
 	if metrics.lineHeight > 0 {
 		layout.rows = maxInt(1, (rect.H-layout.top)/metrics.lineHeight)
 	}
-	layout.lines = bodyLines(paragraphs, layout.width, metrics.measureLine)
+	layout.lines = bodyLines(blocks, layout.width, metrics.measureLine)
 	// Narrower lines only add lines, so a body that overflows at the full
 	// width still overflows beside the scrollbar.
 	if layout.overflows() && rect.W > metrics.gutter {
 		layout.width = rect.W - metrics.gutter
-		layout.lines = bodyLines(paragraphs, layout.width, metrics.measureLine)
+		layout.lines = bodyLines(blocks, layout.width, metrics.measureLine)
 	}
 	return layout
 }
 
-func bodyLines(paragraphs []string, width int, measure func(string) int) []string {
-	lines := make([]string, 0, len(paragraphs)*2)
-	for index, paragraph := range paragraphs {
-		if index > 0 {
-			lines = append(lines, "")
+// bodyLines wraps blocks to width. Blocks are separated by one blank line,
+// the entries of a list are not, and a block with nothing in it takes no
+// lines.
+func bodyLines(blocks []appui.BodyBlock, width int, measure func(string) int) []bodyLine {
+	var lines []bodyLine
+	for _, block := range blocks {
+		if block.Text == "" && !block.IsList() {
+			continue
 		}
-		lines = append(lines, wrapText(paragraph, width, measure)...)
+		if len(lines) > 0 {
+			lines = append(lines, bodyLine{})
+		}
+		if !block.IsList() {
+			lines = appendWrapped(lines, block.Text, width, measure, false)
+			continue
+		}
+		for _, entry := range block.Entries {
+			lines = appendWrapped(lines, entry.Text, width, measure, false)
+			if entry.Detail != "" {
+				lines = appendWrapped(lines, entry.Detail, width, measure, true)
+			}
+		}
 	}
 	return lines
+}
+
+func appendWrapped(lines []bodyLine, text string, width int, measure func(string) int, detail bool) []bodyLine {
+	for _, line := range wrapText(text, width, measure) {
+		for _, piece := range breakWide(line, width, measure) {
+			lines = append(lines, bodyLine{text: piece, detail: detail})
+		}
+	}
+	return lines
+}
+
+// breakWide splits a line that is wider than width, which wrapText leaves
+// when one word has no space to wrap at (a long file name or path), into
+// pieces that fit, so the end of the name is not cut off at the edge.
+func breakWide(line string, width int, measure func(string) int) []string {
+	if width <= 0 || measure(line) <= width {
+		return []string{line}
+	}
+	var pieces []string
+	var piece []rune
+	for _, r := range line {
+		if len(piece) > 0 && measure(string(piece)+string(r)) > width {
+			pieces = append(pieces, string(piece))
+			piece = piece[:0]
+		}
+		piece = append(piece, r)
+	}
+	return append(pieces, string(piece))
 }
 
 // QRCaptionHeight is the room DrawQRCaption takes for caption at width.

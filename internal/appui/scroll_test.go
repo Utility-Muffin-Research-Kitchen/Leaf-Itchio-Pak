@@ -62,7 +62,8 @@ func scrollsOnce[I comparable](t *testing.T, name string, scroll *BodyScroll, ha
 
 func TestManagePromptAndResultScroll(t *testing.T) {
 	model := NewManageModel("Leafbound")
-	model.SetConfirm("Delete 31 managed files?", []string{"01 Theme.ogg", "Primary SD / Music/01 Theme.ogg"})
+	model.SetConfirm("Delete 31 managed files?", []BodyBlock{ListBlock([]ListEntry{
+		{Text: "01 Theme.ogg", Detail: "Primary SD / Music/01 Theme.ogg"}})})
 	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
 	if got := model.Handle(press(ButtonA)); got != ManageIntentConfirm {
 		t.Fatalf("confirm A = %v, want confirm", got)
@@ -70,7 +71,7 @@ func TestManagePromptAndResultScroll(t *testing.T) {
 	if got := model.Handle(press(ButtonB)); got != ManageIntentCancel {
 		t.Fatalf("confirm B = %v, want cancel", got)
 	}
-	model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc"})
+	model.SetConfirm("Delete selected file?", Prose("Leafbound.gbc"))
 	if model.ScrollLine != 0 {
 		t.Fatalf("new prompt kept line %d", model.ScrollLine)
 	}
@@ -164,7 +165,8 @@ func TestDownloadProgressSnapshotKeepsScrollInTheSameState(t *testing.T) {
 
 func TestDestinationPromptsScroll(t *testing.T) {
 	model := NewDestinationModel("Leafbound")
-	model.SetConfirm("Confirm download destination", "Primary SD", []string{"Roms/GBC/Leafbound.gbc", "Roms/GBC"})
+	model.SetConfirm("Confirm download destination", "Primary SD", []BodyBlock{
+		ListBlock([]ListEntry{{Text: "Roms/GBC/Leafbound.gbc"}}), Paragraph("Roms/GBC")})
 	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
 	if got := model.Handle(press(ButtonA)); got != DestinationIntentActivate {
 		t.Fatalf("confirm A = %v, want activate", got)
@@ -185,7 +187,7 @@ func TestDestinationPromptsScroll(t *testing.T) {
 
 func TestRenameCompleteScrolls(t *testing.T) {
 	model := NewRenameModel("Leafbound")
-	model.SetPrompt(RenameConfirmSaves, "Save files", "Rename these save files?", []string{"a", "b"})
+	model.SetPrompt(RenameConfirmSaves, "Save files", "Rename these save files?", []ListEntry{{Text: "a", Detail: "b"}})
 	model.SetScrollBounds(2)
 	model.Handle(press(ButtonDown))
 	model.SetDone("ROM renamed, 1 save, 2 state files.")

@@ -33,15 +33,15 @@ const (
 )
 
 type DestinationModel struct {
-	Phase        DestinationPhase
-	Title        string
-	Subtitle     string
-	Path         string
-	Items        []DestinationItem
-	Cursor       int
-	VisibleRows  int
-	ErrorDetail  string
-	SummaryLines []string
+	Phase       DestinationPhase
+	Title       string
+	Subtitle    string
+	Path        string
+	Items       []DestinationItem
+	Cursor      int
+	VisibleRows int
+	ErrorDetail string
+	Summary     []BodyBlock
 	// BodyScroll scrolls the confirm summary and the error.
 	BodyScroll
 }
@@ -55,7 +55,7 @@ func (m *DestinationModel) SetSources(items []DestinationItem) {
 	m.Subtitle = "Choose storage card"
 	m.Path = ""
 	m.Items = append([]DestinationItem(nil), items...)
-	m.SummaryLines = nil
+	m.Summary = nil
 	m.Cursor = firstEnabledDestination(items)
 	m.ErrorDetail = ""
 	m.ResetScroll()
@@ -65,17 +65,17 @@ func (m *DestinationModel) SetFolders(subtitle, path string, items []Destination
 	m.Phase = DestinationFolders
 	m.Subtitle, m.Path = subtitle, path
 	m.Items = append([]DestinationItem(nil), items...)
-	m.SummaryLines = nil
+	m.Summary = nil
 	m.Cursor = 0
 	m.ErrorDetail = ""
 	m.ResetScroll()
 }
 
-func (m *DestinationModel) SetConfirm(subtitle, path string, lines []string) {
+func (m *DestinationModel) SetConfirm(subtitle, path string, summary []BodyBlock) {
 	m.Phase = DestinationConfirm
 	m.Subtitle, m.Path = subtitle, path
 	m.Items = nil
-	m.SummaryLines = append([]string(nil), lines...)
+	m.Summary = append([]BodyBlock(nil), summary...)
 	m.Cursor = 0
 	m.ErrorDetail = ""
 	m.ResetScroll()
