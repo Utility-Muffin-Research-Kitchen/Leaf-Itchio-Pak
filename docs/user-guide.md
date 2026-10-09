@@ -150,8 +150,11 @@ without deleting downloads.
 
 **Refresh Game List** rebuilds the public catalogue cache. If an itch.io feed
 fails, the games of its system stay as they were and the other systems still
-update. **Update Inventory** checks missing artwork, removed upstream games,
-and newly offered uploads without deleting local files.
+update. On its own, the app checks for new games once a day when you open it,
+reading only the newest pages of each feed, and rebuilds the whole list once a
+week; until then, new games show at the top of their system. **Update
+Inventory** checks missing artwork, removed upstream games, and newly offered
+uploads without deleting local files.
 The app also checks at launch and when you sign in or out, but then skips games
 it checked in the last six hours, and it waits while a download runs.
 A new version that replaces a file you downloaded, such as a new `.gb` build

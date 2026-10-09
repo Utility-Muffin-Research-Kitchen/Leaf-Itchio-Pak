@@ -32,10 +32,7 @@ func NewCatCacheRefreshFlow(client *itchio.Client, cachePath string, wake func()
 	model := appui.NewRefreshModel("Refreshing Game List")
 	go func() {
 		// A system whose feed fails keeps its games from the current cache.
-		var previous []itchio.Game
-		if cache, err := itchio.LoadGamesCache(cachePath); err == nil {
-			previous = cache.Games
-		}
+		previous, _ := itchio.LoadGamesCache(cachePath)
 		fetch, err := client.FetchAllGames(ctx, func(partial []itchio.Game) {
 			flow.fetched.Store(int64(len(partial)))
 			if flow.wake != nil {
