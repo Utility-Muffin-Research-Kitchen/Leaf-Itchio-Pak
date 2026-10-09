@@ -3,6 +3,7 @@ package catui
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -44,6 +45,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 		return err
 	}
 
+	// A screen name ending in -end shows that screen's body scrolled to its
+	// last line, as Down does on the device. One ending in -page shows it
+	// after one press of Right, which pages it.
+	var scrollToEnd, pageOnce bool
+	config.Screen, scrollToEnd = strings.CutSuffix(config.Screen, "-end")
+	if !scrollToEnd {
+		config.Screen, pageOnce = strings.CutSuffix(config.Screen, "-page")
+	}
+	var scroll *appui.BodyScroll
 	var draw func() error
 	var handleIntent func(InputEvent) bool
 	var closeScreen func()
@@ -111,6 +121,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
@@ -144,8 +155,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled",
-		"archive-inspect", "archive-inspect-long", "archive-unreadable":
+	case "download-progress", "download-done", "download-done-long", "download-error", "download-stalled", "download-inhibit",
+		"download-cancelled", "archive-inspect", "archive-inspect-long", "archive-unreadable":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -162,6 +173,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
 			model.Skipped = []string{"leafbound.GBC"}
+			model.LibraryStatus = "Leaf library rescan requested."
+		case "download-done-long":
+			// A game and its 30-track soundtrack from one archive.
+			model.State = appui.DownloadProgressDone
+			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc"}
+			for _, track := range fixtureSoundtrack() {
+				model.SavedPaths = append(model.SavedPaths, "/Music/Leafbound/"+track)
+			}
+			model.Skipped = []string{"leafbound.GBC", "cover.png"}
 			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
@@ -186,6 +206,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadProgressIntentBack
 		}
@@ -196,7 +217,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		handleIntent = func(InputEvent) bool { return true }
-	case "destination-source", "destination-folder", "destination-music", "destination-confirm":
+	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
 		case "destination-source":
@@ -220,11 +241,23 @@ func RunInputFixture(config InputFixtureConfig) error {
 		case "destination-confirm":
 			// The names the install writes; a reinstall can replace a file on
 			// the other card.
-			model.SetConfirm("Confirm download destination", "Secondary SD", []string{
-				"Roms/GBC/RPG/Leafbound 葉 (2).gbc",
-				"Roms/GBC/RPG",
-				"Primary SD / Roms/GB/leafbound_bonus_v3.gb",
-				"Roms/GB",
+			model.SetConfirm("Confirm download destination", "Secondary SD", []appui.BodyBlock{
+				appui.ListBlock([]appui.ListEntry{{Text: "Roms/GBC/RPG/Leafbound 葉 (2).gbc"}}),
+				appui.Paragraph("Roms/GBC/RPG"),
+				appui.ListBlock([]appui.ListEntry{{Text: "Primary SD / Roms/GB/leafbound_bonus_v3.gb"}}),
+				appui.Paragraph("Roms/GB"),
+			})
+		case "destination-confirm-multi":
+			// A disc image installs its cue sheet and every track file, one
+			// line each, then the folder they go to.
+			model.SetConfirm("Confirm download destination", "Primary SD", []appui.BodyBlock{
+				appui.ListBlock([]appui.ListEntry{
+					{Text: "Roms/PS/Leafbound/Leafbound.cue"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 1).bin"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 2).bin"},
+					{Text: "Roms/PS/Leafbound/Leafbound (Track 3).bin"},
+				}),
+				appui.Paragraph("Roms/PS/Leafbound"),
 			})
 		}
 		screen, screenErr := NewDestinationScreen(ctx, model)
@@ -235,7 +268,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error":
+	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error", "manage-delete-long":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
@@ -249,21 +282,34 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
 		})
 		if config.Screen == "manage-confirm" {
-			model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"})
+			model.SetConfirm("Delete selected file?", []appui.BodyBlock{appui.ListBlock([]appui.ListEntry{
+				{Text: "Leafbound.gbc", Detail: "Primary SD / Roms/GBC/Leafbound.gbc"}})})
 		} else if config.Screen == "manage-leftover" {
-			model.SetConfirm("Delete selected file?", []string{"Left over from an older version",
-				"forest-theme.ogg", "Primary SD / Music/Leafbound/forest-theme.ogg"})
+			model.SetConfirm("Delete selected file?", []appui.BodyBlock{
+				appui.Paragraph("Left over from an older version"),
+				appui.ListBlock([]appui.ListEntry{{Text: "forest-theme.ogg", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg"}}),
+			})
 		} else if config.Screen == "manage-result" {
 			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		} else if config.Screen == "manage-error" {
 			model.SetError("Couldn't delete Leafbound Deluxe Edition (PlayStation).bin. Check the SD card, then try again.")
+		} else if config.Screen == "manage-delete-long" {
+			// "Delete all downloads" for a game with a 30-track soundtrack,
+			// as CatManageFlow words it: each file's name, then its path.
+			tracks := fixtureSoundtrack()
+			files := []appui.ListEntry{{Text: "Leafbound.gbc", Detail: "Primary SD / Roms/GBC/Leafbound.gbc"}}
+			for _, track := range tracks {
+				files = append(files, appui.ListEntry{Text: track, Detail: "Primary SD / Music/Leafbound/" + track})
+			}
+			model.SetConfirm(fmt.Sprintf("Delete %d managed files?", len(tracks)+1), []appui.BodyBlock{appui.ListBlock(files)})
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
 		if screenErr != nil {
 			return screenErr
 		}
 		draw = screen.Draw
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
@@ -290,18 +336,72 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
+	case "manage-earlier-copy", "manage-earlier-copy-confirm":
+		// A Pico-8 game installed twice, the second time into another folder:
+		// the first copy's files are earlier copies, not an older version (F28).
+		model := appui.NewManageModel("Moss Garden")
+		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "main.p8", Badge: "OLD", Detail: "Primary SD / Roms/PICO8/Moss Garden/main.p8", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "lib.lua", Badge: "OLD", Detail: "Primary SD / Roms/PICO8/Moss Garden/lib.lua", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "main.p8", Badge: "ROM", Detail: "Primary SD / Roms/PICO8/Moss Garden 2/main.p8", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "lib.lua", Badge: "ROM", Detail: "Primary SD / Roms/PICO8/Moss Garden 2/lib.lua", Enabled: true},
+			{Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: "2 OLD", Detail: "Earlier copy of files you installed again", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "4 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "4 FILES", Enabled: true},
+		})
+		model.Cursor = 4
+		if config.Screen == "manage-earlier-copy-confirm" {
+			model.SetConfirm("Delete 2 managed files?", []appui.BodyBlock{
+				appui.Paragraph("Earlier copy of files you installed again"),
+				appui.ListBlock([]appui.ListEntry{
+					{Text: "main.p8", Detail: "Primary SD / Roms/PICO8/Moss Garden/main.p8"},
+					{Text: "lib.lua", Detail: "Primary SD / Roms/PICO8/Moss Garden/lib.lua"},
+				}),
+			})
+		}
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
+	case "manage-rename":
+		// One ROM back on its archive name and one still named after the
+		// title: each offers the other name (F13).
+		model := appui.NewManageModel("Glory Hunters")
+		model.SetItems("2 managed files · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "Glory Hunters v1.2 Bonus Levels Edition (Rev A) (English Translation).gba",
+				Badge: "ROM", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "Glory Hunters.gb", Badge: "ROM", Note: "From Glory Hunters 2.0.1.gb", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "2 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "2 FILES", Enabled: true},
+			{Kind: appui.ManageItemRename, Label: "Use title for Glory Hunters v1.2 Bonus Levels Edition (Rev A) (English Translation).gba",
+				Badge: "RENAME", Enabled: true},
+			{Kind: appui.ManageItemRename, Label: "Use original name for Glory Hunters.gb", Badge: "RENAME", Enabled: true},
+		})
+		model.Cursor = len(model.Items) - 1
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
 	case "rename-saves", "rename-states", "rename-done":
 		model := appui.NewRenameModel("Leafbound 葉")
 		state, subtitle, heading := appui.RenameConfirmSaves, "Save files", "Rename these save files?"
-		lines := []string{"Saves/GBC/leafbound.srm", "→ Saves/GBC/Leafbound 葉.srm"}
+		entries := []appui.ListEntry{{Text: "Saves/GBC/leafbound.srm", Detail: "→ Saves/GBC/Leafbound 葉.srm"}}
 		if config.Screen == "rename-states" {
 			state, subtitle, heading = appui.RenameConfirmStates, "Save states", "Rename these state files?"
-			lines = []string{
-				"States/GBC-gambatte/leafbound.state1", "→ States/GBC-gambatte/Leafbound 葉.state1",
-				"States/GBC-gambatte/leafbound.state1.png", "→ States/GBC-gambatte/Leafbound 葉.state1.png",
+			entries = []appui.ListEntry{
+				{Text: "States/GBC-gambatte/leafbound.state1", Detail: "→ States/GBC-gambatte/Leafbound 葉.state1"},
+				{Text: "States/GBC-gambatte/leafbound.state1.png", Detail: "→ States/GBC-gambatte/Leafbound 葉.state1.png"},
 			}
 		}
-		model.SetPrompt(state, subtitle, heading, lines)
+		model.SetPrompt(state, subtitle, heading, entries)
 		if config.Screen == "rename-done" {
 			model.SetDone("ROM renamed, 1 save, 2 state files.")
 			model.SetLibraryStatus("Files changed · automatic rescan failed; use Rescan in Leaf.")
@@ -314,7 +414,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
-	case "settings", "settings-confirm", "settings-message", "settings-notice", "settings-error",
+	case "settings", "settings-folders", "settings-confirm", "settings-message", "settings-notice", "settings-error",
 		"moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
@@ -324,11 +424,24 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: appui.ChoiceLabel("ask"), ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: appui.ChoiceLabel("auto"), ActionEnabled: true},
 			{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: appui.ChoiceLabel("ask"), ActionEnabled: true},
-			{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: "On", ActionEnabled: true},
-			{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: "Primary SD + Secondary SD · 3 systems"},
+			{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM Files", Value: "On", ActionEnabled: true},
+			{Key: appui.SettingsROMDestination, Label: "Remembered ROM Folder", Value: "Primary SD + Secondary SD · 3 systems"},
 			{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
 			{Key: appui.SettingsContentModeration, Label: "Content Moderation", Value: ">", ActionEnabled: true},
 			{Key: appui.SettingsAbout, Label: "About", Value: ">", ActionEnabled: true},
+		}
+		cursor := 0
+		if config.Screen == "settings-folders" {
+			// The remembered-folder rows below Rename ROM Files, in Settings'
+			// own order, with the longest label selected.
+			rows = append(rows[:7:7],
+				appui.SettingsRow{Key: appui.SettingsLogLevel, Label: "Log Level", Value: "Info", ActionEnabled: true},
+				appui.SettingsRow{Key: appui.SettingsROMDestination, Label: "Remembered ROM Folder", Value: "Primary SD + Secondary SD · 3 systems"},
+				appui.SettingsRow{Key: appui.SettingsMusicDestination, Label: "Remembered Music Folder", Value: "Secondary SD / Albums"},
+				appui.SettingsRow{Key: appui.SettingsResetDestinations, Label: "Reset Remembered Folders", ActionEnabled: true},
+				appui.SettingsRow{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
+			)
+			cursor = len(rows) - 2
 		}
 		if config.Screen == "moderation" {
 			title, subtitle = "Content Moderation", "Local advisory filters · creator tagging may be incomplete"
@@ -341,7 +454,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		} else if config.Screen == "moderation-tags" {
 			title, subtitle = "Adult Content", "A toggles · category coverage depends on creator tags"
 			rows = []appui.SettingsRow{
-				{Key: appui.SettingsTagMaster, Label: "All category tags", Value: "Blocked", ActionEnabled: true},
+				{Key: appui.SettingsTagMaster, Label: "All Category Tags", Value: "Blocked", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Adult", Value: "Blocked", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Erotic", Value: "Allowed", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Mature", Value: "Blocked", ActionEnabled: true},
@@ -350,6 +463,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		model := appui.NewSettingsModel(title)
 		model.SetRows(subtitle, rows)
+		model.Cursor = cursor
 		if config.Screen == "settings-confirm" {
 			// The sign-in warning moved to the sign-in screen (signin-warning).
 			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})
@@ -378,6 +492,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &screen.scroll
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
 	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
 		model := &appui.SignInModel{
@@ -420,6 +535,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return screenErr
 		}
 		draw, closeScreen = screen.Draw, screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			intent := screen.HandleInput(event)
 			return intent != appui.SignInIntentBack && intent != appui.SignInIntentCancel
@@ -441,6 +557,16 @@ func RunInputFixture(config InputFixtureConfig) error {
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
 	}
+	if pageOnce && scroll == nil {
+		return fmt.Errorf("input fixture %q does not scroll", config.Screen)
+	}
+	if scrollToEnd {
+		if scroll == nil {
+			return fmt.Errorf("input fixture %q does not scroll", config.Screen)
+		}
+		// The first draw clamps this to the body's last line.
+		scroll.ScrollLine = math.MaxInt32
+	}
 	if closeScreen != nil {
 		defer closeScreen()
 	}
@@ -449,6 +575,20 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return true, nil
 		}
 		return handleIntent(event), nil
+	}
+	if pageOnce {
+		// The first draw measures the body, which the page is a share of, so
+		// the press comes after it and goes through the screen's own input
+		// handling, as it does on the device. Later draws show the next page.
+		drawBody, pressed := draw, false
+		draw = func() error {
+			if err := drawBody(); err != nil || pressed {
+				return err
+			}
+			pressed = true
+			_, err := handle(InputEvent{Button: ButtonRight, Pressed: true})
+			return err
+		}
 	}
 
 	running, redraw, drawn := true, true, 0
@@ -519,4 +659,16 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 	}
 	return nil
+}
+
+// fixtureSoundtrack is a 30-track soundtrack, enough to overflow any screen
+// that lists it.
+func fixtureSoundtrack() []string {
+	names := []string{"Forest Theme", "Seed Vault", "Clearing at Dawn", "Mossy Steps", "Lantern Walk",
+		"Rain on Leaves", "The Old Oak", "River Crossing", "Night Birds", "Homecoming"}
+	tracks := make([]string, 0, 30)
+	for index := range 30 {
+		tracks = append(tracks, fmt.Sprintf("%02d %s.ogg", index+1, names[index%len(names)]))
+	}
+	return tracks
 }

@@ -95,11 +95,11 @@ func (flow *CatSettingsFlow) Refresh(model *appui.SettingsModel) {
 		rows = append(rows, appui.SettingsRow{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: appui.ChoiceLabel(settingValue(flow.cfg.MusicLocation, "auto")), ActionEnabled: true})
 	}
 	rows = append(rows,
-		appui.SettingsRow{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: onOff(flow.cfg.UnifiedNaming), ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM Files", Value: onOff(flow.cfg.UnifiedNaming), ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsLogLevel, Label: "Log Level", Value: logLevelValue(flow.cfg.LogLevel), ActionEnabled: true},
-		appui.SettingsRow{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: flow.romPreference(), ActionEnabled: false},
-		appui.SettingsRow{Key: appui.SettingsMusicDestination, Label: "Remembered Music folder", Value: flow.musicPreference(), ActionEnabled: false},
-		appui.SettingsRow{Key: appui.SettingsResetDestinations, Label: "Reset remembered folders", Value: "", ActionEnabled: true},
+		appui.SettingsRow{Key: appui.SettingsROMDestination, Label: "Remembered ROM Folder", Value: flow.romPreference(), ActionEnabled: false},
+		appui.SettingsRow{Key: appui.SettingsMusicDestination, Label: "Remembered Music Folder", Value: flow.musicPreference(), ActionEnabled: false},
+		appui.SettingsRow{Key: appui.SettingsResetDestinations, Label: "Reset Remembered Folders", Value: "", ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsAppData, Label: "App Data", Value: filepath.ToSlash(flow.appDataPath), ActionEnabled: false},
 		appui.SettingsRow{Key: appui.SettingsClearImages, Label: "Clear Image Cache", Value: "", ActionEnabled: true},
 		appui.SettingsRow{Key: appui.SettingsRefreshGames, Label: "Refresh Game List", Value: "", ActionEnabled: true},

@@ -35,6 +35,10 @@ type CatManageFlow struct {
 const (
 	filesChanged  = "Your files changed in the meantime. Go back and try again."
 	notOnLeafCard = "This file isn't on an SD card Leaf uses."
+
+	// pico8SetKeepsNames is why a file of a Pico-8 game that came in several
+	// files cannot be renamed; see inventory.Entry.InPico8Set.
+	pico8SetKeepsNames = "Files of a multi-file Pico-8 game keep their original names, so the game still finds them."
 )
 
 // nameTakenError stops a rename onto a name another file has.
@@ -93,7 +97,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	if leftOver := flow.leftOverIndices(); len(leftOver) > 0 {
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: fmt.Sprintf("%d OLD", len(leftOver)),
-			Detail: leftOverDetail, Enabled: flow.indicesAvailable(leftOver),
+			Detail: flow.leftOverText(leftOver), Enabled: flow.indicesAvailable(leftOver),
 		})
 	}
 	if len(romIndices) > 0 {
@@ -114,12 +118,18 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	})
 	for _, index := range romIndices {
 		file := entry.Files[index]
-		if !roms.SupportsUnifiedNaming(file.DestPath) {
+		if !roms.SupportsUnifiedNaming(file.DestPath) || entry.InPico8Set(file) {
 			continue
 		}
-		label := "Use title for " + filepath.Base(file.DestPath)
+		// Offer a rename only when it changes the name. FAT32 ignores
+		// letter case, so a case-only change is no rename either.
+		current := filepath.Base(file.DestPath)
+		label, target := "Use title for "+current, filepath.Base(roms.UnifiedTarget(file.DestPath, entry.Title))
 		if file.UnifiedName {
-			label = "Restore upload name for " + filepath.Base(file.DestPath)
+			label, target = "Use original name for "+current, originalName(file)
+		}
+		if target == "" || target == "." || strings.EqualFold(target, current) {
+			continue
 		}
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemRename, Label: label, Badge: "RENAME",
@@ -134,11 +144,43 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 // one title name. It names the member by its file name, as the member picker
 // does; archive folders can be long enough to push the name off the row.
 func memberNote(member, installedName string) string {
-	base := path.Base(strings.ReplaceAll(member, "\\", "/"))
+	base := memberBase(member)
 	if member == "" || strings.EqualFold(base, installedName) {
 		return ""
 	}
 	return "From " + base
+}
+
+// memberBase is the file name of an archive member. Archives made on
+// Windows can separate folders with backslashes.
+func memberBase(member string) string {
+	return path.Base(strings.ReplaceAll(member, "\\", "/"))
+}
+
+// originalName is the name a ROM had before a rename to the game's title,
+// or "" when it is not known. For a file downloaded on its own it is the
+// upload's name. For a file from an archive it is the name an install with
+// Rename ROM Files off gives its member; archive records from before
+// members were recorded have none.
+func originalName(file inventory.DownloadedFile) string {
+	name := filepath.Base(file.Filename)
+	if file.SourceArchive != "" {
+		if file.SourceMember == "" {
+			return ""
+		}
+		name = memberBase(file.SourceMember)
+		// The install named a member whose name does not say what it is,
+		// such as extra.dat, by the extension its first bytes showed. No
+		// rename changes an extension, so the file still has that one.
+		if ext := roms.ROMExt(filepath.Base(file.DestPath)); !strings.EqualFold(roms.ROMExt(name), ext) {
+			name = strings.TrimSuffix(name, filepath.Ext(name)) + ext
+		}
+		name = archiveROMName(name)
+	}
+	if name == "" || name == "." || name == ".." || name == "/" || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 func (flow *CatManageFlow) indicesAvailable(indices []int) bool {
@@ -183,20 +225,25 @@ func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *
 		return nil, nil, nil
 	}
 	flow.pending = append([]int(nil), indices...)
-	lines := make([]string, 0, len(indices)*2+1)
+	// Each file is its name with its location under it, one entry after
+	// another, so a soundtrack of thirty tracks does not take a screen per
+	// ten.
+	var prompt []appui.BodyBlock
 	if item.Kind == appui.ManageItemDeleteLeftOver {
-		lines = append(lines, leftOverDetail)
+		prompt = append(prompt, appui.Paragraph(flow.leftOverText(indices)))
 	}
+	files := make([]appui.ListEntry, 0, len(indices))
 	for _, index := range indices {
 		file := flow.entry.Files[index]
 		_, rel, _ := flow.resolveFile(file, false)
-		lines = append(lines, filepath.Base(file.DestPath), rel)
+		files = append(files, appui.ListEntry{Text: filepath.Base(file.DestPath), Detail: rel})
 	}
+	prompt = append(prompt, appui.ListBlock(files))
 	title := "Delete selected file?"
 	if len(indices) > 1 {
 		title = fmt.Sprintf("Delete %d managed files?", len(indices))
 	}
-	model.SetConfirm(title, lines)
+	model.SetConfirm(title, prompt)
 	return nil, nil, nil
 }
 
@@ -340,8 +387,32 @@ func (flow *CatManageFlow) otherOwner(file inventory.DownloadedFile) string {
 	return ""
 }
 
-// leftOverDetail explains files a reinstall left behind.
-const leftOverDetail = "Left over from an older version"
+// What Manage says about the files an install of their upload left behind. A
+// file is an earlier copy when the same version of the upload was installed
+// again somewhere else; see inventory.Entry.LeftOverIsEarlierCopy.
+const (
+	leftOverDetail      = "Left over from an older version"
+	earlierCopyDetail   = "Earlier copy of files you installed again"
+	leftOverMixedDetail = "Left over from earlier installs"
+)
+
+// leftOverText explains the left-over files at indices: older versions,
+// earlier copies, or a mix of both.
+func (flow *CatManageFlow) leftOverText(indices []int) string {
+	copies := 0
+	for _, index := range indices {
+		if flow.entry.LeftOverIsEarlierCopy(flow.entry.Files[index]) {
+			copies++
+		}
+	}
+	switch {
+	case copies == 0:
+		return leftOverDetail
+	case copies == len(indices):
+		return earlierCopyDetail
+	}
+	return leftOverMixedDetail
+}
 
 // leftOverIndices are the files a reinstall of their upload did not write.
 func (flow *CatManageFlow) leftOverIndices() []int {
@@ -488,6 +559,9 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 		return nil, nil, screentext.Wrap(fmt.Errorf("managed ROM is no longer in the inventory"), filesChanged)
 	}
 	file := entry.Files[fileIndex]
+	if entry.InPico8Set(file) {
+		return nil, nil, screentext.New(pico8SetKeepsNames)
+	}
 	if !roms.SupportsUnifiedNaming(file.DestPath) {
 		return nil, nil, screentext.New("PlayStation disc files keep their original names, so the game still finds them.")
 	}
@@ -518,14 +592,15 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 	if flow.enable {
 		flow.targetPath, _ = roms.ResolveUnifiedDest(file.DestPath, entry.Title)
 	} else {
-		name := filepath.Base(file.Filename)
-		if name == "." || name == string(filepath.Separator) || name == "" {
-			return nil, nil, screentext.Wrap(fmt.Errorf("original upload name is not safe"),
-				"The original upload name can't be used as a file name.")
+		name := originalName(file)
+		if name == "" {
+			return nil, nil, screentext.Wrap(fmt.Errorf("original name is unknown or not a file name"),
+				"This ROM's original name isn't known.")
 		}
 		flow.targetPath = filepath.Join(filepath.Dir(file.DestPath), name)
 	}
-	if filepath.Clean(flow.targetPath) == filepath.Clean(file.DestPath) {
+	// Manage offers no rename that keeps the name; this guards the flow.
+	if roms.SameFAT32Path(flow.targetPath, file.DestPath) {
 		return nil, nil, screentext.New("This ROM already has that name.")
 	}
 	if _, err := leaf.RelativeWithin(source.Root, flow.targetPath); err != nil {
@@ -697,22 +772,24 @@ func (flow *CatRenameFlow) LibraryTitleGroups() []leaf.LibraryTitleGroup {
 		[]string{flow.renamedROMPath})
 }
 
-func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []string {
-	lines := make([]string, 0, len(pairs)*2)
+// displayPairs lists each file to rename as its current path, then the path
+// it becomes under it.
+func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []appui.ListEntry {
+	entries := make([]appui.ListEntry, 0, len(pairs))
 	for _, pair := range pairs {
 		oldRel, _ := leaf.RelativeWithin(flow.source.Root, pair.oldPath)
 		newRel, _ := leaf.RelativeWithin(flow.source.Root, pair.newPath)
-		lines = append(lines, filepath.ToSlash(oldRel), "→ "+filepath.ToSlash(newRel))
+		entries = append(entries, appui.ListEntry{Text: filepath.ToSlash(oldRel), Detail: "→ " + filepath.ToSlash(newRel)})
 	}
-	return lines
+	return entries
 }
 
 func discoverRenamePairs(root, oldBase, newBase string, states bool) ([]renamePair, error) {
 	if root == "" {
 		return nil, nil
 	}
-	oldStem := strings.TrimSuffix(oldBase, roms.ROMExt(oldBase))
-	newStem := strings.TrimSuffix(newBase, roms.ROMExt(newBase))
+	oldStem := roms.TrimROMExt(oldBase)
+	newStem := roms.TrimROMExt(newBase)
 	dirs := []string{root}
 	entries, err := os.ReadDir(root)
 	if err != nil {

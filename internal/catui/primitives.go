@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 )
 
 // Shared logical spacing. These are scaled once by NewComposer; screen code
@@ -465,65 +467,211 @@ func (ui *Composer) DrawValueRow(rect Rect, label, value string, selected, cycle
 	})
 }
 
-func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []string, offset int) error {
+// DrawScrollingBody draws title in the large font and paragraphs below it in
+// rect, with a blank line between paragraphs. Only the body lines scroll:
+// scroll, when not nil, says which line to start at and gets the bounds of
+// what fits; nil draws from the first line. Body lines that do not fit get
+// the launcher scrollbar at rect's right edge, and wrap narrower to leave
+// room for it.
+func (ui *Composer) DrawScrollingBody(rect Rect, title string, paragraphs []string, scroll *appui.BodyScroll) error {
+	return ui.DrawScrollingBlocks(rect, title, appui.Prose(paragraphs...), scroll)
+}
+
+// DrawScrollingBlocks is DrawScrollingBody for blocks of prose and lists.
+// A list's entries follow each other without a blank line, each entry's
+// detail line under its text in the hint color.
+func (ui *Composer) DrawScrollingBlocks(rect Rect, title string, blocks []appui.BodyBlock, scroll *appui.BodyScroll) error {
+	layout := layoutBody(rect, title, blocks, ui.bodyMetrics())
+	offset := 0
+	if scroll != nil {
+		scroll.SetScrollBounds(layout.maxOffset())
+		scroll.SetScrollRows(layout.rows)
+		offset = scroll.ScrollLine
+	}
+	offset = minInt(maxInt(offset, 0), layout.maxOffset())
 	return ui.withClip(rect, func() error {
 		x, y := rect.X, rect.Y
-		// A title wider than a narrow column wraps instead of being cut off.
-		for _, line := range ui.scrollingTitleLines(title, rect.W) {
+		for _, line := range layout.titleLines {
 			if _, err := ui.ctx.DrawFallbackText(FontLarge, line, x, y,
 				ui.ctx.ThemeColor(RoleEmphasis), rect.W); err != nil {
 				return err
 			}
 			y += ui.ctx.FontHeight(FontLarge)
 		}
-		if title != "" {
-			y += ui.BasePadding / 2
-		}
-		lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
-		lines := make([]string, 0, len(paragraphs)*2)
-		for _, paragraph := range paragraphs {
-			lines = append(lines, wrapText(paragraph, rect.W, func(value string) int {
-				return ui.ctx.MeasureText(FontSmall, value)
-			})...)
-			lines = append(lines, "")
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		for i := offset; i < len(lines) && y+lineHeight <= rect.Y+rect.H; i++ {
-			if lines[i] != "" {
-				if _, err := ui.ctx.DrawFallbackText(FontSmall, lines[i], x, y,
-					ui.ctx.ThemeColor(RoleText), rect.W); err != nil {
+		y = rect.Y + layout.top
+		lineHeight := ui.bodyLineHeight()
+		for i := offset; i < len(layout.lines) && y+lineHeight <= rect.Y+rect.H; i++ {
+			if line := layout.lines[i]; line.text != "" {
+				role := RoleText
+				if line.detail {
+					role = RoleHint
+				}
+				if _, err := ui.ctx.DrawFallbackText(FontSmall, line.text, x, y,
+					ui.ctx.ThemeColor(role), layout.width); err != nil {
 					return err
 				}
 			}
 			y += lineHeight
 		}
-		return nil
+		track := rect.H - layout.top
+		if !layout.overflows() || track <= 0 {
+			return nil
+		}
+		// The launcher list's scrollbar, beside the lines that scroll.
+		return ui.ctx.DrawScrollbar(rect.X+rect.W-ui.ctx.Scale(scrollbarWidth), rect.Y+layout.top,
+			track, layout.rows, len(layout.lines), offset)
 	})
 }
 
-func (ui *Composer) scrollingTitleLines(title string, width int) []string {
-	if title == "" {
-		return nil
+// scrollbarWidth is Cat's scrollbar width, and scrollbarGutter the room
+// cat_draw_scroll_view leaves for it beside scrolling content.
+const (
+	scrollbarWidth  = 4
+	scrollbarGutter = 12
+)
+
+func (ui *Composer) bodyLineHeight() int { return ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5) }
+
+func (ui *Composer) bodyMetrics() bodyMetrics {
+	return bodyMetrics{
+		titleHeight: ui.ctx.FontHeight(FontLarge),
+		titleGap:    ui.BasePadding / 2,
+		lineHeight:  ui.bodyLineHeight(),
+		gutter:      ui.ctx.Scale(scrollbarGutter),
+		measureTitle: func(value string) int {
+			return ui.ctx.MeasureFallbackText(FontLarge, value)
+		},
+		measureLine: func(value string) int { return ui.ctx.MeasureText(FontSmall, value) },
 	}
-	return wrapText(title, width, func(value string) int {
-		return ui.ctx.MeasureFallbackText(FontLarge, value)
-	})
 }
 
-// ScrollingBodyRows is how many body lines DrawScrollingBody shows in rect
-// below title, which may wrap.
-func (ui *Composer) ScrollingBodyRows(rect Rect, title string) int {
-	used := 0
-	if lines := ui.scrollingTitleLines(title, rect.W); len(lines) > 0 {
-		used = len(lines)*ui.ctx.FontHeight(FontLarge) + ui.BasePadding/2
+// bodyMetrics are the sizes DrawScrollingBody lays text out with: the title
+// line height and the gap under the title, the body line pitch, the room a
+// scrollbar takes, and how to measure title and body text.
+type bodyMetrics struct {
+	titleHeight, titleGap, lineHeight, gutter int
+	measureTitle, measureLine                 func(string) int
+}
+
+// bodyLayout is a scrolling body laid out in a rect: the title lines, the
+// body lines with a blank line between blocks, the width the body lines wrap
+// to, how far below the rect's top they start, and how many of them fit.
+type bodyLayout struct {
+	titleLines       []string
+	lines            []bodyLine
+	width, top, rows int
+}
+
+// bodyLine is one line of body text. A detail line is the second line of a
+// list entry, drawn in the hint color.
+type bodyLine struct {
+	text   string
+	detail bool
+}
+
+func (layout bodyLayout) overflows() bool { return len(layout.lines) > layout.rows }
+
+// maxOffset is the first line that puts the last line at the bottom.
+func (layout bodyLayout) maxOffset() int { return maxInt(0, len(layout.lines)-layout.rows) }
+
+func layoutBody(rect Rect, title string, blocks []appui.BodyBlock, metrics bodyMetrics) bodyLayout {
+	layout := bodyLayout{width: rect.W}
+	if title != "" {
+		// A title wider than a narrow column wraps instead of being cut off.
+		layout.titleLines = wrapText(title, rect.W, metrics.measureTitle)
+		layout.top = len(layout.titleLines)*metrics.titleHeight + metrics.titleGap
 	}
-	lineHeight := ui.ctx.FontHeight(FontSmall) + ui.ctx.Scale(5)
-	if lineHeight <= 0 {
-		return 1
+	layout.rows = 1
+	if metrics.lineHeight > 0 {
+		layout.rows = maxInt(1, (rect.H-layout.top)/metrics.lineHeight)
 	}
-	return maxInt(1, (rect.H-used)/lineHeight)
+	layout.lines = bodyLines(blocks, layout.width, metrics.measureLine)
+	// Narrower lines only add lines, so a body that overflows at the full
+	// width still overflows beside the scrollbar.
+	if layout.overflows() && rect.W > metrics.gutter {
+		layout.width = rect.W - metrics.gutter
+		layout.lines = bodyLines(blocks, layout.width, metrics.measureLine)
+	}
+	return layout
+}
+
+// bodyLines wraps blocks to width. Blocks are separated by one blank line,
+// the entries of a list are not, and a block with nothing in it takes no
+// lines.
+func bodyLines(blocks []appui.BodyBlock, width int, measure func(string) int) []bodyLine {
+	var lines []bodyLine
+	for _, block := range blocks {
+		if block.Text == "" && !block.IsList() {
+			continue
+		}
+		if len(lines) > 0 {
+			lines = append(lines, bodyLine{})
+		}
+		if !block.IsList() {
+			lines = appendWrapped(lines, block.Text, width, measure, false)
+			continue
+		}
+		for _, entry := range block.Entries {
+			lines = appendWrapped(lines, entry.Text, width, measure, false)
+			if entry.Detail != "" {
+				lines = appendWrapped(lines, entry.Detail, width, measure, true)
+			}
+		}
+	}
+	return lines
+}
+
+func appendWrapped(lines []bodyLine, text string, width int, measure func(string) int, detail bool) []bodyLine {
+	for _, line := range wrapText(text, width, measure) {
+		for _, piece := range breakWide(line, width, measure) {
+			lines = append(lines, bodyLine{text: piece, detail: detail})
+		}
+	}
+	return lines
+}
+
+// breakWide splits a line that is wider than width, which wrapText leaves
+// when one word has no space to wrap at (a long file name or path), into
+// pieces that fit, so the end of the name is not cut off at the edge.
+func breakWide(line string, width int, measure func(string) int) []string {
+	if width <= 0 || measure(line) <= width {
+		return []string{line}
+	}
+	var pieces []string
+	var piece []rune
+	for _, r := range line {
+		if len(piece) > 0 && measure(string(piece)+string(r)) > width {
+			pieces = append(pieces, string(piece))
+			piece = piece[:0]
+		}
+		piece = append(piece, r)
+	}
+	return append(pieces, string(piece))
+}
+
+// QRCaptionHeight is the room DrawQRCaption takes for caption at width.
+func (ui *Composer) QRCaptionHeight(caption string, width int) int {
+	return ui.ctx.Scale(5) + len(ui.qrCaptionLines(caption, width))*ui.ctx.FontHeight(FontTiny)
+}
+
+// DrawQRCaption draws caption in the hint color under the QR code drawn at
+// qr, from x and at most width wide. Detail and About caption their QR
+// codes with it. A caption too wide for one line takes two, and the
+// second ends in "..." if it still does not fit. It returns the y below
+// the caption.
+func (ui *Composer) DrawQRCaption(qr Rect, x, width int, caption string) (int, error) {
+	y := qr.Y + qr.H + ui.ctx.Scale(5)
+	for _, line := range ui.qrCaptionLines(caption, width) {
+		if _, err := ui.ctx.DrawText(FontTiny, line, x, y, ui.ctx.ThemeColor(RoleHint), width, true); err != nil {
+			return y, err
+		}
+		y += ui.ctx.FontHeight(FontTiny)
+	}
+	return y, nil
+}
+
+func (ui *Composer) qrCaptionLines(caption string, width int) []string {
+	return fitLines(caption, width, 2, func(value string) int { return ui.ctx.MeasureText(FontTiny, value) })
 }
 
 func CenteredModalRect(bounds Rect, widthPercent, heightPercent, margin int) Rect {
@@ -559,7 +707,7 @@ func (ui *Composer) DrawModal(bounds Rect, title, body string) error {
 	}
 	inner.Y += ui.ctx.FontHeight(FontLarge) + ui.BasePadding
 	inner.H -= ui.ctx.FontHeight(FontLarge) + ui.BasePadding
-	return ui.DrawScrollingBody(inner, "", []string{body}, 0)
+	return ui.DrawScrollingBody(inner, "", []string{body}, nil)
 }
 
 func (ui *Composer) DrawWarningCover(bounds Rect, title, body string) error {

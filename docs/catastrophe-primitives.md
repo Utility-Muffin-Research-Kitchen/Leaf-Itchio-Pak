@@ -41,6 +41,15 @@ before `cat_box_split_cols`. Every scrolling list obtains its row pitch through
 `cat_box_fit_rows`. Components use Catastrophe font tiers and theme roles; they
 do not carry screen-height font formulas or literal UI colors.
 
+`DrawScrollingBody` draws the launcher's list scrollbar beside body lines that
+do not fit, wraps them narrower to leave room for it, and sets the bounds and
+the visible line count of the screen's `appui.BodyScroll` from what it drew, so
+Up/Down stays within the text and Left/Right page by a screenful.
+`DrawScrollingBlocks` takes `appui.BodyBlock` values instead of plain
+paragraphs: a prose paragraph keeps its blank line, while the entries of a list
+block (a file's name, then its location in the hint color) follow each other
+with none, so a prompt that lists thirty files stays two lines per file.
+
 Remote strings and images are clipped to their content rectangles. Text uses
 the bridge's primary/fallback font runs, while textures remain opaque,
 generation-checked handles owned by the main render thread.

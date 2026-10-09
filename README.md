@@ -101,11 +101,12 @@ The pak consumes Leaf's sourced runtime environment. It never discovers cards
 by scanning arbitrary mount points or writes into the release-managed
 `.system/leaf` tree.
 
-With **ROM Location = auto**, downloads use the primary source and canonical
-system directory. With **ROM Location = ask**, the picker lists both configured
-sources but disables a card that is not actually mounted. A chosen subfolder is
-sandboxed below that source's canonical system root and may be remembered per
-system. ROMs and their launcher artwork always remain on the same source:
+With **ROM Location** on **Auto**, downloads use the primary source and
+canonical system directory. With **ROM Location** on **Ask**, the picker lists
+both configured sources but disables a card that is not actually mounted. A
+chosen subfolder is sandboxed below that source's canonical system root and may
+be remembered per system. ROMs and their launcher artwork always remain on the
+same source:
 
 ```text
 Roms/<system>/<optional folders>/<game files>
@@ -125,11 +126,11 @@ scanned filename. Existing downloads are not backfilled automatically.
 
 ## Soundtracks and Disco Boy
 
-**Music Download** defaults to `off` and can be changed to:
+**Music Download** defaults to **Off** and can be changed to:
 
-- `auto`: include supported music and write to the primary Music root;
-- `ask`: choose which music entries to install;
-- `off`: ignore soundtrack entries.
+- **Auto**: include supported music and write to the primary Music root;
+- **Ask**: choose which music entries to install;
+- **Off**: ignore soundtrack entries.
 
 When music is enabled, **Music Location** can use the primary root automatically
 or ask for a mounted card and folder. Disco Boy is optional and is not installed
@@ -166,13 +167,15 @@ confirmation screen in front of flagged detail content. The defaults are:
 
 | Category | Default |
 | --- | --- |
-| Adult/suggestive content | On |
-| Heavy themes | On |
-| Substance use | On |
-| Queer/LGBTQ+ themes | Off |
+| **Adult Content** (adult and suggestive tags) | **Blocked** |
+| **Heavy Themes** | **Blocked** |
+| **Substance Use** | **Blocked** |
+| **Queer Content** (LGBTQ+ tags) | **Allowed** |
 
-Each category and its individual tags can be changed under
-**Settings > Content Moderation**. These tag-based advisories are best effort;
+**Blocked** puts that confirmation screen in front of a matching game's
+details, and **Allowed** shows them directly. You can change each category
+under **Settings > Content Moderation**, and the individual tags of every
+category except **Substance Use**. These tag-based advisories are best effort;
 itch.io authors control their own tags and descriptions.
 
 ## App data, logs, and privacy
@@ -200,9 +203,9 @@ already had. If a download server asks the app to slow down, the download
 waits, gets a fresh link once and tries again. If that is refused too, the
 download stops and asks you to wait a minute before you try again.
 
-Info logging is the default. Debug logging is intended for a short reproduction
-of network/download failures; the same secret and private-path redaction applies
-at both levels.
+**Log Level** defaults to **Info**. **Debug** is intended for a short
+reproduction of network/download failures; the same secret and private-path
+redaction applies at both levels.
 
 ## Build and test
 

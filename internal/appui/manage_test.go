@@ -23,7 +23,7 @@ func TestManageNavigationIncludesUnavailableFilesForInspection(t *testing.T) {
 
 func TestManageConfirmationControls(t *testing.T) {
 	model := NewManageModel("Manage")
-	model.SetConfirm("Delete?", []string{"game.gb"})
+	model.SetConfirm("Delete?", Prose("game.gb"))
 	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != ManageIntentConfirm {
 		t.Fatalf("A = %v, want confirm", got)
 	}
