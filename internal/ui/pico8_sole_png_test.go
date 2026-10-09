@@ -3,10 +3,7 @@
 package ui
 
 import (
-	"archive/zip"
-	"bytes"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
@@ -41,6 +38,12 @@ func pico8ManifestFor(pngs, p8s, luas int, music bool) roms.ZIPManifest {
 // .p8.png goes to the multi-file extractor in no combination of carts, Lua
 // files and music (CatArchiveFlow.prepareInitialAction sends it to a normal
 // install first, or ZIPManifest.IsPico8MultiFileGame refuses it).
+//
+// The inspection could count a second .p8.png for such an archive: it read a
+// member with no Pico-8 name by its bytes, and a PNG 128 pixels wide counted as
+// a cart that the extractors then skipped. A PNG is no longer a cart by its
+// bytes (roms.ClassifyArchiveMember), so that route is closed too; see
+// TestAPNGWithoutACartNameIsNotACart.
 func TestAnArchiveWithOneP8PNGNeverRoutesToTheMultiFileExtractor(t *testing.T) {
 	multiFile := 0
 	for pngs := 0; pngs <= 3; pngs++ {
@@ -65,46 +68,5 @@ func TestAnArchiveWithOneP8PNGNeverRoutesToTheMultiFileExtractor(t *testing.T) {
 	}
 	if multiFile == 0 {
 		t.Fatal("no combination reached the multi-file extractor; the routing this test covers has changed")
-	}
-}
-
-// The one way an archive reached that rename: the inspection reads a member
-// that has no Pico-8 extension by its bytes, so a PNG 128 pixels wide counts as
-// a cart, while the extractors choose members by name. The inspection then
-// counts two .p8.png carts where one is installed, and the archive is routed to
-// the multi-file extractor with a single .p8.png. A set's files keep the names
-// the game refers to them by, so that cart is not renamed to the title.
-func TestMultiFileSetKeepsTheNamesOfItsCarts(t *testing.T) {
-	phantom := append([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x80"), make([]byte, 32)...)
-	data := zipOf(t, map[string][]byte{
-		"game/cart.p8.png": []byte("compiled cart"),
-		"game/level2.p8":   []byte("pico-8 cartridge // LEVEL2\n"),
-		"game/data":        phantom,
-	})
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := manifestFromZIP(reader.File)
-	if err != nil {
-		t.Fatal(err)
-	}
-	flow := archiveFlowFixture(t, &settings.Config{ROMLocation: "auto", UnifiedNaming: true}, manifest)
-	flow.prepareInitialAction()
-	if flow.plan.Pico8GameDir == "" {
-		t.Fatalf("manifest %+v is not routed to the multi-file extractor; this test needs another way to reach it", manifest.Entries)
-	}
-
-	worker, dir := runArchive(t, "leafbound.zip", data, &settings.Config{UnifiedNaming: true}, true)
-	got := treeOf(t, dir)
-	names := make([]string, 0, len(got))
-	for name := range got {
-		if !isPlaylist(name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	if fmt.Sprint(names) != "[cart.p8.png level2.p8]" {
-		t.Fatalf("game folder = %v (skipped %v), want the carts under their own names", names, worker.skipped)
 	}
 }

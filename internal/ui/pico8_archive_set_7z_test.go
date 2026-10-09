@@ -13,7 +13,7 @@ import (
 
 // F22: a set from a 7z archive installs the carts and Lua files a ZIP does,
 // recorded the same way, and the records alone tell it is a set. The ZIP path
-// also writes a playlist; see the comment on extractPico8_7z for why the 7z
+// also writes a playlist; see the comment on extractPico8 for why the 7z
 // path does not.
 func TestPico8SetFromA7zInstallsTheSameFilesAsFromAZip(t *testing.T) {
 	type installed struct {

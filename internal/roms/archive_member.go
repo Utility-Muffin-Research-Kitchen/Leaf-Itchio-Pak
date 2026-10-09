@@ -56,6 +56,14 @@ func looksLikeText(data []byte) bool {
 // MDIsROM. Image names are never promoted to ROMs. A member that
 // cannot be read stays KindOther, and for a ".md" name the read error is
 // returned as well.
+//
+// Pico-8 carts follow from this. A text cart is a ".p8" member by its name or,
+// when the name says nothing ("soulbound_v1_0"), by starting with "pico-8
+// cartridge". A compiled cart is a ".p8.png" member by its name alone: no PNG
+// is a cart by its bytes, because a cart image is 160x205 pixels and is told
+// from a cover or a screenshot only by the name Pico-8 gave it (see
+// DetectROMExt). Everything that decides which members a Pico-8 game installs
+// reads this classification, so the inspection and the extractors agree.
 func ClassifyArchiveMember(name string, open func() (io.ReadCloser, error)) (FileKind, string, error) {
 	kind := ClassifyEntry(name)
 	base := filepath.Base(strings.ReplaceAll(name, "\\", "/"))

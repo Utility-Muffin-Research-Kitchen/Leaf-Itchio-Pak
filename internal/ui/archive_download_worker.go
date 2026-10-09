@@ -217,7 +217,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 	// Pico-8 multi-file: path-preserving extraction to game subdirectory.
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
-		s.extractPico8ZIP(&r.Reader, now)
+		s.extractPico8(entries, now)
 		// Cover art and .m3u launcher for multi-file Pico-8 games.
 		if len(s.extracted) > 0 {
 			gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
@@ -225,7 +225,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 
 			// .m3u launcher: collect .p8/.p8.png files, sort naturally, write
 			// <safe>.m3u inside the game directory. Leaf does not read it for
-			// Pico-8, which is why the 7z path writes none; see extractPico8_7z.
+			// Pico-8, which is why the 7z path writes none; see extractPico8.
 			// Each entry is the cart's path relative to the playlist, with
 			// forward slashes, as an .m3u file has it. Bare names would list
 			// the carts of subfolders under the same name twice.
@@ -348,7 +348,7 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
-		s.extractPico8_7z(r, now)
+		s.extractPico8(entries, now)
 		if len(s.extracted) > 0 {
 			s.savePico8Artwork()
 		}
@@ -541,13 +541,47 @@ func (s *ArchiveDownloadWorker) savePico8Artwork() {
 	}
 }
 
-// extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
-// preserving relative paths into s.plan.Pico8GameDir.
+// pico8Member is a file of a multi-file Pico-8 game: a cart or a Lua file.
+type pico8Member struct {
+	entry archiveEntry
+	// name is the member's path in the archive, with the extension the
+	// classification gave a cart.
+	name string
+}
+
+// pico8Members picks the files a multi-file Pico-8 game installs from the
+// archive's classified entries: the carts and the Lua files they include. A
+// cart is whatever the inspection counted as one. classifyArchive classifies
+// each member once, by its name or, when the name does not decide it, by its
+// first bytes (roms.ClassifyArchiveMember), and the routing, the preflight and
+// this choice all read that result, so they agree on which members are carts.
+// A text cart with no Pico-8 name is installed as a .p8; no PNG is a cart
+// unless its name says .p8.png. Lua files are chosen by name: nothing else
+// recognises them.
+func pico8Members(entries []archiveEntry) []pico8Member {
+	var members []pico8Member
+	for _, entry := range entries {
+		if !entry.installable() {
+			continue
+		}
+		ext := strings.ToLower(roms.ROMExt(entry.base))
+		cart := entry.kind == roms.KindROM && (ext == ".p8" || ext == ".p8.png")
+		if cart || strings.HasSuffix(strings.ToLower(entry.base), ".lua") {
+			members = append(members, pico8Member{entry: entry, name: entry.classifiedName()})
+		}
+	}
+	return members
+}
+
+// extractPico8 extracts the carts and Lua files of a multi-file Pico-8 game
+// (pico8Members) from a ZIP or 7z archive into s.plan.Pico8GameDir, keeping
+// each file's path below the folders every file shares. The support files
+// carts include at runtime go in beside the carts.
 //
-// Unlike the ZIP path it writes no .m3u playlist, on purpose: Leaf does not use
-// one for Pico-8, so a set from a 7z archive lists and launches exactly like a
-// set from a ZIP. Jawaka's PICO8 system (Leaf's systems.json) declares no
-// playlist extensions and "m3u_generation": "none". Its scan
+// Only the ZIP path then writes a .m3u playlist (see run), on purpose: Leaf
+// does not use one for Pico-8, so a set from a 7z archive lists and launches
+// exactly like a set from a ZIP. Jawaka's PICO8 system (Leaf's systems.json)
+// declares no playlist extensions and "m3u_generation": "none". Its scan
 // (jw__metadata_accepts_rom in Jawaka's internal/discovery/discovery.c) takes
 // only .p8 and .png files as games, so a .m3u in Roms/PICO8 is not indexed, and
 // jw__collect_m3u_members reads no playlist when the system lists no playlist
@@ -555,75 +589,48 @@ func (s *ArchiveDownloadWorker) savePico8Artwork() {
 // its own library entry, and launching one runs fake-08 (or the optional native
 // PICO-8 pak) on that cart alone; the other carts and the .lua files it uses
 // are found by name in its folder. If Leaf ever indexes playlists for Pico-8,
-// give both archive types the playlist together instead of adding it to this
+// give both archive types the playlist together instead of adding it to one
 // path alone.
 //
 // Every file keeps the name it has in the archive, whatever the unified naming
 // setting: a set's carts and Lua files refer to each other by name (see
 // inventory.Entry.InPico8Set).
-func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time.Time) {
+func (s *ArchiveDownloadWorker) extractPico8(entries []archiveEntry, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
-	var relevantPaths []string
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		name := filepath.ToSlash(strings.ReplaceAll(f.Name, "\\", "/"))
-		base := filepath.Base(name)
-		if strings.HasPrefix(base, "._") {
-			continue
-		}
-		lower := strings.ToLower(base)
-		ext := strings.ToLower(roms.ROMExt(base))
-		if ext == ".p8" || ext == ".p8.png" || strings.HasSuffix(lower, ".lua") {
-			relevantPaths = append(relevantPaths, name)
-		}
+	members := pico8Members(entries)
+	names := make([]string, len(members))
+	for index, member := range members {
+		names[index] = member.name
 	}
-	prefix := commonPathPrefix(relevantPaths)
+	prefix := commonPathPrefix(names)
+	logger.Debug("%s: pico8 strip-prefix=%q game-dir=%s", s.logPrefix(), prefix, gameDir)
 
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		name := filepath.ToSlash(strings.ReplaceAll(f.Name, "\\", "/"))
-		base := filepath.Base(name)
-		if strings.HasPrefix(base, "._") {
-			continue
-		}
-		lower := strings.ToLower(base)
-		ext := strings.ToLower(roms.ROMExt(base))
-		if ext != ".p8" && ext != ".p8.png" && !strings.HasSuffix(lower, ".lua") {
-			continue
-		}
-		relPath := strings.TrimPrefix(name, prefix)
-		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
+	for _, member := range members {
+		entry := member.entry
+		archiveName := path.Base(entry.name)
+		dest := filepath.Join(gameDir, filepath.FromSlash(strings.TrimPrefix(member.name, prefix)))
 		if s.ownedByAnotherGame(dest) {
-			logger.Warn("7z-download: pico8 %s: another game's file is already saved there", base)
-			s.skipped = append(s.skipped, base)
+			logger.Warn("%s: pico8 %s: another game's file is already saved there", s.logPrefix(), archiveName)
+			s.skipped = append(s.skipped, archiveName)
 			continue
 		}
 		if !s.names.Claim(dest) {
-			logger.Warn("7z-download: pico8 %s: another file from this archive is already saved there", base)
-			s.skipped = append(s.skipped, base)
+			logger.Warn("%s: pico8 %s: another file from this archive is already saved there", s.logPrefix(), archiveName)
+			s.skipped = append(s.skipped, archiveName)
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			s.skipped = append(s.skipped, base)
+			logger.Warn("%s: pico8 mkdir %s: %v", s.logPrefix(), filepath.Dir(dest), err)
+			s.skipped = append(s.skipped, archiveName)
 			continue
 		}
-		if err := extractEntry(f.Open, f.FileInfo().Size(), dest); err != nil {
-			logger.Warn("7z-download: pico8 extract %s: %v", base, err)
-			s.skipped = append(s.skipped, base)
+		if err := extractEntry(entry.open, int64(entry.size), dest); err != nil {
+			logger.Warn("%s: pico8 extract %s: %v", s.logPrefix(), archiveName, err)
+			s.skipped = append(s.skipped, archiveName)
 			continue
 		}
 
-		logger.Info("7z-download: pico8 extracted %s → %s", base, dest)
+		logger.Info("%s: pico8 extracted %s → %s", s.logPrefix(), archiveName, dest)
 		s.extracted = append(s.extracted, dest)
 		s.inv.Add(s.game.URL, inventory.Entry{
 			GameID:  downloadGameID(s.detail),
@@ -637,7 +644,7 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 			DownloadedAt:   now,
 			FileType:       inventory.FileTypeROM,
 			SourceArchive:  s.plan.Upload.Filename,
-			SourceMember:   name,
+			SourceMember:   entry.name,
 		})
 	}
 }
@@ -1218,103 +1225,6 @@ func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
 	return s.plan.shouldExtractROM(name)
 }
 
-// extractPico8ZIP extracts all .p8, .p8.png, and .lua files from r into
-// s.plan.Pico8GameDir, preserving relative paths from the ZIP after stripping
-// any common top-level wrapper directory. Support files (.lua) required by
-// Pico-8 carts are extracted alongside the cartridges. Every file keeps the
-// name it has in the archive, whatever the unified naming setting: a set's
-// carts and Lua files refer to each other by name (see
-// inventory.Entry.InPico8Set).
-func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
-	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
-
-	// Collect all relevant file paths to determine the common prefix to strip.
-	var relevantPaths []string
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		name := filepath.ToSlash(f.Name)
-		base := filepath.Base(name)
-		if strings.HasPrefix(base, "._") {
-			continue
-		}
-		lower := strings.ToLower(base)
-		ext := strings.ToLower(roms.ROMExt(base))
-		if ext == ".p8" || ext == ".p8.png" || strings.HasSuffix(lower, ".lua") {
-			relevantPaths = append(relevantPaths, name)
-		}
-	}
-	prefix := commonPathPrefix(relevantPaths)
-	logger.Debug("zip-download: pico8 strip-prefix=%q game-dir=%s", prefix, gameDir)
-
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if roms.IsInMacOSMetaDir(f.Name) {
-			continue
-		}
-		name := filepath.ToSlash(f.Name)
-		base := filepath.Base(name)
-		if strings.HasPrefix(base, "._") {
-			continue
-		}
-		lower := strings.ToLower(base)
-		ext := strings.ToLower(roms.ROMExt(base))
-		isP8 := ext == ".p8" || ext == ".p8.png"
-		isLua := strings.HasSuffix(lower, ".lua")
-		if !isP8 && !isLua {
-			continue
-		}
-
-		relPath := strings.TrimPrefix(name, prefix)
-		dest := filepath.Join(gameDir, filepath.FromSlash(relPath))
-
-		if s.ownedByAnotherGame(dest) {
-			logger.Warn("zip-download: pico8 %s: another game's file is already saved there", base)
-			s.skipped = append(s.skipped, base)
-			continue
-		}
-		if !s.names.Claim(dest) {
-			logger.Warn("zip-download: pico8 %s: another file from this archive is already saved there", base)
-			s.skipped = append(s.skipped, base)
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			logger.Warn("zip-download: pico8 mkdir %s: %v", filepath.Dir(dest), err)
-			s.skipped = append(s.skipped, base)
-			continue
-		}
-		if err := extractZIPEntry(f, dest); err != nil {
-			logger.Warn("zip-download: pico8 extract %s: %v", base, err)
-			s.skipped = append(s.skipped, base)
-			continue
-		}
-
-		logger.Info("zip-download: pico8 extracted %s → %s", base, dest)
-		s.extracted = append(s.extracted, dest)
-
-		s.inv.Add(s.game.URL, inventory.Entry{
-			GameID:  downloadGameID(s.detail),
-			GameURL: s.game.URL, Title: s.game.Title,
-			Author: s.game.Author, CoverURL: s.game.CoverURL, IsFree: s.game.IsFree,
-		}, inventory.DownloadedFile{
-			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
-			OriginalUpload: s.plan.Upload.Filename,
-			Filename:       filepath.Base(dest),
-			DestPath:       dest,
-			DownloadedAt:   now,
-			FileType:       inventory.FileTypeROM,
-			SourceArchive:  s.plan.Upload.Filename,
-			SourceMember:   name,
-		})
-	}
-}
-
 // entryMD5 reads the uncompressed content via open() and returns its MD5 hex digest.
 func entryMD5(open func() (io.ReadCloser, error)) (string, error) {
 	rc, err := open()
@@ -1387,11 +1297,6 @@ func extractEntry(open func() (io.ReadCloser, error), expectedSize int64, dest s
 	}
 	committed = true
 	return nil
-}
-
-// extractZIPEntry is a convenience wrapper around extractEntry for zip.File.
-func extractZIPEntry(f *zip.File, dest string) error {
-	return extractEntry(f.Open, int64(f.UncompressedSize64), dest)
 }
 
 // commonPathPrefix returns the longest common directory path shared by all
