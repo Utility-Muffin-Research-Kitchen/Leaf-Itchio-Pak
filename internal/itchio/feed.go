@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -349,18 +350,31 @@ func (c *Client) FetchGamesContext(ctx context.Context, page int) ([]Game, error
 // the number of concurrent in-flight page requests rather than connections.
 const feedConcurrency = 3
 
+// newestQuietPages is how many pages in a row without a game the cache lacks
+// end a feed in the daily check (D1). The newest-first feeds are mostly, not
+// strictly, in date order, so one page of known games is not enough.
+const newestQuietPages = 2
+
 // FeedFetch is one feed slug's part of a catalogue refresh.
 type FeedFetch struct {
 	Platform string // Leaf system code, e.g. "GB"
 	Slug     string // itch.io browse path, e.g. "tag-gbstudio"
-	Games    []Game // the feed's games in feed order, Platform set; incomplete when Err is set
-	Err      error  // why the feed did not finish; nil when it was read to its end
+	// Games are the feed's games in feed order, Platform set; in a daily
+	// check only those the cache lacked. Incomplete when Err is set.
+	Games []Game
+	Pages int   // feed pages read
+	Err   error // why the feed did not finish; nil when it was read to its end
 }
 
 // CatalogFetch is a catalogue refresh feed by feed, so a caller can keep what
 // finished when some feeds failed.
 type CatalogFetch struct {
 	Feeds []FeedFetch // one per feed slug, in AllPlatforms order
+	// Incremental marks a daily check (FetchNewGames): the feeds hold only
+	// new games, which Merge adds to the cached ones.
+	Incremental bool
+	RateLimited int           // HTTP 429 answers, replays included
+	Duration    time.Duration // from the first request to the last result
 }
 
 // catalogFeeds lists every (platform, slug) pair of AllPlatforms, in order.
@@ -395,6 +409,15 @@ func (fetch *CatalogFetch) Err() error {
 	return errors.Join(errs...)
 }
 
+// Pages is the number of feed pages the refresh read.
+func (fetch *CatalogFetch) Pages() int {
+	pages := 0
+	for _, feed := range fetch.Feeds {
+		pages += feed.Pages
+	}
+	return pages
+}
+
 // Games returns the games of the systems whose feeds all finished,
 // deduplicated as Merge does.
 func (fetch *CatalogFetch) Games() []Game { return fetch.Merge(nil).Games }
@@ -407,11 +430,14 @@ type CatalogMerge struct {
 }
 
 // Merge applies a refresh to the previous catalogue, system by system. A
-// system whose feeds all finished takes the games they returned; a system with
-// a feed that did not finish keeps its games from previous, and what its other
-// feeds returned is dropped. Systems follow AllPlatforms order and games are
-// deduplicated by URL, so a game listed in several feeds keeps the first
-// system's code: the more specific feeds come first.
+// system with a feed that did not finish keeps its games from previous, and
+// what its other feeds returned is dropped. A system whose feeds all finished
+// takes the games they returned: after a full crawl, those replace its
+// previous games; after a daily check (Incremental), they go on top of its
+// previous games, newest first, and every previous game stays as it was.
+// Systems follow AllPlatforms order and games are deduplicated by URL, so a
+// game listed in several feeds keeps the first system's code: the more
+// specific feeds come first.
 func (fetch *CatalogFetch) Merge(previous []Game) CatalogMerge {
 	fetched := make(map[string]bool)
 	failed := make(map[string]bool)
@@ -423,47 +449,86 @@ func (fetch *CatalogFetch) Merge(previous []Game) CatalogMerge {
 	}
 	var merge CatalogMerge
 	seen := make(map[string]bool)
+	if fetch.Incremental {
+		// New games are new to the whole cache, never only to their system.
+		for _, game := range previous {
+			seen[game.URL] = true
+		}
+	}
 	add := func(game Game) {
 		if !seen[game.URL] {
 			seen[game.URL] = true
 			merge.Games = append(merge.Games, game)
 		}
 	}
-	for _, platform := range AllPlatforms {
-		if fetched[platform.Code] && !failed[platform.Code] {
-			merge.Updated = append(merge.Updated, platform.Code)
-			for _, feed := range fetch.Feeds {
-				if feed.Platform == platform.Code {
-					for _, game := range feed.Games {
-						add(game)
-					}
-				}
+	addPrevious := func(platform string) {
+		for _, game := range previous {
+			switch {
+			case game.Platform != platform:
+			case fetch.Incremental:
+				// Already in seen, so new games never repeat it.
+				merge.Games = append(merge.Games, game)
+			default:
+				add(game)
 			}
+		}
+	}
+	for _, platform := range AllPlatforms {
+		if !fetched[platform.Code] || failed[platform.Code] {
+			merge.Kept = append(merge.Kept, platform.Code)
+			addPrevious(platform.Code)
 			continue
 		}
-		merge.Kept = append(merge.Kept, platform.Code)
+		merge.Updated = append(merge.Updated, platform.Code)
+		first := len(merge.Games)
+		for _, feed := range fetch.Feeds {
+			if feed.Platform == platform.Code {
+				for _, game := range feed.Games {
+					add(game)
+				}
+			}
+		}
+		if fetch.Incremental {
+			// D3: newest first on top of the system, until the next full
+			// crawl restores itch.io's order.
+			added := merge.Games[first:]
+			sort.SliceStable(added, func(i, j int) bool { return added[i].PublishedAt.After(added[j].PublishedAt) })
+			addPrevious(platform.Code)
+		}
+	}
+	if fetch.Incremental {
+		// A daily check changes no previous entry, whatever its system.
+		known := make(map[string]bool, len(AllPlatforms))
+		for _, platform := range AllPlatforms {
+			known[platform.Code] = true
+		}
 		for _, game := range previous {
-			if game.Platform == platform.Code {
-				add(game)
+			if !known[game.Platform] {
+				merge.Games = append(merge.Games, game)
 			}
 		}
 	}
 	return merge
 }
 
-// fetchSlug fetches all pages for one feed slug and returns every game found.
-// It maintains its own seen-URL set purely for within-slug wrap-around
-// detection (itch.io repeats the last real page indefinitely past the end).
-// onPage is called after each page that adds at least one new game; the
-// argument is the running total of games found so far within this slug.
-func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPage func(n int)) ([]Game, error) {
+// pageReader reads one feed of a refresh. ping is called after each page
+// that found a game.
+type pageReader func(ctx context.Context, feed *FeedFetch, ping func())
+
+// fetchSlug reads every page of one feed slug into feed: its games and the
+// pages read, or the error that stopped it. It maintains its own seen-URL set
+// purely for within-slug wrap-around detection (itch.io repeats the last real
+// page indefinitely past the end). ping is called after each page that adds
+// at least one game.
+func (c *Client) fetchSlug(ctx context.Context, feed *FeedFetch, ping func()) {
+	platformCode, slug := feed.Platform, feed.Slug
 	logger.Info("feed: fetching platform=%s slug=%s", platformCode, slug)
 	localSeen := make(map[string]bool)
-	var games []Game
 	for page := 1; ; page++ {
 		select {
 		case <-ctx.Done():
-			return games, ctx.Err()
+			feed.Err = ctx.Err()
+			return
 		default:
 		}
 		url := fmt.Sprintf("%s/games/%s.xml?page=%d", c.base, slug, page)
@@ -472,34 +537,97 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 			// A missing later page ends the feed; a missing first page is
 			// still an error.
 			logger.Info("feed: platform=%s slug=%s page=%d: %v, treating as end of feed", platformCode, slug, page, err)
-			break
+			return
 		}
 		if err != nil {
 			logger.Warn("feed: platform=%s slug=%s page=%d error: %v", platformCode, slug, page, err)
-			return games, fmt.Errorf("platform=%s slug=%s page %d: %w", platformCode, slug, page, err)
+			feed.Err = fmt.Errorf("platform=%s slug=%s page %d: %w", platformCode, slug, page, err)
+			return
 		}
+		feed.Pages++
 		added := 0
 		for i := range pageGames {
 			if !localSeen[pageGames[i].URL] {
 				localSeen[pageGames[i].URL] = true
 				pageGames[i].Platform = platformCode
-				games = append(games, pageGames[i])
+				feed.Games = append(feed.Games, pageGames[i])
 				added++
 			}
 		}
 		logger.Debug("feed: platform=%s slug=%s page=%d: %d new, %d deduped", platformCode, slug, page, added, len(pageGames)-added)
-		if added > 0 && onPage != nil {
-			onPage(added)
+		if added > 0 {
+			ping()
 		}
 		if len(pageGames) < PerPage {
-			break
+			return
 		}
 		if added == 0 {
 			logger.Debug("feed: platform=%s slug=%s page=%d: full page all-duplicates, stopping (itch.io wrap-around)", platformCode, slug, page)
-			break
+			return
 		}
 	}
-	return games, nil
+}
+
+// fetchNewSlug reads the newest-first form of one feed slug,
+// games/newest/<slug>.xml, into feed: the games known does not know, newest
+// first, and the pages read. It stops after newestQuietPages pages in a row
+// without such a game, at a short or missing later page, and when itch.io
+// repeats a page past the end.
+func (c *Client) fetchNewSlug(ctx context.Context, feed *FeedFetch, known func(url string) bool, ping func()) {
+	platformCode, slug := feed.Platform, feed.Slug
+	localSeen := make(map[string]bool)
+	quiet := 0
+	for page := 1; ; page++ {
+		select {
+		case <-ctx.Done():
+			feed.Err = ctx.Err()
+			return
+		default:
+		}
+		url := fmt.Sprintf("%s/games/newest/%s.xml?page=%d", c.base, slug, page)
+		pageGames, err := c.FetchGamesFromURLContext(ctx, url)
+		if err != nil && page > 1 && feedPastEnd(err) {
+			logger.Debug("feed: newest platform=%s slug=%s page=%d: %v, treating as end of feed", platformCode, slug, page, err)
+			return
+		}
+		if err != nil {
+			logger.Warn("feed: newest platform=%s slug=%s page=%d error: %v", platformCode, slug, page, err)
+			feed.Err = fmt.Errorf("platform=%s slug=%s newest page %d: %w", platformCode, slug, page, err)
+			return
+		}
+		feed.Pages++
+		unseen, found := 0, 0
+		for i := range pageGames {
+			game := pageGames[i]
+			if localSeen[game.URL] {
+				continue
+			}
+			localSeen[game.URL] = true
+			unseen++
+			if known(game.URL) {
+				continue
+			}
+			game.Platform = platformCode
+			feed.Games = append(feed.Games, game)
+			found++
+		}
+		logger.Debug("feed: newest platform=%s slug=%s page=%d: %d new game(s)", platformCode, slug, page, found)
+		if found > 0 {
+			ping()
+			quiet = 0
+		} else {
+			quiet++
+		}
+		switch {
+		case len(pageGames) < PerPage:
+			return
+		case unseen == 0:
+			logger.Debug("feed: newest platform=%s slug=%s page=%d: full page all-duplicates, stopping (itch.io wrap-around)", platformCode, slug, page)
+			return
+		case quiet >= newestQuietPages:
+			return
+		}
+	}
 }
 
 // FetchAllGames fetches every page of every platform feed in AllPlatforms in
@@ -516,26 +644,51 @@ func (c *Client) fetchSlug(ctx context.Context, platformCode, slug string, onPag
 // finishes and while feeds are paging, but never before the first game is
 // merged.
 func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game)) (*CatalogFetch, error) {
-	fetch := &CatalogFetch{Feeds: catalogFeeds()}
+	return c.fetchCatalog(ctx, false, progress, c.fetchSlug)
+}
+
+// FetchNewGames is the daily check: it reads the newest-first form of every
+// feed, games/newest/<slug>.xml, and reports per feed the games known does not
+// know. A feed stops after newestQuietPages pages in a row without one, at a
+// short or missing later page, or when itch.io repeats a page past the end. It
+// shares FetchAllGames' concurrency, rate limiter, cooldown budget, stop rule
+// and error. known is called from several goroutines at once.
+func (c *Client) FetchNewGames(ctx context.Context, known func(url string) bool) (*CatalogFetch, error) {
+	return c.fetchCatalog(ctx, true, nil, func(ctx context.Context, feed *FeedFetch, ping func()) {
+		c.fetchNewSlug(ctx, feed, known, ping)
+	})
+}
+
+// fetchCatalog reads every feed with read, feedConcurrency at a time, for
+// FetchAllGames and FetchNewGames.
+func (c *Client) fetchCatalog(ctx context.Context, incremental bool, progress func(partial []Game), read pageReader) (*CatalogFetch, error) {
+	fetch := &CatalogFetch{Feeds: catalogFeeds(), Incremental: incremental}
 	if err := ctx.Err(); err != nil {
 		for index := range fetch.Feeds {
 			fetch.Feeds[index].Err = err
 		}
 		return fetch, err
 	}
-	runCtx, cancel := context.WithCancel(withSlugFallbackLog(withCooldownBudget(ctx, refreshCooldownBudget)))
+	start := time.Now()
+	stats := &refreshStats{}
+	runCtx, cancel := context.WithCancel(withRefreshStats(withSlugFallbackLog(withCooldownBudget(ctx, refreshCooldownBudget)), stats))
 	defer cancel()
 
 	type feedDone struct {
 		index int
-		games []Game
-		err   error
+		feed  FeedFetch
 	}
 	resultCh := make(chan feedDone, len(fetch.Feeds))
 	// pingCh carries per-page notifications from goroutines so the collect loop
 	// can fire progress(all) more frequently than once per completed slug.
 	// Capacity = len(feeds)*2 to avoid blocking goroutines on a slow main loop.
 	pingCh := make(chan struct{}, len(fetch.Feeds)*2)
+	ping := func() {
+		select {
+		case pingCh <- struct{}{}:
+		default:
+		}
+	}
 	sem := make(chan struct{}, feedConcurrency)
 
 	for index, feed := range fetch.Feeds {
@@ -545,16 +698,12 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-runCtx.Done():
-				resultCh <- feedDone{index: index, err: runCtx.Err()}
+				feed.Err = runCtx.Err()
+				resultCh <- feedDone{index: index, feed: feed}
 				return
 			}
-			games, err := c.fetchSlug(runCtx, feed.Platform, feed.Slug, func(_ int) {
-				select {
-				case pingCh <- struct{}{}:
-				default:
-				}
-			})
-			resultCh <- feedDone{index: index, games: games, err: err}
+			read(runCtx, &feed, ping)
+			resultCh <- feedDone{index: index, feed: feed}
 		}()
 	}
 
@@ -583,30 +732,32 @@ func (c *Client) FetchAllGames(ctx context.Context, progress func(partial []Game
 			}
 		case done := <-resultCh:
 			remaining--
+			fetch.Feeds[done.index] = done.feed
 			feed := &fetch.Feeds[done.index]
-			feed.Games, feed.Err = done.games, done.err
-			if done.err != nil {
-				if stopped == nil && errors.Is(done.err, ErrRateLimited) {
+			if feed.Err != nil {
+				if stopped == nil && errors.Is(feed.Err, ErrRateLimited) {
 					logger.Warn("feed: platform=%s slug=%s stays rate limited; stopping the refresh", feed.Platform, feed.Slug)
-					stopped = done.err
+					stopped = feed.Err
 					cancel()
 				}
 				continue
 			}
 			added := 0
-			for _, g := range done.games {
+			for _, g := range feed.Games {
 				if !seen[g.URL] {
 					seen[g.URL] = true
 					all = append(all, g)
 					added++
 				}
 			}
-			logger.Debug("feed: platform=%s merged %d game(s) (%d cross-platform deduped)", feed.Platform, added, len(done.games)-added)
+			logger.Debug("feed: platform=%s merged %d game(s) (%d cross-platform deduped)", feed.Platform, added, len(feed.Games)-added)
 			if added > 0 && progress != nil {
 				progress(all)
 			}
 		}
 	}
+	fetch.RateLimited = int(stats.rateLimited.Load())
+	fetch.Duration = time.Since(start)
 	if stopped == nil {
 		stopped = ctx.Err()
 	}

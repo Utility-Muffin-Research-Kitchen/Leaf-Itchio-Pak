@@ -19,8 +19,6 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
 )
 
-const cacheTTL = 24 * time.Hour
-
 // UpdateServicer is the catalogue controller's narrow view of Jawaka's
 // inventory update service.
 type UpdateServicer interface {
@@ -137,19 +135,14 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		controller.cacheFetched.Store(gameCache.Meta.FetchedAt.Unix())
 		controller.cacheCommitted.Store(true)
 		controller.rebuildView()
-		if !gameCache.CurrentRevision() {
-			logger.Info("cache: catalogue revision %d is older than %d; refreshing platform coverage in background",
-				gameCache.Meta.Revision, itchio.GamesCacheRevision)
-			go controller.buildCache(gameCache.Games)
-		} else {
-			go controller.refreshCacheIfStale(gameCache)
-		}
+		go controller.refreshCacheIfStale(gameCache, time.Now())
 	} else {
 		if err != nil {
 			logger.Debug("cache: no cache found (%v), using live feed", err)
 		} else {
 			logger.Debug("cache: file exists but contains no games, using live feed")
 		}
+		logger.Info("cache: no catalogue yet; reading every feed in background")
 		go controller.loadPage(1)
 		go controller.buildCache(nil)
 	}
@@ -569,34 +562,53 @@ func (controller *CatalogController) rebuildView() {
 
 func (controller *CatalogController) IsBusy() bool { return controller.cacheBuilding.Load() }
 
-// buildCache refreshes the catalogue from every feed. previous is the cache
-// the refresh starts from (nil on first launch): a system whose feed fails
-// keeps its games from it.
-func (controller *CatalogController) buildCache(previous []itchio.Game) {
+// buildCache reads every feed again: a full crawl. previous is the cache the
+// refresh starts from (nil on first launch): a system whose feed fails keeps
+// its games from it.
+func (controller *CatalogController) buildCache(previous *itchio.GameCache) {
+	controller.runRefresh(previous, itchio.CacheRefreshFull)
+}
+
+// checkNewGames is the daily check: it reads the newest feeds for games
+// previous lacks and puts them on top of their system.
+func (controller *CatalogController) checkNewGames(previous *itchio.GameCache) {
+	controller.runRefresh(previous, itchio.CacheRefreshIncremental)
+}
+
+func (controller *CatalogController) runRefresh(previous *itchio.GameCache, kind itchio.CacheRefresh) {
 	if !controller.cacheBuilding.CompareAndSwap(false, true) {
 		return
 	}
 	defer controller.cacheBuilding.Store(false)
-	logger.Info("cache: starting background full fetch")
-	fetch, err := controller.client.FetchAllGames(context.Background(), func(partial []itchio.Game) {
-		// A partial background refresh must never replace a complete on-disk
-		// catalogue. Progressive results are useful only during first launch,
-		// before any committed cache exists.
-		if controller.cacheCommitted.Load() {
-			return
+	var fetch *itchio.CatalogFetch
+	var err error
+	if kind == itchio.CacheRefreshIncremental && previous != nil {
+		known := make(map[string]bool, len(previous.Games))
+		for _, game := range previous.Games {
+			known[game.URL] = true
 		}
-		// An empty snapshot would replace the preview page with an empty
-		// list and mark the catalogue ready before it has any games.
-		if len(partial) == 0 {
-			return
-		}
-		snapshot := append([]itchio.Game(nil), partial...)
-		select {
-		case controller.cacheUpdateCh <- snapshot:
-		default:
-		}
-		controller.wakeUI()
-	})
+		fetch, err = controller.client.FetchNewGames(context.Background(), func(url string) bool { return known[url] })
+	} else {
+		fetch, err = controller.client.FetchAllGames(context.Background(), func(partial []itchio.Game) {
+			// A partial background refresh must never replace a complete
+			// on-disk catalogue. Progressive results are useful only during
+			// first launch, before any committed cache exists.
+			if controller.cacheCommitted.Load() {
+				return
+			}
+			// An empty snapshot would replace the preview page with an
+			// empty list and mark the catalogue ready before it has any games.
+			if len(partial) == 0 {
+				return
+			}
+			snapshot := append([]itchio.Game(nil), partial...)
+			select {
+			case controller.cacheUpdateCh <- snapshot:
+			default:
+			}
+			controller.wakeUI()
+		})
+	}
 	games, err := commitCatalogFetch(controller.cachePath, previous, fetch, err)
 	if err != nil {
 		return
@@ -627,12 +639,26 @@ func cacheAgeLabel(now time.Time, fetchedUnix int64) string {
 	}
 }
 
-func (controller *CatalogController) refreshCacheIfStale(cache *itchio.GameCache) {
-	age := time.Since(cache.Meta.FetchedAt)
-	if age < cacheTTL {
-		logger.Debug("cache: fresh (age=%v), skipping background refresh", age.Round(time.Second))
-		return
+// refreshCacheIfStale starts the refresh the loaded cache needs at now (D2):
+// a full crawl when it is of another revision or its last full crawl is a
+// week old, the daily check when its last check is a day old, else nothing.
+// Settings > Refresh Game List is always a full crawl.
+func (controller *CatalogController) refreshCacheIfStale(cache *itchio.GameCache, now time.Time) {
+	switch cache.DueRefresh(now) {
+	case itchio.CacheRefreshFull:
+		if !cache.CurrentRevision() {
+			logger.Info("cache: catalogue revision %d is not %d; reading every feed in background",
+				cache.Meta.Revision, itchio.GamesCacheRevision)
+		} else {
+			logger.Info("cache: last full crawl %v ago; reading every feed in background",
+				now.Sub(cache.Meta.FullFetchedAt).Round(time.Second))
+		}
+		controller.buildCache(cache)
+	case itchio.CacheRefreshIncremental:
+		logger.Info("cache: last check %v ago; checking the newest feeds in background",
+			now.Sub(cache.Meta.CheckedAt).Round(time.Second))
+		controller.checkNewGames(cache)
+	default:
+		logger.Debug("cache: checked %v ago, skipping background refresh", now.Sub(cache.Meta.CheckedAt).Round(time.Second))
 	}
-	logger.Info("cache: stale (age=%v), refreshing in background", age.Round(time.Second))
-	controller.buildCache(cache.Games)
 }

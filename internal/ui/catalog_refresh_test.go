@@ -86,13 +86,20 @@ func (server *catalogueServer) requestedEveryFeed() bool {
 
 func feedPath(slug string) string { return "/games/" + slug + ".xml" }
 
-// writeCatalogueCache writes a games cache last saved at savedAt.
+// writeCatalogueCache writes a games cache whose last full crawl, check and
+// save were at savedAt.
 func writeCatalogueCache(t *testing.T, path string, savedAt time.Time, games ...itchio.Game) {
 	t.Helper()
-	data, err := json.Marshal(itchio.GameCache{
-		Meta:  itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FetchedAt: savedAt, TotalGames: len(games)},
-		Games: games,
-	})
+	writeCatalogueCacheMeta(t, path, itchio.CacheMeta{
+		Revision: itchio.GamesCacheRevision, FetchedAt: savedAt, FullFetchedAt: savedAt, CheckedAt: savedAt,
+	}, games...)
+}
+
+// writeCatalogueCacheMeta writes a games cache with meta.
+func writeCatalogueCacheMeta(t *testing.T, path string, meta itchio.CacheMeta, games ...itchio.Game) {
+	t.Helper()
+	meta.TotalGames = len(games)
+	data, err := json.Marshal(itchio.GameCache{Meta: meta, Games: games})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +163,7 @@ func TestStaleRefreshKeepsTheCachedGamesOfAFailedFeed(t *testing.T) {
 		feedPath("tag-pico-8"):           {catalogueGame("P8", "new-p8-1"), catalogueGame("P8", "new-p8-2")},
 	}, map[string]int{feedPath("tag-gbstudio"): http.StatusInternalServerError})
 	cachePath := filepath.Join(t.TempDir(), "games_cache.json")
-	savedAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	savedAt := time.Now().Add(-8 * 24 * time.Hour).Truncate(time.Second)
 	writeCatalogueCache(t, cachePath, savedAt,
 		catalogueGame("PSX", "old-psx"), catalogueGame("GB", "old-gb-1"), catalogueGame("GB", "old-gb-2"),
 		catalogueGame("P8", "old-p8"))
@@ -197,7 +204,7 @@ func TestStaleRefreshSavesNothingWhenEveryFeedFails(t *testing.T) {
 	}
 	server := newCatalogueServer(t, nil, status)
 	cachePath := filepath.Join(t.TempDir(), "games_cache.json")
-	savedAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	savedAt := time.Now().Add(-8 * 24 * time.Hour).Truncate(time.Second)
 	writeCatalogueCache(t, cachePath, savedAt, catalogueGame("GB", "old-gb"))
 	before, err := os.ReadFile(cachePath)
 	if err != nil {
@@ -301,7 +308,7 @@ func TestCommitKeepsTheSystemsFinishedBeforeARateLimitStop(t *testing.T) {
 	}
 
 	logs := captureLogs(t)
-	games, err := commitCatalogFetch(cachePath, previous, fetch, stop)
+	games, err := commitCatalogFetch(cachePath, &itchio.GameCache{Games: previous}, fetch, stop)
 	if err != nil {
 		t.Fatalf("commit after a rate-limit stop: %v", err)
 	}
@@ -343,7 +350,7 @@ func TestCommitSavesNothingWithoutAFinishedSystem(t *testing.T) {
 		"cancelled":         {cancelled, context.Canceled},
 	} {
 		cachePath := filepath.Join(t.TempDir(), "games_cache.json")
-		if games, err := commitCatalogFetch(cachePath, previous, run.fetch, run.err); err == nil || games != nil {
+		if games, err := commitCatalogFetch(cachePath, &itchio.GameCache{Games: previous}, run.fetch, run.err); err == nil || games != nil {
 			t.Errorf("%s: commit = %d games, %v; want nothing committed", name, len(games), err)
 		}
 		if _, err := os.Stat(cachePath); !os.IsNotExist(err) {

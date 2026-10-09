@@ -7,16 +7,30 @@ import (
 	"time"
 )
 
-// GamesCacheRevision identifies the feed/platform coverage represented by the
-// cache. Bump it whenever AllPlatforms changes so a fresh-but-incomplete cache
-// is refreshed in the background after an app update.
-const GamesCacheRevision = 1
+// GamesCacheRevision identifies the cache format and the feed/platform
+// coverage it represents. Bump it whenever AllPlatforms or the format
+// changes: a cache of any other revision stays usable, and a full crawl
+// replaces it in the background after the app update. Revision 2 added
+// full_fetched_at and checked_at for the daily check.
+const GamesCacheRevision = 2
 
-// CacheMeta records when the cache was last populated.
+const (
+	// GamesCheckInterval is how old the last check may get before a launch
+	// checks the newest feeds for new games (D2).
+	GamesCheckInterval = 24 * time.Hour
+	// GamesFullCrawlInterval is how old the last full crawl may get before a
+	// launch reads every feed again. Only a full crawl updates prices, titles
+	// and tags of known games, and drops removed ones.
+	GamesFullCrawlInterval = 7 * 24 * time.Hour
+)
+
+// CacheMeta records when the cache was saved, checked and fully crawled.
 type CacheMeta struct {
-	Revision   int       `json:"revision"`
-	FetchedAt  time.Time `json:"fetched_at"`
-	TotalGames int       `json:"total_games"`
+	Revision      int       `json:"revision"`
+	FetchedAt     time.Time `json:"fetched_at"`      // last save; the list header's cache age
+	FullFetchedAt time.Time `json:"full_fetched_at"` // last full crawl of every feed
+	CheckedAt     time.Time `json:"checked_at"`      // last refresh of either kind
+	TotalGames    int       `json:"total_games"`
 }
 
 // GameCache is the on-disk representation of the full game list.
@@ -29,12 +43,60 @@ func (cache *GameCache) CurrentRevision() bool {
 	return cache != nil && cache.Meta.Revision == GamesCacheRevision
 }
 
-// SaveGamesCache writes games to path atomically (write to .tmp then rename).
-func SaveGamesCache(path string, games []Game) error {
-	cache := GameCache{
-		Meta:  CacheMeta{Revision: GamesCacheRevision, FetchedAt: time.Now(), TotalGames: len(games)},
-		Games: games,
+// CacheRefresh is the kind of refresh a cache needs.
+type CacheRefresh int
+
+const (
+	CacheRefreshNone        CacheRefresh = iota
+	CacheRefreshIncremental              // check the newest feeds for new games
+	CacheRefreshFull                     // read every page of every feed
+)
+
+func (refresh CacheRefresh) String() string {
+	switch refresh {
+	case CacheRefreshIncremental:
+		return "incremental"
+	case CacheRefreshFull:
+		return "full"
+	default:
+		return "none"
 	}
+}
+
+// DueRefresh says which refresh a launch at now should start: a full crawl
+// when the cache is of another revision or its last full crawl is
+// GamesFullCrawlInterval old, a check of the newest feeds when its last check
+// is GamesCheckInterval old, else none. A time in the future counts as recent.
+func (cache *GameCache) DueRefresh(now time.Time) CacheRefresh {
+	switch {
+	case !cache.CurrentRevision(), now.Sub(cache.Meta.FullFetchedAt) >= GamesFullCrawlInterval:
+		return CacheRefreshFull
+	case now.Sub(cache.Meta.CheckedAt) >= GamesCheckInterval:
+		return CacheRefreshIncremental
+	default:
+		return CacheRefreshNone
+	}
+}
+
+// SaveGamesCache writes games after a full crawl: the save, the check and the
+// full crawl are all now.
+func SaveGamesCache(path string, games []Game) error {
+	now := time.Now()
+	return writeGamesCache(path, games, CacheMeta{FetchedAt: now, FullFetchedAt: now, CheckedAt: now})
+}
+
+// SaveCheckedGamesCache writes games after a check of the newest feeds. The
+// save and the check are now; fullFetchedAt, the last full crawl, is kept.
+func SaveCheckedGamesCache(path string, games []Game, fullFetchedAt time.Time) error {
+	now := time.Now()
+	return writeGamesCache(path, games, CacheMeta{FetchedAt: now, FullFetchedAt: fullFetchedAt, CheckedAt: now})
+}
+
+// writeGamesCache writes games and meta to path atomically (write to .tmp
+// then rename), at the current revision.
+func writeGamesCache(path string, games []Game, meta CacheMeta) error {
+	meta.Revision, meta.TotalGames = GamesCacheRevision, len(games)
+	cache := GameCache{Meta: meta, Games: games}
 	data, err := json.Marshal(cache)
 	if err != nil {
 		return fmt.Errorf("marshal game cache: %w", err)

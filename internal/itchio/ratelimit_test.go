@@ -558,3 +558,56 @@ func TestFetchAllGamesKeepsFeedsFinishedBeforeTheRateLimitStop(t *testing.T) {
 		t.Errorf("merged games = %s\nwant %s", got, want)
 	}
 }
+
+// Both kinds of refresh count the HTTP 429 answers they got, replays
+// included, for the refresh's log line.
+func TestRefreshesCountRateLimitedAnswers(t *testing.T) {
+	for _, incremental := range []bool{false, true} {
+		var limited atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/tag-pico-8.xml") && limited.Add(1) == 1 {
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+		}))
+		client := newClockedClient(srv, newFakeClock())
+		var fetch *CatalogFetch
+		var err error
+		if incremental {
+			fetch, err = client.FetchNewGames(context.Background(), func(string) bool { return false })
+		} else {
+			fetch, err = client.FetchAllGames(context.Background(), nil)
+		}
+		srv.Close()
+		if err != nil {
+			t.Fatalf("incremental=%v: %v", incremental, err)
+		}
+		if fetch.RateLimited != 1 || fetch.Pages() != len(fetch.Feeds) {
+			t.Errorf("incremental=%v: %d HTTP 429s and %d pages counted, want 1 and %d",
+				incremental, fetch.RateLimited, fetch.Pages(), len(fetch.Feeds))
+		}
+	}
+}
+
+// The daily check shares the full crawl's cooldown budget: rate limiting
+// that outlasts it stops the check with the typed error.
+func TestFetchNewGamesStopsAtTheRefreshCooldownBudget(t *testing.T) {
+	clock := newFakeClock()
+	server := newScripted(map[string][]scripted{"itch.io": {{status: 429, retryAfter: "60"}}})
+	limiter := newTestLimiter(server, clock)
+	client := &Client{http: &http.Client{Transport: limiter}, base: "https://itch.io"}
+
+	start := clock.Now()
+	fetch, err := client.FetchNewGames(context.Background(), func(string) bool { return false })
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	if elapsed := clock.Now().Sub(start); elapsed == 0 || elapsed > refreshCooldownBudget {
+		t.Fatalf("waited %v of cooldown, want some but at most %v", elapsed, refreshCooldownBudget)
+	}
+	if merge := fetch.Merge(nil); len(merge.Updated) != 0 {
+		t.Fatalf("systems updated by a check that only got 429s: %v", merge.Updated)
+	}
+}

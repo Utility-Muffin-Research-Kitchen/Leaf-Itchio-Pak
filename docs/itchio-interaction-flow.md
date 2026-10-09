@@ -39,6 +39,35 @@ failed feed keeps its games from the previous cache, and games are deduplicated
 by URL in `AllPlatforms` order. The cache is saved when at least one system was
 refreshed, and the log names each failed feed.
 
+A full crawl is about 300 pages. At launch the app runs one only when the last
+full crawl is 7 days old or `games_cache.json` is of another revision;
+Settings > Refresh Game List always runs one. Otherwise, when the last check is
+24 hours old, it runs the daily check (`FetchNewGames`): the same feeds in their
+newest-first form,
+
+```
+GET https://itch.io/games/newest/tag-pico-8.xml?page=N
+```
+
+stopping each feed after 2 pages in a row without a game the cache lacks, at a
+short or missing page, or when itch.io repeats a page. That order is mostly,
+not strictly, by date (an August game can sit among October ones on page 1),
+so one known game, or one page of them, does not end a feed. New games go on
+top of their system, newest first, and cached entries are left alone until the
+next full crawl, which is the only refresh that updates prices, titles and tags
+of known games and drops removed ones. Both kinds share the concurrency, the
+rate limiter, the cooldown budget and the partial-failure rule.
+
+`games_cache.json` revision 2 keeps three times in `meta`: `fetched_at` (the
+last save, which the list header's cache age shows), `checked_at` (the last
+refresh of either kind) and `full_fetched_at` (the last full crawl). A cache of
+revision 1 gets one full crawl after the update. Every refresh ends with one
+log line:
+
+```
+cache: refresh mode=incremental result=saved games=11862 new_games=7 pages=24 http_429=0 duration=4.2s failed_feeds=0
+```
+
 Each `<item>` contains title, link, description, image URL, and price. The
 `<title>` field may include `[Tag]` brackets (e.g. `[GBC]`) which are stripped
 from the display title but parsed as tags. Price is a free-text string; `$0.00`
