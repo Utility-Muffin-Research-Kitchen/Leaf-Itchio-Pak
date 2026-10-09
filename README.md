@@ -219,7 +219,6 @@ make run-mac
 make cat-fixture-snapshots
 make cat-main-list-snapshots
 make cat-input-snapshots
-make public-screenshots
 make package-smoke
 ```
 
@@ -264,8 +263,8 @@ headless backends and cannot be selected as an alternate UI. See the
 The original icon's editable source and generator live in the private
 `umrk-assets` aggregate while this repository vendors the release PNG for
 offline builds. Its exact source revision, export command, license, and hashes
-are recorded in [icon provenance](docs/icon-provenance.md). The public-safe
-preview set and regeneration sources are recorded under
+are recorded in [icon provenance](docs/icon-provenance.md). The screenshots are
+captured on an MLP1; how to retake them is in
 [docs/screenshots](docs/screenshots/README.md).
 
 This repository preserves upstream history through release `v1.0.19`, commit

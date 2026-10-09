@@ -18,7 +18,7 @@ export WORKSPACE_ROOT CATASTROPHE_DIR MLP1_TOOLCHAIN_IMAGE GO_IMAGE MLP1_BUILD_I
 CATASTROPHE_CGO = CGO_CFLAGS="$${CGO_CFLAGS:-} -I$(CATASTROPHE_DIR)/include"
 
 .DEFAULT_GOAL := native
-.PHONY: test test-race test-native cat-only-audit public-assets-check pakrat-metadata-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots public-screenshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
+.PHONY: test test-race test-native cat-only-audit public-assets-check pakrat-metadata-check native mac run-mac run-cat-fixtures cat-fixture-snapshots cat-main-list-snapshots cat-input-snapshots mlp1 package-platform package-mlp1 package-smoke clean check-catastrophe check-sdl
 
 test: check-catastrophe cat-only-audit public-assets-check pakrat-metadata-check
 	$(CATASTROPHE_CGO) go test -count=1 -tags headless ./...
@@ -88,9 +88,6 @@ cat-main-list-snapshots: mac
 
 cat-input-snapshots: mac
 	./scripts/cat-input-smoke.sh
-
-public-screenshots:
-	./scripts/capture-public-screenshots.sh
 
 mlp1: check-catastrophe cat-only-audit
 	./scripts/build.sh mlp1

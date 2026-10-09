@@ -1,31 +1,40 @@
-# Public screenshot provenance
+# Public screenshots
 
-These screenshots are deterministic 960x720 Catastrophe/Leaf previews generated
-from repository fixtures. They contain synthetic public-safe titles, paths, and
-statuses: no real API key, signed URL, account name, username, host path,
-private library entry, or device log is used. The Settings fixture's masked
-suffix is synthetic.
+These screenshots are captured on a Miniloong Pocket 1 running the app, so
+they show the launcher's theme and font as you see them on the device. Each
+is a 960x720 PNG of the display's scanout, taken with `kmsgrab` over ADB and
+turned upright.
 
-Regenerate the complete set on macOS with:
+They show public itch.io games only. No account name, sign-in code, host path
+or private file appears in them: Settings is captured with its account row
+scrolled off the screen, and the content warning is a **Heavy Themes** one.
 
-```sh
-make public-screenshots
-```
-
-The command rebuilds the app, runs the maintained main/input visual matrices,
-and copies only the eight locked public states below.
-
-| Screenshot | Fixture source | SHA-256 |
+| Screenshot | What it shows | SHA-256 |
 | --- | --- | --- |
-| `main-list.png` | Ready main list, dark theme, hints shown | `f397b9ac98b8570051fc431852a180458602b1eb3f044dd9578d9e97f3729454` |
-| `filter-search.png` | Filter with staged search/platform/sort | `09828b490d6c9709ac0768b8883648f96efb966724dea215f7081376e4aab829` |
-| `detail-gallery.png` | Detail with generated cover/gallery state | `859e2faab406b4d5a3dfd2d070f162c563979d2402ae9c3276e484440c6e7802` |
-| `content-warning.png` | Tag-based content-warning gate | `602d67cbe845902927bcfb77a25197756e48d7ec75227de6a0274cdafa5da3c2` |
-| `download-progress.png` | Active Catastrophe progress view | `eb569f943a779738861d005f453d094240aa2421c240f8af31203eb3401fd44b` |
-| `settings.png` | Leaf settings list | `40c39acf9fa4a2327365f1756061c7fe3846afed57d00a4fe237588aace84b2c` |
-| `dual-sd-destination.png` | Source picker with primary and secondary cards | `350be9e0d313281b15b46cf2f0328616cefb9c74fb6dcaa2d20ed313bc16d87d` |
-| `downloaded-manage.png` | Downloaded-file management list | `16c882fdf8be2c9b909c1e99d9ab8ec00e61b9a6eebd515ef1c41b59e2ffc898` |
+| `main-list.png` | The game list for Game Boy, sorted by **Popular** | `da660df96cc167c1db095505d7589a1b6b852b18f938147f87182ea097a8aa55` |
+| `filter-search.png` | **Filter & Search** with a platform and a sort staged | `26f2a435ca89a851593020373684f2f808fb996fd02a4a3079732dbfcf0a6a7a` |
+| `detail-gallery.png` | A game's page with its gallery, tags and description | `8d2e3f75bbfca518030e242f9058b9e2a182151aee789579d469b2540c41df20` |
+| `content-warning.png` | The content warning in front of a game with **Heavy Themes** tags | `968ba609536f4002027f4cfdb5f74f206e0b4b49c9dfb4df4ce0691f440adc37` |
+| `download-progress.png` | A download in progress | `e29195572a3dc4e76df66d54282b4fd536498c2dc6430ea6560d036f8ee25574` |
+| `settings.png` | Settings, scrolled past the account row | `784ef753b551cb0e456ca4431846e2119a6d7b2517775e588506d2a343b21849` |
+| `dual-sd-destination.png` | Choosing the primary or the secondary SD card for a download | `e150c02f77a44043365da893213354a5938667cebf110155f4766ebd831877eb` |
+| `downloaded-manage.png` | **Manage** for a downloaded game, with the archive files its ROMs came from | `0c6e488dfaf639a3cac4cecef8310b91e54d95fbe58876ea9ed160e64377e917` |
 
-The PNGs are documentation artifacts, not screenshot test baselines. The
-ignored `build/cat-main-list` and `build/cat-input` matrices remain the full
-automated visual evidence.
+`scripts/public-assets-check.py` checks each file's size and hash and that it
+carries no text or EXIF metadata. `make test` runs it.
+
+## Retaking them
+
+1. Install the build you want to show on an MLP1 and start the app.
+2. Bring the screen to the state in the table. Wait until images and text
+   have finished loading.
+3. Capture the screen. In the umbrella workspace the `mlp1-screenshot` skill
+   does this (`adb exec-out kmsgrab`, then `fb_to_png.py` to turn the
+   portrait scanout upright). Capture twice and keep a shot only when both
+   are identical, so no frame is caught mid-draw.
+4. Replace the file, then update its hash here and in
+   `scripts/public-assets-check.py`.
+
+The fixture snapshots (`make cat-main-list-snapshots`,
+`make cat-input-snapshots`) remain the automated visual checks; they are not
+used for these screenshots.
