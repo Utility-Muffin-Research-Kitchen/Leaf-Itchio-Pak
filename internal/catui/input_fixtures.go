@@ -341,7 +341,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.RenameIntentBack
 		}
-	case "settings", "settings-confirm", "settings-message", "settings-notice", "settings-error",
+	case "settings", "settings-folders", "settings-confirm", "settings-message", "settings-notice", "settings-error",
 		"moderation", "moderation-tags":
 		title, subtitle := "Settings", "Leaf settings · changes save immediately"
 		rows := []appui.SettingsRow{
@@ -351,11 +351,24 @@ func RunInputFixture(config InputFixtureConfig) error {
 			{Key: appui.SettingsROMLocation, Label: "ROM Location", Value: appui.ChoiceLabel("ask"), ActionEnabled: true},
 			{Key: appui.SettingsMusicDownload, Label: "Music Download", Value: appui.ChoiceLabel("auto"), ActionEnabled: true},
 			{Key: appui.SettingsMusicLocation, Label: "Music Location", Value: appui.ChoiceLabel("ask"), ActionEnabled: true},
-			{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM files", Value: "On", ActionEnabled: true},
-			{Key: appui.SettingsROMDestination, Label: "Remembered ROM folder", Value: "Primary SD + Secondary SD · 3 systems"},
+			{Key: appui.SettingsUnifiedNaming, Label: "Rename ROM Files", Value: "On", ActionEnabled: true},
+			{Key: appui.SettingsROMDestination, Label: "Remembered ROM Folder", Value: "Primary SD + Secondary SD · 3 systems"},
 			{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
 			{Key: appui.SettingsContentModeration, Label: "Content Moderation", Value: ">", ActionEnabled: true},
 			{Key: appui.SettingsAbout, Label: "About", Value: ">", ActionEnabled: true},
+		}
+		cursor := 0
+		if config.Screen == "settings-folders" {
+			// The remembered-folder rows below Rename ROM Files, in Settings'
+			// own order, with the longest label selected.
+			rows = append(rows[:7:7],
+				appui.SettingsRow{Key: appui.SettingsLogLevel, Label: "Log Level", Value: "Info", ActionEnabled: true},
+				appui.SettingsRow{Key: appui.SettingsROMDestination, Label: "Remembered ROM Folder", Value: "Primary SD + Secondary SD · 3 systems"},
+				appui.SettingsRow{Key: appui.SettingsMusicDestination, Label: "Remembered Music Folder", Value: "Secondary SD / Albums"},
+				appui.SettingsRow{Key: appui.SettingsResetDestinations, Label: "Reset Remembered Folders", ActionEnabled: true},
+				appui.SettingsRow{Key: appui.SettingsAppData, Label: "App Data", Value: "/.userdata/shared/Itch-io"},
+			)
+			cursor = len(rows) - 2
 		}
 		if config.Screen == "moderation" {
 			title, subtitle = "Content Moderation", "Local advisory filters · creator tagging may be incomplete"
@@ -368,7 +381,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		} else if config.Screen == "moderation-tags" {
 			title, subtitle = "Adult Content", "A toggles · category coverage depends on creator tags"
 			rows = []appui.SettingsRow{
-				{Key: appui.SettingsTagMaster, Label: "All category tags", Value: "Blocked", ActionEnabled: true},
+				{Key: appui.SettingsTagMaster, Label: "All Category Tags", Value: "Blocked", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Adult", Value: "Blocked", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Erotic", Value: "Allowed", ActionEnabled: true},
 				{Key: appui.SettingsTag, Label: "Mature", Value: "Blocked", ActionEnabled: true},
@@ -377,6 +390,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		model := appui.NewSettingsModel(title)
 		model.SetRows(subtitle, rows)
+		model.Cursor = cursor
 		if config.Screen == "settings-confirm" {
 			// The sign-in warning moved to the sign-in screen (signin-warning).
 			model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared.", "Downloaded content and inventory remain installed."})

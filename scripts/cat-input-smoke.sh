@@ -112,11 +112,15 @@ capture rename-done 960 720 1 0
 capture settings 960 720 1 0
 capture settings 1280 800 0 5
 capture settings 960 720 1 2
+capture settings-folders 960 720 1 0
+capture settings-folders 960 720 1 2
+capture settings-folders 1280 800 0 5
 capture settings-confirm 960 720 1 0
 capture settings-message 960 720 1 2
 capture settings-notice 960 720 1 2
 capture settings-error 960 720 1 2
 capture moderation 960 720 1 0
+capture moderation-tags 960 720 1 2
 capture moderation-tags 1280 800 0 5
 capture about 960 720 1 0
 capture about 960 720 1 2
