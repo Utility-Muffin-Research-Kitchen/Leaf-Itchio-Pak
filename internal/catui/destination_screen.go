@@ -55,14 +55,14 @@ func (screen *DestinationScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	if screen.model.Phase == appui.DestinationError {
 		if err := screen.ui.DrawScrollingBody(body, "Destination unavailable",
-			[]string{screen.model.ErrorDetail}, 0); err != nil {
+			[]string{screen.model.ErrorDetail}, &screen.model.BodyScroll); err != nil {
 			return err
 		}
 		return frame.Finish()
 	}
 	if screen.model.Phase == appui.DestinationConfirm {
 		if err := screen.ui.DrawScrollingBody(body, "Download to this location?",
-			screen.model.SummaryLines, 0); err != nil {
+			screen.model.SummaryLines, &screen.model.BodyScroll); err != nil {
 			return err
 		}
 		return frame.Finish()

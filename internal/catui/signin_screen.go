@@ -76,7 +76,7 @@ func (screen *SignInScreen) Draw() error {
 			"FAT32 cannot protect it from someone with physical access to the card.",
 			"The key is redacted from logs and never shown on screen.",
 			"You can sign out in Settings, and delete the key on itch.io.",
-		}, 0)
+		}, &model.BodyScroll)
 	case appui.SignInStarting:
 		err = screen.ui.DrawState(body, StateLoading, "Getting a sign-in code", "Contacting itch.io…")
 	case appui.SignInWaiting:
@@ -119,7 +119,7 @@ func (screen *SignInScreen) drawCode(frame *ScreenFrame) error {
 		fmt.Sprintf("Expires in %d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60),
 	}
 	split := ListDetailSplit(frame.Layout.Content, 60, screen.ui.BasePadding)
-	if err := screen.ui.DrawScrollingBody(split.List.Content(), model.UserCode, lines, 0); err != nil {
+	if err := screen.ui.DrawScrollingBody(split.List.Content(), model.UserCode, lines, &model.BodyScroll); err != nil {
 		return err
 	}
 	if screen.qr == nil {

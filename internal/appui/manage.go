@@ -53,6 +53,8 @@ type ManageModel struct {
 	PromptLines   []string
 	Message       string
 	LibraryStatus string
+	// BodyScroll scrolls the confirm prompt and the result.
+	BodyScroll
 }
 
 func NewManageModel(title string) *ManageModel {
@@ -64,6 +66,7 @@ func (m *ManageModel) SetItems(subtitle string, items []ManageItem) {
 	m.Subtitle = subtitle
 	m.Items = append([]ManageItem(nil), items...)
 	m.PromptTitle, m.PromptLines, m.Message, m.LibraryStatus = "", nil, "", ""
+	m.ResetScroll()
 	if m.Cursor >= len(m.Items) {
 		m.Cursor = len(m.Items) - 1
 	}
@@ -77,10 +80,12 @@ func (m *ManageModel) SetConfirm(title string, lines []string) {
 	m.PromptTitle = title
 	m.PromptLines = append([]string(nil), lines...)
 	m.Message, m.LibraryStatus = "", ""
+	m.ResetScroll()
 }
 
 func (m *ManageModel) SetResult(message string) {
 	m.State, m.Message, m.LibraryStatus = ManageResult, message, ""
+	m.ResetScroll()
 }
 
 func (m *ManageModel) SetError(message string) {
@@ -100,11 +105,15 @@ func (m *ManageModel) Handle(event InputEvent) ManageIntent {
 		case ButtonB, ButtonQuit:
 			return ManageIntentCancel
 		}
+		m.HandleScroll(event.Button)
 		return ManageIntentNone
 	}
 	if m.State == ManageResult || m.State == ManageError {
 		if event.Button == ButtonA || event.Button == ButtonB || event.Button == ButtonQuit {
 			return ManageIntentBack
+		}
+		if m.State == ManageResult {
+			m.HandleScroll(event.Button)
 		}
 		return ManageIntentNone
 	}

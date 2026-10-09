@@ -52,8 +52,7 @@ type DetailModel struct {
 	Tags        []string
 	Images      []string
 	ImageIndex  int
-	ScrollLine  int
-	ScrollMax   int
+	BodyScroll
 	BrowserOnly bool
 	ErrorDetail string
 }
@@ -79,6 +78,7 @@ func (m *DetailModel) SetReady(description string, tags, images []string, browse
 	m.Images = append([]string(nil), images...)
 	m.BrowserOnly = browserOnly
 	m.ErrorDetail = ""
+	m.ResetScroll()
 	m.State = DetailReady
 	if warning {
 		m.State = DetailWarning
@@ -89,14 +89,7 @@ func (m *DetailModel) SetReady(description string, tags, images []string, browse
 func (m *DetailModel) SetError(detail string) {
 	m.State = DetailError
 	m.ErrorDetail = detail
-}
-
-func (m *DetailModel) SetScrollBounds(maximum int) {
-	if maximum < 0 {
-		maximum = 0
-	}
-	m.ScrollMax = maximum
-	m.clampScroll()
+	m.ResetScroll()
 }
 
 func (m *DetailModel) Handle(event InputEvent) DetailIntent {
@@ -112,13 +105,8 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	if event.Button == ButtonX && m.Game.Downloaded && (m.State == DetailReady || m.State == DetailError) {
 		return DetailIntentManage
 	}
-	if m.State == DetailError && (event.Button == ButtonUp || event.Button == ButtonDown) {
-		if event.Button == ButtonUp {
-			m.ScrollLine--
-		} else {
-			m.ScrollLine++
-		}
-		m.clampScroll()
+	if m.State == DetailError {
+		m.HandleScroll(event.Button)
 	}
 	if m.State != DetailReady {
 		return DetailIntentNone
@@ -130,12 +118,8 @@ func (m *DetailModel) Handle(event InputEvent) DetailIntent {
 	case ButtonRight, ButtonR1:
 		m.ImageIndex++
 		m.clampImage()
-	case ButtonUp:
-		m.ScrollLine--
-		m.clampScroll()
-	case ButtonDown:
-		m.ScrollLine++
-		m.clampScroll()
+	case ButtonUp, ButtonDown:
+		m.HandleScroll(event.Button)
 	case ButtonA:
 		if m.Game.CanDownload && !m.BrowserOnly {
 			return DetailIntentDownload
@@ -157,15 +141,6 @@ func (m *DetailModel) clampImage() {
 	}
 	if m.ImageIndex >= len(m.Images) {
 		m.ImageIndex = 0
-	}
-}
-
-func (m *DetailModel) clampScroll() {
-	if m.ScrollLine < 0 {
-		m.ScrollLine = 0
-	}
-	if m.ScrollLine > m.ScrollMax {
-		m.ScrollLine = m.ScrollMax
 	}
 }
 

@@ -3,6 +3,7 @@ package catui
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -44,6 +45,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 		return err
 	}
 
+	// A screen name ending in -end shows that screen's body scrolled to its
+	// last line, as Down does on the device.
+	var scrollToEnd bool
+	config.Screen, scrollToEnd = strings.CutSuffix(config.Screen, "-end")
+	var scroll *appui.BodyScroll
 	var draw func() error
 	var handleIntent func(InputEvent) bool
 	var closeScreen func()
@@ -111,6 +117,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
@@ -144,8 +151,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadSelectIntentBack
 		}
-	case "download-progress", "download-done", "download-error", "download-stalled", "download-inhibit", "download-cancelled",
-		"archive-inspect", "archive-inspect-long", "archive-unreadable":
+	case "download-progress", "download-done", "download-done-long", "download-error", "download-stalled", "download-inhibit",
+		"download-cancelled", "archive-inspect", "archive-inspect-long", "archive-unreadable":
 		model := &appui.DownloadProgressModel{
 			State: appui.DownloadProgressRunning, Title: "Leafbound 葉", Filename: "leafbound.gbc",
 			Downloaded: 584 * 1024, Total: 1024 * 1024, FileIndex: 0, FileCount: 2,
@@ -162,6 +169,15 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.State = appui.DownloadProgressDone
 			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc", "/Roms/GBC/Leafbound Bonus.gb"}
 			model.Skipped = []string{"leafbound.GBC"}
+			model.LibraryStatus = "Leaf library rescan requested."
+		case "download-done-long":
+			// A game and its 30-track soundtrack from one archive.
+			model.State = appui.DownloadProgressDone
+			model.SavedPaths = []string{"/Roms/GBC/Leafbound.gbc"}
+			for _, track := range fixtureSoundtrack() {
+				model.SavedPaths = append(model.SavedPaths, "/Music/Leafbound/"+track)
+			}
+			model.Skipped = []string{"leafbound.GBC", "cover.png"}
 			model.LibraryStatus = "Leaf library rescan requested."
 		case "download-error":
 			model.State = appui.DownloadProgressError
@@ -186,6 +202,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DownloadProgressIntentBack
 		}
@@ -235,7 +252,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
-	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error":
+	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error", "manage-delete-long":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
 			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
@@ -258,12 +275,22 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		} else if config.Screen == "manage-error" {
 			model.SetError("Couldn't delete Leafbound Deluxe Edition (PlayStation).bin. Check the SD card, then try again.")
+		} else if config.Screen == "manage-delete-long" {
+			// "Delete all downloads" for a game with a 30-track soundtrack,
+			// as CatManageFlow words it: each file's name, then its path.
+			tracks := fixtureSoundtrack()
+			lines := []string{"Leafbound.gbc", "Primary SD / Roms/GBC/Leafbound.gbc"}
+			for _, track := range tracks {
+				lines = append(lines, track, "Primary SD / Music/Leafbound/"+track)
+			}
+			model.SetConfirm(fmt.Sprintf("Delete %d managed files?", len(tracks)+1), lines)
 		}
 		screen, screenErr := NewManageScreen(ctx, model)
 		if screenErr != nil {
 			return screenErr
 		}
 		draw = screen.Draw
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
@@ -392,6 +419,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &screen.scroll
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
 	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
 		model := &appui.SignInModel{
@@ -434,6 +462,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return screenErr
 		}
 		draw, closeScreen = screen.Draw, screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			intent := screen.HandleInput(event)
 			return intent != appui.SignInIntentBack && intent != appui.SignInIntentCancel
@@ -454,6 +483,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
+	}
+	if scrollToEnd {
+		if scroll == nil {
+			return fmt.Errorf("input fixture %q does not scroll", config.Screen)
+		}
+		// The first draw clamps this to the body's last line.
+		scroll.ScrollLine = math.MaxInt32
 	}
 	if closeScreen != nil {
 		defer closeScreen()
@@ -533,4 +569,16 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 	}
 	return nil
+}
+
+// fixtureSoundtrack is a 30-track soundtrack, enough to overflow any screen
+// that lists it.
+func fixtureSoundtrack() []string {
+	names := []string{"Forest Theme", "Seed Vault", "Clearing at Dawn", "Mossy Steps", "Lantern Walk",
+		"Rain on Leaves", "The Old Oak", "River Crossing", "Night Birds", "Homecoming"}
+	tracks := make([]string, 0, 30)
+	for index := range 30 {
+		tracks = append(tracks, fmt.Sprintf("%02d %s.ogg", index+1, names[index%len(names)]))
+	}
+	return tracks
 }

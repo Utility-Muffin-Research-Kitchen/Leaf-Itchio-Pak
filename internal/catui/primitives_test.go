@@ -309,3 +309,68 @@ func TestListRowSecondaryUsesTheRowTextColor(t *testing.T) {
 		t.Fatalf("unselected roles = %v, %v; want text and hint", primary, secondary)
 	}
 }
+
+// F17: a body that does not fit shows the launcher scrollbar, so its lines
+// wrap to the width left of the scrollbar's gutter. The title above the
+// scrolling lines keeps the full width.
+func TestScrollingBodyWrapsNarrowerWhenItOverflows(t *testing.T) {
+	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
+	metrics := bodyMetrics{titleHeight: 40, titleGap: 8, lineHeight: 30, gutter: 12,
+		measureTitle: measure, measureLine: measure}
+	// A one-line title leaves three body rows.
+	rect := Rect{X: 5, Y: 7, W: 200, H: 48 + 3*30 + 10}
+	const paragraph = "aaaa bbbb cccc dddd eeee"
+
+	fits := layoutBody(rect, "Title", []string{paragraph}, metrics)
+	if fits.overflows() || fits.width != 200 || fits.maxOffset() != 0 {
+		t.Fatalf("fitting body = %+v, want full width and no scroll", fits)
+	}
+	if want := []string{"aaaa bbbb cccc dddd", "eeee"}; !reflect.DeepEqual(fits.lines, want) {
+		t.Fatalf("fitting lines = %#v, want %#v", fits.lines, want)
+	}
+	if fits.top != 48 || fits.rows != 3 {
+		t.Fatalf("fitting body starts at %d with %d rows, want 48 and 3", fits.top, fits.rows)
+	}
+
+	// Two paragraphs need five lines with the blank between them.
+	long := layoutBody(rect, "Title text here abc", []string{paragraph, paragraph}, metrics)
+	if !long.overflows() || long.width != 188 {
+		t.Fatalf("overflowing body = %+v, want it to overflow at width 188", long)
+	}
+	want := []string{"aaaa bbbb cccc", "dddd eeee", "", "aaaa bbbb cccc", "dddd eeee"}
+	if !reflect.DeepEqual(long.lines, want) {
+		t.Fatalf("overflowing lines = %#v, want %#v", long.lines, want)
+	}
+	for _, line := range long.lines {
+		if measure(line) > long.width {
+			t.Fatalf("line %q is %d wide, past the scrollbar gutter at %d", line, measure(line), long.width)
+		}
+	}
+	if long.maxOffset() != 2 {
+		t.Fatalf("last offset = %d, want 2 (the last line at the bottom)", long.maxOffset())
+	}
+	if want := []string{"Title text here abc"}; !reflect.DeepEqual(long.titleLines, want) {
+		t.Fatalf("title = %#v, want it on one full-width line", long.titleLines)
+	}
+}
+
+// The last paragraph has no blank line after it, so a body whose text fits
+// does not scroll by one empty line, and a scrolled body ends on its last
+// line of text.
+func TestScrollingBodyCountsNoBlankLineAfterTheLastParagraph(t *testing.T) {
+	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
+	metrics := bodyMetrics{titleHeight: 40, titleGap: 8, lineHeight: 30, gutter: 12,
+		measureTitle: measure, measureLine: measure}
+	layout := layoutBody(Rect{W: 200, H: 3 * 30}, "", []string{"one", "two"}, metrics)
+	if want := []string{"one", "", "two"}; !reflect.DeepEqual(layout.lines, want) {
+		t.Fatalf("lines = %#v, want %#v", layout.lines, want)
+	}
+	if layout.top != 0 || layout.overflows() {
+		t.Fatalf("untitled body = %+v, want it to fit from the top", layout)
+	}
+	// A wrapped title takes rows from the body; at least one row stays.
+	tight := layoutBody(Rect{W: 100, H: 100}, "A title that wraps", []string{"one", "two"}, metrics)
+	if len(tight.titleLines) != 2 || tight.top != 88 || tight.rows != 1 || tight.maxOffset() != 2 {
+		t.Fatalf("tight body = %+v, want a two-line title, one row and offset 2", tight)
+	}
+}

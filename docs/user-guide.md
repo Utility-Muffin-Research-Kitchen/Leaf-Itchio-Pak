@@ -39,7 +39,8 @@ Owned. Owned requires signing in with itch.io.
 
 ## Detail and gallery
 
-Up/Down scrolls the description. Left/Right or L1/R1 moves through the cover,
+Up/Down scrolls the description, and a scrollbar at its right edge shows when
+there is more to read. Left/Right or L1/R1 moves through the cover,
 animated GIF, and screenshots. A begins the available download flow. X opens
 Manage when the game has installed files. Start opens Settings and B returns to
 the main list.
@@ -232,6 +233,8 @@ root on either card.
 
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
+A confirmation that lists more files than fit, such as **Delete all downloads**
+for a game with a soundtrack, scrolls with Up/Down.
 A file from an archive that was saved under another name, such as the game's
 title, shows which archive file it came from, for example
 **From Glory Hunters 1.3 EZ IV Patched.gba** under `Glory Hunters.gba`.

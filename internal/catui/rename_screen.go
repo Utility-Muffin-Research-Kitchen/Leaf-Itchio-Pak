@@ -50,7 +50,7 @@ func (screen *RenameScreen) Draw() error {
 		if screen.model.LibraryStatus != "" {
 			lines = append(lines, screen.model.LibraryStatus)
 		}
-		err = screen.ui.DrawScrollingBody(body, "Rename complete", lines, 0)
+		err = screen.ui.DrawScrollingBody(body, "Rename complete", lines, &screen.model.BodyScroll)
 	case appui.RenameError:
 		err = screen.ui.DrawState(body, StateError, "Rename failed", screen.model.Message)
 	default:
@@ -58,13 +58,7 @@ func (screen *RenameScreen) Draw() error {
 		if len(lines) == 0 {
 			lines = []string{"No related files were found."}
 		}
-		err = screen.ui.DrawScrollingBody(body, screen.model.Heading, lines, screen.model.ScrollLine)
-		lineHeight := screen.ctx.FontHeight(FontSmall) + screen.ctx.Scale(5)
-		visible := 1
-		if lineHeight > 0 {
-			visible = maxInt(1, body.H/lineHeight-2)
-		}
-		screen.model.SetScrollBounds(maxInt(0, len(lines)-visible))
+		err = screen.ui.DrawScrollingBody(body, screen.model.Heading, lines, &screen.model.BodyScroll)
 	}
 	if err != nil {
 		return err
