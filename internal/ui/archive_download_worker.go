@@ -528,6 +528,10 @@ func readCueFiles(open func() (io.ReadCloser, error)) []string {
 // are found by name in its folder. If Leaf ever indexes playlists for Pico-8,
 // give both archive types the playlist together instead of adding it to this
 // path alone.
+//
+// Every file keeps the name it has in the archive, whatever the unified naming
+// setting: a set's carts and Lua files refer to each other by name (see
+// inventory.Entry.InPico8Set).
 func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 	var relevantPaths []string
@@ -550,19 +554,6 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		}
 	}
 	prefix := commonPathPrefix(relevantPaths)
-
-	p8PNGCount := 0
-	for _, p := range relevantPaths {
-		if strings.ToLower(roms.ROMExt(filepath.Base(p))) == ".p8.png" {
-			p8PNGCount++
-		}
-	}
-	unifyP8PNG := p8PNGCount == 1 && s.cfg.UnifiedNaming
-	if unifyP8PNG {
-		if inv, ok := s.inv.Lookup(s.game.URL); ok && inv.UnifiedNamingDisabled {
-			unifyP8PNG = false
-		}
-	}
 
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -603,14 +594,8 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 			continue
 		}
 
-		finalDest := dest
-		unifiedName := false
-		if ext == ".p8.png" && unifyP8PNG {
-			finalDest, unifiedName = s.unifyArchiveROM(dest, "7z-download: pico8")
-		}
-
-		logger.Info("7z-download: pico8 extracted %s → %s", base, finalDest)
-		s.extracted = append(s.extracted, finalDest)
+		logger.Info("7z-download: pico8 extracted %s → %s", base, dest)
+		s.extracted = append(s.extracted, dest)
 		s.inv.Add(s.game.URL, inventory.Entry{
 			GameID:  downloadGameID(s.detail),
 			GameURL: s.game.URL, Title: s.game.Title,
@@ -618,11 +603,10 @@ func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time
 		}, inventory.DownloadedFile{
 			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
 			OriginalUpload: s.plan.Upload.Filename,
-			Filename:       filepath.Base(finalDest),
-			DestPath:       finalDest,
+			Filename:       filepath.Base(dest),
+			DestPath:       dest,
 			DownloadedAt:   now,
 			FileType:       inventory.FileTypeROM,
-			UnifiedName:    unifiedName,
 			SourceArchive:  s.plan.Upload.Filename,
 			SourceMember:   name,
 		})
@@ -1208,7 +1192,10 @@ func (s *ArchiveDownloadWorker) shouldExtractROM(name string) bool {
 // extractPico8ZIP extracts all .p8, .p8.png, and .lua files from r into
 // s.plan.Pico8GameDir, preserving relative paths from the ZIP after stripping
 // any common top-level wrapper directory. Support files (.lua) required by
-// Pico-8 carts are extracted alongside the cartridges.
+// Pico-8 carts are extracted alongside the cartridges. Every file keeps the
+// name it has in the archive, whatever the unified naming setting: a set's
+// carts and Lua files refer to each other by name (see
+// inventory.Entry.InPico8Set).
 func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 
@@ -1234,22 +1221,6 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 	}
 	prefix := commonPathPrefix(relevantPaths)
 	logger.Debug("zip-download: pico8 strip-prefix=%q game-dir=%s", prefix, gameDir)
-
-	// Apply unified naming to the .p8.png only when it is the sole compiled
-	// cart in the ZIP. Multiple .p8.png files indicate a genuine multi-cart
-	// game where per-file names are meaningful and must not be collapsed.
-	p8PNGCount := 0
-	for _, p := range relevantPaths {
-		if strings.ToLower(roms.ROMExt(filepath.Base(p))) == ".p8.png" {
-			p8PNGCount++
-		}
-	}
-	unifyP8PNG := p8PNGCount == 1 && s.cfg.UnifiedNaming
-	if unifyP8PNG {
-		if inv, ok := s.inv.Lookup(s.game.URL); ok && inv.UnifiedNamingDisabled {
-			unifyP8PNG = false
-		}
-	}
 
 	for _, f := range r.File {
 		if f.FileInfo().IsDir() {
@@ -1295,14 +1266,8 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 			continue
 		}
 
-		finalDest := dest
-		unifiedName := false
-		if ext == ".p8.png" && unifyP8PNG {
-			finalDest, unifiedName = s.unifyArchiveROM(dest, "zip-download: pico8")
-		}
-
-		logger.Info("zip-download: pico8 extracted %s → %s", base, finalDest)
-		s.extracted = append(s.extracted, finalDest)
+		logger.Info("zip-download: pico8 extracted %s → %s", base, dest)
+		s.extracted = append(s.extracted, dest)
 
 		s.inv.Add(s.game.URL, inventory.Entry{
 			GameID:  downloadGameID(s.detail),
@@ -1311,11 +1276,10 @@ func (s *ArchiveDownloadWorker) extractPico8ZIP(r *zip.Reader, now time.Time) {
 		}, inventory.DownloadedFile{
 			UploadID: s.plan.Upload.UploadID, UploadFingerprint: s.plan.Upload.UploadFingerprint,
 			OriginalUpload: s.plan.Upload.Filename,
-			Filename:       filepath.Base(finalDest),
-			DestPath:       finalDest,
+			Filename:       filepath.Base(dest),
+			DestPath:       dest,
 			DownloadedAt:   now,
 			FileType:       inventory.FileTypeROM,
-			UnifiedName:    unifiedName,
 			SourceArchive:  s.plan.Upload.Filename,
 			SourceMember:   name,
 		})
