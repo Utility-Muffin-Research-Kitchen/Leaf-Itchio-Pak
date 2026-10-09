@@ -110,6 +110,9 @@ capture manage-error 960 720 1 2
 capture manage-members 960 720 1 0
 capture manage-members 960 720 1 2
 capture manage-members 1280 800 0 5
+capture manage-earlier-copy 960 720 1 2
+capture manage-earlier-copy-confirm 960 720 1 2
+capture manage-earlier-copy 1280 800 0 5
 capture manage-rename 960 720 1 0
 capture manage-rename 960 720 1 2
 capture manage-rename 1280 800 0 5

@@ -243,11 +243,23 @@ the new install no longer uses stay on your card. For example, an older version
 of this app put every soundtrack track in one folder, and the new install keeps
 same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
 **OLD** and offers **Delete left-over files**. Nothing is deleted until you
-choose it.
+choose it. If you download the same version again into another folder or onto
+the other card, Manage marks the first copy **OLD** too and calls it an earlier
+copy of files you installed again, so you can keep whichever copy you want.
+A file is only offered as left over while the newer copy that replaced it is
+still on your card. If you delete that copy, the older one becomes an ordinary
+file again, so **Delete left-over files** can never remove the last copy.
 
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
+
+Each cart of a multi-file Pico-8 game gets its own launcher art, saved as
+`Images/PICO8/<cart name>.png` because the launcher looks art up by the cart's
+file name, not its folder. The game's cover is downloaded once for all of them,
+and a cart that is itself a `.p8.png` image is its own art. Two carts with the
+same name in different folders share one image, which is removed with the
+last of them.
 
 Where safe, **Rename ROM Files** can rename a ROM plus selected saves/states.
 New downloads also publish the itch.io title to Leaf as display metadata, even

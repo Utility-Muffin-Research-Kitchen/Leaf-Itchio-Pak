@@ -97,7 +97,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	if leftOver := flow.leftOverIndices(); len(leftOver) > 0 {
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: fmt.Sprintf("%d OLD", len(leftOver)),
-			Detail: leftOverDetail, Enabled: flow.indicesAvailable(leftOver),
+			Detail: flow.leftOverText(leftOver), Enabled: flow.indicesAvailable(leftOver),
 		})
 	}
 	if len(romIndices) > 0 {
@@ -230,7 +230,7 @@ func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *
 	// ten.
 	var prompt []appui.BodyBlock
 	if item.Kind == appui.ManageItemDeleteLeftOver {
-		prompt = append(prompt, appui.Paragraph(leftOverDetail))
+		prompt = append(prompt, appui.Paragraph(flow.leftOverText(indices)))
 	}
 	files := make([]appui.ListEntry, 0, len(indices))
 	for _, index := range indices {
@@ -387,8 +387,32 @@ func (flow *CatManageFlow) otherOwner(file inventory.DownloadedFile) string {
 	return ""
 }
 
-// leftOverDetail explains files a reinstall left behind.
-const leftOverDetail = "Left over from an older version"
+// What Manage says about the files an install of their upload left behind. A
+// file is an earlier copy when the same version of the upload was installed
+// again somewhere else; see inventory.Entry.LeftOverIsEarlierCopy.
+const (
+	leftOverDetail      = "Left over from an older version"
+	earlierCopyDetail   = "Earlier copy of files you installed again"
+	leftOverMixedDetail = "Left over from earlier installs"
+)
+
+// leftOverText explains the left-over files at indices: older versions,
+// earlier copies, or a mix of both.
+func (flow *CatManageFlow) leftOverText(indices []int) string {
+	copies := 0
+	for _, index := range indices {
+		if flow.entry.LeftOverIsEarlierCopy(flow.entry.Files[index]) {
+			copies++
+		}
+	}
+	switch {
+	case copies == 0:
+		return leftOverDetail
+	case copies == len(indices):
+		return earlierCopyDetail
+	}
+	return leftOverMixedDetail
+}
 
 // leftOverIndices are the files a reinstall of their upload did not write.
 func (flow *CatManageFlow) leftOverIndices() []int {

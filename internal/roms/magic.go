@@ -58,18 +58,12 @@ func DetectROMExt(data []byte) string {
 		return ".p8"
 	}
 
-	// PNG: \x89PNG magic. Pico-8 .p8.png carts are always 128 pixels wide —
-	// check the IHDR width field at offset 16 to distinguish them from regular
-	// artwork images.
-	if len(data) >= 24 &&
-		data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G' {
-		// PNG IHDR: 8 magic + 4 chunk-length + 4 "IHDR" + 4 width (big-endian)
-		width := uint32(data[16])<<24 | uint32(data[17])<<16 |
-			uint32(data[18])<<8 | uint32(data[19])
-		if width == 128 {
-			return ".p8.png"
-		}
-	}
+	// PNG is not detected, on purpose. A Pico-8 .p8.png cart is a PNG, but
+	// so is every cover and screenshot, and a cart is told from them by its
+	// name alone. Its image is 160x205 pixels, so the check for a width of 128
+	// that stood here matched Pico-8 screenshots and labels and never a cart,
+	// and a PNG of the cart's size is as likely a cover. An archive member is a
+	// .p8.png cart only when its name says so; see ClassifyArchiveMember.
 
 	// GBA: ARM branch instruction at 0 + Nintendo logo at 4
 	if len(data) >= 8 &&
