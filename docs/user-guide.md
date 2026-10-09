@@ -249,7 +249,9 @@ New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
 PlayStation descriptors, playlists, and companion files keep their original
-names when a rename could break references. When two files from one download
+names when a rename could break references. The files of a multi-file Pico-8
+game keep their names too, carts and `.lua` files alike, because its playlist
+and code find them by name. When two files from one download
 or archive would get the same title name, they keep their original names so
 neither replaces the other. FAT32 ignores letter case, so two names that
 differ only in case count as the same file: a download stops before writing
