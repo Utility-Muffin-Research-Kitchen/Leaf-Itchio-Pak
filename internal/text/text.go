@@ -1,6 +1,10 @@
 package text
 
-import "unicode/utf8"
+import (
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
 
 // IsEmoji reports whether r is an emoji or symbol codepoint.
 func IsEmoji(r rune) bool {
@@ -40,4 +44,27 @@ func StripEmoji(s string) string {
 		i += size
 	}
 	return string(out)
+}
+
+// Count returns n with the noun in its right number: "1 game", "2 games".
+// Only 1 takes the singular, so "0 games" is plural too. Callers pass both
+// forms, because English plurals are not worth guessing.
+func Count(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return strconv.Itoa(n) + " " + plural
+}
+
+// List joins names into a phrase: "A", "A and B", "A, B, and C".
+func List(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 }

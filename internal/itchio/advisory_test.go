@@ -168,3 +168,43 @@ func TestEmptyTags(t *testing.T) {
 		t.Error("expected no trigger for empty tags")
 	}
 }
+
+// ── Matched categories (F30) ──────────────────────────────────────────────────
+
+// The warning names the categories that matched, spelled as the Content
+// Moderation screen spells them, in that screen's order.
+func TestMatchedCategoriesNamesTheCategories(t *testing.T) {
+	on := itchio.CategoryFilter{Enabled: true}
+	all := cfg(on, on, on, on)
+	for _, tc := range []struct {
+		name string
+		tags []string
+		cfg  itchio.FilterConfig
+		want []string
+	}{
+		{"one category", []string{"adventure", "NSFW"}, all, []string{"Adult Content"}},
+		{"two categories, in screen order", []string{"suicide", "nsfw"}, all, []string{"Adult Content", "Heavy Themes"}},
+		{"all four", []string{"drugs", "grief", "queer", "porn"}, all,
+			[]string{"Adult Content", "Queer Content", "Heavy Themes", "Substance Use"}},
+		{"one category twice is named once", []string{"nsfw", "porn", "gore"}, all, []string{"Adult Content"}},
+		{"a blocked-off category is not named", []string{"nsfw", "drugs"}, cfg(off, off, off, on), []string{"Substance Use"}},
+		{"a tag allowed one by one is not named", []string{"nsfw"},
+			cfg(itchio.CategoryFilter{Enabled: true, Disabled: []string{"nsfw"}}, off, off, off), nil},
+		{"nothing matches", []string{"platformer"}, all, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := itchio.MatchedCategories(tc.tags, tc.cfg)
+			if len(got) != len(tc.want) {
+				t.Fatalf("MatchedCategories(%q) = %q, want %q", tc.tags, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("MatchedCategories(%q) = %q, want %q", tc.tags, got, tc.want)
+				}
+			}
+			if triggered := itchio.IsAdvisoryTriggered(tc.tags, tc.cfg); triggered != (len(tc.want) > 0) {
+				t.Fatalf("IsAdvisoryTriggered = %v with categories %q", triggered, tc.want)
+			}
+		})
+	}
+}

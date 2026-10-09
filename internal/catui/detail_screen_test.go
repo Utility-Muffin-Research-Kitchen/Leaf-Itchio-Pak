@@ -18,7 +18,7 @@ func footerButtons(hints []FooterHint) map[Button]FooterHint {
 // ones the composer may drop, Settings first.
 func TestDetailFooterKeepsBackForDownloadedGames(t *testing.T) {
 	model := appui.NewDetailModel(appui.DetailGame{Title: "Glory Hunters", IsFree: true, CanDownload: true, Downloaded: true})
-	model.SetReady("", nil, []string{"one", "two"}, false, false)
+	model.SetReady("", nil, []string{"one", "two"}, false, nil)
 	hints := detailFooter(model)
 	if len(hints) == 0 || hints[0].Button != ButtonB || hints[0].Label != "Back" || hints[0].DropRank != 0 {
 		t.Fatalf("first hint = %+v, want a required B Back", hints)

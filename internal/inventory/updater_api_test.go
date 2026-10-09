@@ -380,3 +380,40 @@ func TestNewDesktopBuildInTheAPIListingDoesNotBadge(t *testing.T) {
 		t.Fatalf("new Game Boy Color upload = %+v, want one update", pending)
 	}
 }
+
+// F31: a new upload for a system the app cannot install is no update. The
+// app could not install it, so it must not raise a badge or be tracked.
+func TestNewUploadForAnUnsupportedSystemDoesNotBadge(t *testing.T) {
+	listing := `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/profile/owned-keys":
+			fmt.Fprint(w, `{"owned_keys":{}}`)
+		case "/games/42/uploads":
+			fmt.Fprint(w, listing)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	url := srv.URL + "/game"
+	inv, path := updateTestInventory(t, url)
+	client := itchio.NewClientWithBase(srv.URL)
+	client.SetAuthToken("A")
+	svc := NewUpdateService(inv, path, client, nil)
+	svc.runCheck(checkRequest{all: true})
+	// The developer adds a Nintendo DS build, named with its version.
+	listing = `{"uploads":[{"id":7,"filename":"cart.gb","build_id":1},
+		{"id":12,"filename":"Cart.nds v0.2 (Post-jam bug fix)"}]}`
+	svc.runCheck(checkRequest{all: true})
+	if pending := inv.PendingUpdateFiles(url); len(pending) != 0 {
+		t.Fatalf("new Nintendo DS upload = %+v, want no update", pending)
+	}
+	entry, _ := inv.Lookup(url)
+	for _, upload := range entry.KnownUpstreamFiles {
+		if upload.UploadID == "12" {
+			t.Fatalf("known uploads = %+v, want the Nintendo DS upload left out", entry.KnownUpstreamFiles)
+		}
+	}
+}

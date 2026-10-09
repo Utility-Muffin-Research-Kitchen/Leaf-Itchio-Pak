@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type DetailState uint8
@@ -55,6 +57,9 @@ type DetailModel struct {
 	BodyScroll
 	BrowserOnly bool
 	ErrorDetail string
+	// WarningCategories names the content categories that matched, as the
+	// Content Moderation screen names them; the warning screen lists them.
+	WarningCategories []string
 }
 
 type DetailIntent uint8
@@ -72,7 +77,9 @@ func NewDetailModel(game DetailGame) *DetailModel {
 	return &DetailModel{State: DetailLoading, Game: game}
 }
 
-func (m *DetailModel) SetReady(description string, tags, images []string, browserOnly, warning bool) {
+// SetReady shows the loaded page. A non-empty warning, the categories whose
+// content filters the game matches, puts the content warning in front of it.
+func (m *DetailModel) SetReady(description string, tags, images []string, browserOnly bool, warning []string) {
 	m.Description = DescriptionParagraphs(description)
 	m.Tags = append([]string(nil), tags...)
 	m.Images = append([]string(nil), images...)
@@ -80,10 +87,34 @@ func (m *DetailModel) SetReady(description string, tags, images []string, browse
 	m.ErrorDetail = ""
 	m.ResetScroll()
 	m.State = DetailReady
-	if warning {
-		m.State = DetailWarning
+	m.WarningCategories = nil
+	if len(warning) > 0 {
+		m.SetWarning(warning)
 	}
 	m.clampImage()
+}
+
+// SetWarning puts the content warning in front of the page, naming the
+// categories that matched.
+func (m *DetailModel) SetWarning(categories []string) {
+	m.State = DetailWarning
+	m.WarningCategories = append([]string(nil), categories...)
+}
+
+// WarningText is what the content warning says: which of your filters the
+// game matches, and where to change them. Start opens Content Moderation
+// from the warning. A change applies the next time the game opens.
+func WarningText(categories []string) string {
+	subject, them := "your content filters", "them"
+	switch len(categories) {
+	case 0:
+	case 1:
+		subject, them = "your "+categories[0]+" filter", "it"
+	default:
+		subject = "your " + text.List(categories) + " filters"
+	}
+	return "This game matches " + subject + ".\n\nPress Start to change " + them +
+		" under Content Moderation, then open the game again. Press B to go back."
 }
 
 func (m *DetailModel) SetError(detail string) {

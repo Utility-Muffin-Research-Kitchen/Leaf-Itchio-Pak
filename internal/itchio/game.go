@@ -50,6 +50,11 @@ type Upload struct {
 	MD5         string
 	BuildID     int64
 	UpdatedAt   time.Time
+
+	// UnsupportedSystem names the system when the file name shows it is for a
+	// system the app cannot install, such as "Nintendo DS". It is not
+	// NeedsFormat: there is no format to choose.
+	UnsupportedSystem string
 }
 
 // DesktopOrWebOnly reports whether an upload listed through the API is a
@@ -437,16 +442,12 @@ func (c *Client) parseDownloadPage(ctx context.Context, pageURL string) (*Downlo
 		// Find each <div class="upload"> and extract upload info from it
 		if n.Type == html.ElementNode && n.Data == "div" && nodeHasClass(n, "upload") {
 			if u, ok := extractUploadEntry(n); ok {
-				ext := strings.ToLower(roms.ROMExt(u.Filename))
-				if roms.IsSupportedUploadExt(ext) {
-					logger.Debug("download-page: found ROM %s id=%s", u.Filename, u.UploadID)
-					result.Uploads = append(result.Uploads, u)
-				} else if !isSkippableExt(ext) {
-					u.NeedsFormat = true
-					logger.Debug("download-page: found unknown-format %s id=%s (user will choose format)", u.Filename, u.UploadID)
+				if u.classifyByName() {
+					logger.Debug("download-page: found %s id=%s (needs format %v, unsupported system %q)",
+						u.Filename, u.UploadID, u.NeedsFormat, u.UnsupportedSystem)
 					result.Uploads = append(result.Uploads, u)
 				} else {
-					logger.Debug("download-page: skipping %s (ext=%q)", u.Filename, ext)
+					logger.Debug("download-page: skipping %s (ext=%q)", u.Filename, strings.ToLower(roms.ROMExt(u.Filename)))
 				}
 			}
 			return // don't recurse into upload divs
@@ -462,14 +463,17 @@ func (c *Client) parseDownloadPage(ctx context.Context, pageURL string) (*Downlo
 	// ID (most recently uploaded) so only one copy is downloaded.
 	result.Uploads = deduplicateUploadsByFilename(result.Uploads)
 
-	knownCount := 0
+	knownCount, unsupportedCount := 0, 0
 	for _, u := range result.Uploads {
-		if !u.NeedsFormat {
+		switch {
+		case u.UnsupportedSystem != "":
+			unsupportedCount++
+		case !u.NeedsFormat:
 			knownCount++
 		}
 	}
-	logger.Info("download-page: %d known ROM(s), %d unknown-format file(s)",
-		knownCount, len(result.Uploads)-knownCount)
+	logger.Info("download-page: %d known ROM(s), %d unknown-format file(s), %d for systems the app cannot install",
+		knownCount, len(result.Uploads)-knownCount-unsupportedCount, unsupportedCount)
 	return result, nil
 }
 

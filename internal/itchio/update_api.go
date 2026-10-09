@@ -156,7 +156,8 @@ func (c *Client) FetchPageUploadNames(gameURL string) ([]string, error) {
 					name = strings.TrimSpace(n.FirstChild.Data)
 				}
 				ext := strings.ToLower(roms.ROMExt(name))
-				if name != "" && !seen[name] && (roms.IsSupportedUploadExt(ext) || !isSkippableExt(ext)) {
+				if name != "" && !seen[name] && (roms.IsSupportedUploadExt(ext) || !isSkippableExt(ext)) &&
+					unsupportedSystemOf(name) == "" {
 					seen[name] = true
 					names = append(names, name)
 				}

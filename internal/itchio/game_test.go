@@ -594,3 +594,49 @@ func TestParseDownloadPageFiltersROMs(t *testing.T) {
 		t.Errorf("expected 2 ROM uploads, got %d", len(result.Uploads))
 	}
 }
+
+// F31: a download page lists a file for a system the app cannot install
+// with that system's name, neither as a ROM nor as a file to classify. The
+// name can carry a version after the extension.
+func TestParseDownloadPage_UnsupportedSystems(t *testing.T) {
+	entry := func(id, name string) string {
+		return `<div class="upload"><div class="info_column"><div class="upload_name">` +
+			`<strong class="name" title="` + name + `">` + name + `</strong></div></div>` +
+			`<div class="actions"><a class="button download_btn" href="javascript:void(0);" data-upload_id="` + id +
+			`">Download</a></div></div>`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html><head><meta name="csrf_token" value="CSRF"/></head><body>` +
+			entry("1", "game.gbc") + entry("2", "Hidden_palace.nds v0.1 (Post-jam bug fix)") +
+			entry("3", "setup.exe") + entry("4", "manual.pdf") + entry("5", "Glory Hunters 2.0") +
+			`</body></html>`))
+	}))
+	defer srv.Close()
+
+	result, err := itchio.NewClientWithBase(srv.URL).ParseDownloadPage(srv.URL + "/dl/TOKEN")
+	if err != nil {
+		t.Fatalf("ParseDownloadPage: %v", err)
+	}
+	got := map[string]itchio.Upload{}
+	for _, u := range result.Uploads {
+		got[u.Filename] = u
+	}
+	if len(got) != 4 {
+		t.Fatalf("uploads = %+v, want the ROM, the two unsupported files and the unknown one", result.Uploads)
+	}
+	if u := got["Hidden_palace.nds v0.1 (Post-jam bug fix)"]; u.UnsupportedSystem != "Nintendo DS" || u.NeedsFormat {
+		t.Errorf("named .nds upload = %+v, want Nintendo DS and no format to choose", u)
+	}
+	if u := got["setup.exe"]; u.UnsupportedSystem != "Windows" || u.NeedsFormat {
+		t.Errorf("setup.exe = %+v, want Windows and no format to choose", u)
+	}
+	if u := got["game.gbc"]; u.UnsupportedSystem != "" || u.NeedsFormat {
+		t.Errorf("game.gbc = %+v, want a plain ROM", u)
+	}
+	if u := got["Glory Hunters 2.0"]; u.UnsupportedSystem != "" || !u.NeedsFormat {
+		t.Errorf("Glory Hunters 2.0 = %+v, want an unknown file to classify", u)
+	}
+	if _, ok := got["manual.pdf"]; ok {
+		t.Error("manual.pdf is not a game file and stays dropped")
+	}
+}

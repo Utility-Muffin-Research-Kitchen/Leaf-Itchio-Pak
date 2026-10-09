@@ -368,6 +368,52 @@ func TestFetchUploadsForKey_ROM(t *testing.T) {
 	}
 }
 
+// F31: an API listing marks a file for a system the app cannot install with
+// that system's name, and does not ask you to classify it.
+func TestFetchUploadsForKey_UnsupportedSystems(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/games/123/uploads", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"uploads": []map[string]interface{}{
+				{"id": 1, "filename": "game.gbc"},
+				{"id": 2, "filename": "Hidden_palace.nds v0.1 (Post-jam bug fix)"},
+				{"id": 3, "filename": "game.3ds"},
+				{"id": 4, "filename": "game.apk", "traits": []string{"p_android"}},
+				{"id": 5, "filename": "patch.ips"},
+				{"id": 6, "filename": "manual.pdf"},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	uploads, err := itchio.NewClientWithBaseAndButler(srv.URL, srv.URL).FetchUploadsForKey("mykey", "123", "")
+	if err != nil {
+		t.Fatalf("FetchUploadsForKey: %v", err)
+	}
+	byName := map[string]itchio.Upload{}
+	for _, u := range uploads {
+		byName[u.Filename] = u
+	}
+	if len(byName) != 5 {
+		t.Fatalf("uploads = %+v, want everything but manual.pdf", uploads)
+	}
+	for name, system := range map[string]string{
+		"Hidden_palace.nds v0.1 (Post-jam bug fix)": "Nintendo DS", "game.3ds": "Nintendo 3DS", "game.apk": "Android",
+	} {
+		if u := byName[name]; u.UnsupportedSystem != system || u.NeedsFormat {
+			t.Errorf("%s = %+v, want %s and no format to choose", name, u, system)
+		}
+	}
+	if u := byName["game.gbc"]; u.UnsupportedSystem != "" || u.NeedsFormat {
+		t.Errorf("game.gbc = %+v, want a plain ROM", u)
+	}
+	if u := byName["patch.ips"]; u.UnsupportedSystem != "" || !u.NeedsFormat {
+		t.Errorf("patch.ips = %+v, want an unknown file to classify", u)
+	}
+}
+
 // TestFetchUploadsForKey_Empty verifies that an empty uploads list is handled
 // without error (empty slice returned, no panic).
 func TestFetchUploadsForKey_Empty(t *testing.T) {

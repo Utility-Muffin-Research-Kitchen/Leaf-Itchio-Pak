@@ -73,7 +73,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
-	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale", "warning",
+	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale",
+		"warning", "warning-two", "warning-four",
 		"detail-unavailable", "detail-unavailable-downloaded", "detail-unavailable-offline", "detail-title-emoji", "detail-title-cjk":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
@@ -104,7 +105,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
-			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")
+			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, warningFixtureCategories(config.Screen))
 		if strings.HasPrefix(config.Screen, "detail-unavailable") {
 			model.SetError("Go back and reopen this game to try again.")
 			if config.Screen == "detail-unavailable-offline" {
@@ -125,9 +126,22 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
-	case "download-select", "download-select-hidden", "download-select-offline", "archive-contents":
+	case "download-select", "download-select-hidden", "download-select-offline", "archive-contents",
+		"download-select-unsupported", "download-select-format-psx":
 		model := appui.NewDownloadSelectModel("Leafbound 葉")
-		if config.Screen == "download-select-offline" {
+		if config.Screen == "download-select-unsupported" {
+			// Hidden palace (F31): every upload is "Hidden_palace.nds v0.x (...)".
+			model.Title = "Hidden palace"
+			model.SetError("This game has no files the app can install. Its files are for Nintendo DS and Windows.")
+		} else if config.Screen == "download-select-format-psx" {
+			// An upload of a game listed under PlayStation whose type the
+			// file did not show: that system's formats come first (F31).
+			model.Title = "Hidden palace"
+			model.SetChoices("Type not detected. Choose a format", []appui.DownloadChoice{{
+				Title: "Hidden palace v0.1 (Post-jam bug fix)", Badge: "CHD",
+				FormatOptions: []string{"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U", "P8.PNG", "P8"},
+			}})
+		} else if config.Screen == "download-select-offline" {
 			// The device showed "fetch game page: network request failed" here.
 			model.SetError("Can't reach itch.io. Check the connection and try again.")
 		} else if config.Screen == "archive-contents" {
@@ -217,9 +231,17 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		handleIntent = func(InputEvent) bool { return true }
-	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi":
+	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi",
+		"destination-unavailable":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
+		case "destination-unavailable":
+			// The card goes away after the picker opened, so the error keeps
+			// the picker's subtitle, as in the app.
+			model.SetSources([]appui.DestinationItem{
+				{Kind: appui.DestinationItemSource, Label: "Secondary SD", Detail: "Available", Enabled: true},
+			})
+			model.SetError("Secondary SD isn't available. Insert the card, then try again.")
 		case "destination-source":
 			model.SetSources([]appui.DestinationItem{
 				{Kind: appui.DestinationItemSource, Label: "Primary SD", Detail: "Available", Enabled: true},
@@ -268,6 +290,23 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
+	case "manage-one-file":
+		// A game with one file counts "1 managed file" and "1 FILE" (F29).
+		model := appui.NewManageModel("Leafbound 葉")
+		model.SetItems("1 managed file · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "1 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "1 FILE", Enabled: true},
+			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
+		})
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
 	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error", "manage-delete-long":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
@@ -290,7 +329,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 				appui.ListBlock([]appui.ListEntry{{Text: "forest-theme.ogg", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg"}}),
 			})
 		} else if config.Screen == "manage-result" {
-			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
+			model.SetResult("Deleted 1 managed file. Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		} else if config.Screen == "manage-error" {
 			model.SetError("Couldn't delete Leafbound Deluxe Edition (PlayStation).bin. Check the SD card, then try again.")
@@ -505,7 +544,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.State, model.CanRetry = appui.SignInError, true
 			model.Heading, model.Detail = "The code expired", "Press A for a new code."
 		case "signin-done":
-			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
+			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned games found."
 		case "signin-checking":
 			model.State = appui.SignInChecking
 		case "signin-warning":
@@ -521,7 +560,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 				Platform: "GBA", Price: 4.99, NeedsSignIn: config.Screen == "detail-signin",
 			})
 			detail.SetReady(`<p>A paid Game Boy Advance release. Sign in with itch.io to download it once you own it.</p>`,
-				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, false)
+				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, nil)
 			screen, screenErr := NewDetailScreen(ctx, detail, cache)
 			if screenErr != nil {
 				return screenErr
@@ -671,4 +710,18 @@ func fixtureSoundtrack() []string {
 		tracks = append(tracks, fmt.Sprintf("%02d %s.ogg", index+1, names[index%len(names)]))
 	}
 	return tracks
+}
+
+// warningFixtureCategories are the categories the warning fixtures name: one,
+// two, and all four of them, which is the longest warning there is.
+func warningFixtureCategories(screen string) []string {
+	switch screen {
+	case "warning":
+		return []string{"Adult Content"}
+	case "warning-two":
+		return []string{"Adult Content", "Heavy Themes"}
+	case "warning-four":
+		return []string{"Adult Content", "Queer Content", "Heavy Themes", "Substance Use"}
+	}
+	return nil
 }

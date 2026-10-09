@@ -7,7 +7,7 @@ import (
 
 func TestDetailNavigationAndWarningGate(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Leaf 葉"})
-	model.SetReady("<p>Hello</p>", nil, []string{"cover", "shot"}, false, false)
+	model.SetReady("<p>Hello</p>", nil, []string{"cover", "shot"}, false, nil)
 	model.Handle(InputEvent{Button: ButtonLeft, Pressed: true})
 	if model.ImageIndex != 1 {
 		t.Fatalf("wrapped image index = %d, want 1", model.ImageIndex)
@@ -40,7 +40,7 @@ func TestDescriptionParagraphs(t *testing.T) {
 
 func TestDetailDownloadIntentHonorsCapabilityAndBrowserOnly(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Game", CanDownload: true})
-	model.SetReady("", nil, nil, false, false)
+	model.SetReady("", nil, nil, false, nil)
 	if got := model.Handle(InputEvent{Button: ButtonA, Pressed: true}); got != DetailIntentDownload {
 		t.Fatalf("A intent = %v, want download", got)
 	}
@@ -52,7 +52,7 @@ func TestDetailDownloadIntentHonorsCapabilityAndBrowserOnly(t *testing.T) {
 
 func TestDetailManageIntentRequiresDownloadedGame(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Game", Downloaded: true})
-	model.SetReady("", nil, nil, false, false)
+	model.SetReady("", nil, nil, false, nil)
 	if got := model.Handle(InputEvent{Button: ButtonX, Pressed: true}); got != DetailIntentManage {
 		t.Fatalf("X intent = %v, want manage", got)
 	}
@@ -101,5 +101,37 @@ func TestDetailPriceTextFollowsOwnership(t *testing.T) {
 	free := DetailGame{PriceLabel: "Free / name your price", Owned: true, IsFree: true}
 	if got := free.PriceText(); got != "Free / name your price" {
 		t.Fatalf("owned free game = %q, want its free label", got)
+	}
+}
+
+// F30: the content warning names the categories that matched and says where
+// to change them.
+func TestDetailWarningNamesTheMatchedCategories(t *testing.T) {
+	model := NewDetailModel(DetailGame{Title: "Lava Boy"})
+	model.SetReady("<p>Hello</p>", []string{"nsfw"}, nil, false, []string{"Adult Content"})
+	if model.State != DetailWarning || !reflect.DeepEqual(model.WarningCategories, []string{"Adult Content"}) {
+		t.Fatalf("state %v, categories %q; want a warning naming Adult Content", model.State, model.WarningCategories)
+	}
+	model.SetReady("<p>Hello</p>", nil, nil, false, nil)
+	if model.State != DetailReady || model.WarningCategories != nil {
+		t.Fatalf("state %v, categories %q; want a ready page with no warning", model.State, model.WarningCategories)
+	}
+
+	for _, tc := range []struct {
+		categories []string
+		want       string
+	}{
+		{[]string{"Adult Content"},
+			"This game matches your Adult Content filter.\n\nPress Start to change it under Content Moderation, then open the game again. Press B to go back."},
+		{[]string{"Adult Content", "Heavy Themes"},
+			"This game matches your Adult Content and Heavy Themes filters.\n\nPress Start to change them under Content Moderation, then open the game again. Press B to go back."},
+		{[]string{"Adult Content", "Queer Content", "Substance Use"},
+			"This game matches your Adult Content, Queer Content, and Substance Use filters.\n\nPress Start to change them under Content Moderation, then open the game again. Press B to go back."},
+		{nil,
+			"This game matches your content filters.\n\nPress Start to change them under Content Moderation, then open the game again. Press B to go back."},
+	} {
+		if got := WarningText(tc.categories); got != tc.want {
+			t.Errorf("WarningText(%q) =\n%q\nwant\n%q", tc.categories, got, tc.want)
+		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type CatSettingsAction uint8
@@ -237,7 +238,7 @@ func (flow *CatSettingsFlow) Sync(model *appui.SettingsModel) bool {
 			return true
 		}
 		flow.Refresh(model)
-		model.SetMessage(fmt.Sprintf("Signed in to itch.io. %d owned game(s) found.", len(result.owned)))
+		model.SetMessage("Signed in to itch.io. " + text.Count(len(result.owned), "owned game", "owned games") + " found.")
 		return true
 	default:
 		return false

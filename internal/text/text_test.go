@@ -82,3 +82,39 @@ func TestStripEmojiNoAllocFastPath(t *testing.T) {
 		t.Errorf("StripEmoji(%q): got %.0f allocs, want 0", input, allocs)
 	}
 }
+
+// F29: a count says "1 game", never "1 games".
+func TestCountPicksSingularOnlyForOne(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{0, "0 games"},
+		{1, "1 game"},
+		{2, "2 games"},
+		{31, "31 games"},
+	} {
+		if got := text.Count(tc.n, "game", "games"); got != tc.want {
+			t.Errorf("Count(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+	if got := text.Count(1, "managed file", "managed files"); got != "1 managed file" {
+		t.Errorf("two-word noun = %q", got)
+	}
+}
+
+func TestListJoinsNamesIntoAPhrase(t *testing.T) {
+	for _, tc := range []struct {
+		names []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"Windows"}, "Windows"},
+		{[]string{"Nintendo DS", "Windows"}, "Nintendo DS and Windows"},
+		{[]string{"Nintendo DS", "Windows", "Android"}, "Nintendo DS, Windows, and Android"},
+	} {
+		if got := text.List(tc.names); got != tc.want {
+			t.Errorf("List(%q) = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+}

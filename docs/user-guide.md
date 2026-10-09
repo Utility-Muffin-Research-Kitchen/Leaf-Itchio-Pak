@@ -51,8 +51,11 @@ your account doesn't own says **Not owned** under the QR code and has no
 download; scan the code to buy it on itch.io. The page follows your account,
 so signing in or out from Settings updates it right away.
 
-A tag-based content warning must be acknowledged before flagged detail content
-is shown. Warning categories can be changed in Settings; they do not delete or
+A game that matches one of your content filters shows a warning in place of its
+details. The warning names the categories that matched, as **Content
+Moderation** does: **Adult Content**, **Queer Content**, **Heavy Themes** or
+**Substance Use**. Press Start to open **Content Moderation** and change them,
+then open the game again. B goes back to the list. The filters never delete or
 silently remove catalogue entries.
 
 ## Download flow
@@ -78,6 +81,19 @@ choose.
 Signed in, the app can tell Windows, macOS, Linux, Android and browser builds
 from the files Leaf can play. It never picks those builds for you. When
 you choose the file yourself, they're listed last, behind **Show all files**.
+
+A file whose name shows a system the app can't install is never offered:
+Nintendo DS (`.nds`), Nintendo 3DS (`.3ds`), Nintendo 64 (`.n64`, `.z64`,
+`.v64`), Super Nintendo (`.sfc`, `.smc`), Analogue Pocket (`.pocket`), Windows
+(`.exe`), macOS (`.dmg`) and Android (`.apk`). The extension can sit in the
+middle of the name, as in `Hidden_palace.nds v0.1 (Post-jam bug fix)`. When
+that leaves nothing to install, the screen says the game has no files the app
+can install and names the systems its files are for. `.iso` and `.bin` are not
+on this list, because the PlayStation uses them.
+
+When the app can't tell what a file is, you choose its format with Left and
+Right. The formats of the system the game is listed under come first, so a
+PlayStation game starts on a PlayStation format and not on Pico-8.
 
 If you later pick another build for the same system that the page still
 offers, the app keeps both: the first keeps the title name, such as
