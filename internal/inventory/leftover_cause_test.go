@@ -18,13 +18,19 @@ const (
 	copyB     = "/leaf/Roms/PICO8/Moss Garden 2/"
 )
 
-// installAt records a Pico-8 set in dir the way the archive worker does and
-// commits the install.
-func installAt(inv *inventory.Inventory, dir, fingerprint string) {
+var installClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// installAt records a Pico-8 set in dir the way the archive worker does,
+// commits the install and returns the paths it wrote.
+func installAt(inv *inventory.Inventory, dir, fingerprint string) []string {
+	// The files of one install share a time, as the archive worker records
+	// them, and each install is an hour after the one before.
+	installClock = installClock.Add(time.Hour)
+	at := installClock
 	files := []inventory.DownloadedFile{
-		member(dir+"main.p8", "moss.zip", "game/main.p8", time.Now(), fingerprint),
-		member(dir+"world2/main.p8", "moss.zip", "game/world2/main.p8", time.Now(), fingerprint),
-		member(dir+"lib.lua", "moss.zip", "game/lib.lua", time.Now(), fingerprint),
+		member(dir+"main.p8", "moss.zip", "game/main.p8", at, fingerprint),
+		member(dir+"world2/main.p8", "moss.zip", "game/world2/main.p8", at, fingerprint),
+		member(dir+"lib.lua", "moss.zip", "game/lib.lua", at, fingerprint),
 	}
 	written := make([]string, 0, len(files))
 	for _, file := range files {
@@ -35,6 +41,7 @@ func installAt(inv *inventory.Inventory, dir, fingerprint string) {
 	inv.CommitUploadInstall(causeGame, inventory.UploadInstall{
 		UploadID: "9", Filename: "moss.zip", Fingerprint: fingerprint, Written: written,
 	})
+	return written
 }
 
 func leftOverLogLines(logs *artworkLogs) []string {

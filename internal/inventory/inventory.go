@@ -101,7 +101,8 @@ type DownloadedFile struct {
 	// write, such as a track an older version named differently, or the
 	// first copy of an upload that was installed again into another
 	// folder. Manage offers it for deletion; nothing deletes it
-	// automatically.
+	// automatically. The mark goes when what replaced the file is removed
+	// (releaseLeftOverLocked), so the last copy of a file is never offered.
 	LeftOver bool `json:"left_over,omitempty"`
 }
 
@@ -658,6 +659,57 @@ func markLeftOverLocked(entry *Entry, belongs func(DownloadedFile) bool, written
 	return flagged
 }
 
+// releaseLeftOverLocked is called after files of entry were removed, whether by
+// Manage or because they were gone from the card. A left-over mark says a
+// later install of the upload replaced the file; when what replaced it is gone,
+// the file is the only copy left, and offering it as left over would offer the
+// last copy of the game for deletion. So a file of the same upload and kind
+// that the removed file replaced (it was installed earlier) loses its mark when
+//
+//   - no later file of that upload and kind is left that is not itself left
+//     over: nothing replaces it any more; or
+//   - the removed file came from the same archive member, and no later file of
+//     that member is left: its own replacement is gone, while the rest of the
+//     newer install is still there.
+//
+// Nothing else changes. With a replacement in place the mark stays, which is
+// the ordinary case, and removing a left-over file, a file of another upload,
+// or a file that replaced nothing touches no mark. Uploads and files are
+// matched as CommitUploadInstall matched them when it set the marks, and "later"
+// is the record's DownloadedAt: the files of one install share a time, so they
+// never replace each other, and a file freed by the second rule is not the
+// replacement of its own install's other files.
+func releaseLeftOverLocked(entry *Entry, removed []DownloadedFile) {
+	for _, gone := range removed {
+		if gone.LeftOver {
+			continue
+		}
+		upload := UpstreamFile{Filename: gone.UploadName(), UploadID: gone.UploadID}
+		sameUploadAndKind := func(file DownloadedFile) bool {
+			return fileMatchesUpload(file, upload) && file.contentKind() == gone.contentKind()
+		}
+		for index := range entry.Files {
+			file := &entry.Files[index]
+			if !file.LeftOver || !sameUploadAndKind(*file) || !gone.DownloadedAt.After(file.DownloadedAt) {
+				continue
+			}
+			replacementLeft := func(sameMember bool) bool {
+				for _, other := range entry.Files {
+					if !other.LeftOver && sameUploadAndKind(other) && other.DownloadedAt.After(file.DownloadedAt) &&
+						(!sameMember || other.SourceMember == file.SourceMember) {
+						return true
+					}
+				}
+				return false
+			}
+			if !replacementLeft(false) || (gone.SourceMember != "" && file.SourceMember == gone.SourceMember && !replacementLeft(true)) {
+				logger.Info("inventory: %s is no longer left over; what replaced it was removed", filepath.Base(file.DestPath))
+				file.LeftOver = false
+			}
+		}
+	}
+}
+
 // leftOverKey compares paths case-insensitively, as FAT32 does.
 func leftOverKey(path string) string {
 	return strings.ToLower(filepath.Clean(path))
@@ -737,13 +789,16 @@ func (inv *Inventory) RemoveFile(gameURL, destPath string) bool {
 	if !ok {
 		return true
 	}
-	var remaining []DownloadedFile
+	var remaining, removed []DownloadedFile
 	for _, f := range entry.Files {
 		if f.DestPath != destPath {
 			remaining = append(remaining, f)
+		} else {
+			removed = append(removed, f)
 		}
 	}
 	entry.Files = remaining
+	releaseLeftOverLocked(entry, removed)
 	if len(entry.Files) == 0 {
 		delete(inv.Entries, gameURL)
 		return true
@@ -847,7 +902,7 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 	inv.mu.Lock()
 	for gameURL, entry := range inv.Entries {
 		// Pass 1: drop files missing from disk.
-		var present []DownloadedFile
+		var present, missing []DownloadedFile
 		for _, f := range entry.Files {
 			if sourceUnavailableForFile(f, sources) {
 				present = append(present, f)
@@ -857,6 +912,7 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 				present = append(present, f)
 			} else {
 				logger.Debug("inventory: removing stale file=%s", f.DestPath)
+				missing = append(missing, f)
 				removed++
 				changed = true
 			}
@@ -895,6 +951,7 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 			delete(inv.Entries, gameURL)
 		} else {
 			entry.Files = kept
+			releaseLeftOverLocked(entry, missing)
 			entry.VerifiedAt = time.Now()
 		}
 	}

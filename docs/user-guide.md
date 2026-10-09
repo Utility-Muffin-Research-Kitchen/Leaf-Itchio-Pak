@@ -241,6 +241,9 @@ same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
 choose it. If you download the same version again into another folder or onto
 the other card, Manage marks the first copy **OLD** too and calls it an earlier
 copy of files you installed again, so you can keep whichever copy you want.
+A file is only offered as left over while the newer copy that replaced it is
+still on your card. If you delete that copy, the older one becomes an ordinary
+file again, so **Delete left-over files** can never remove the last copy.
 
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app

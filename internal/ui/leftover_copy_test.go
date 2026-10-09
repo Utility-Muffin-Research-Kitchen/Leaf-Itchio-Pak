@@ -60,3 +60,82 @@ func TestManageNamesAnEarlierCopyOfTheSameUpload(t *testing.T) {
 		t.Fatalf("update: detail %q prompt %q, want the older-version text", detail, prompt)
 	}
 }
+
+// leftOverRow returns the "Delete left-over files" row of the game's Manage
+// list, or nil when it offers none.
+func leftOverRow(t *testing.T, f *artSetFixture) *appui.ManageItem {
+	t.Helper()
+	_, model, err := NewCatManageFlow(f.inv, f.invPath, f.game.URL, f.sources, f.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range model.Items {
+		if item.Kind == appui.ManageItemDeleteLeftOver {
+			return &item
+		}
+	}
+	return nil
+}
+
+// The same upload installed into a second folder leaves the first copy
+// flagged. Deleting the second copy in Manage makes the first the only copy,
+// and Manage must stop offering it for deletion, or "Delete left-over files"
+// would delete the last copy of the game.
+func TestManageDoesNotOfferTheOnlyRemainingCopyAsLeftOver(t *testing.T) {
+	for name, data := range map[string][]byte{"moss.zip": pico8ArtSetArchives(t)["moss.zip"], "moss.7z": pico8ArtSetArchives(t)["moss.7z"]} {
+		t.Run(name, func(t *testing.T) {
+			f := newArtSetFixture(t, name, data)
+			roms := filepath.Join(f.sources[0].RomsPath, "PICO8")
+			f.installInto(filepath.Join(roms, "Moss Garden"), "build:5", data)
+			firstCopy := len(f.records())
+			f.installInto(filepath.Join(roms, "Moss Garden 2"), "build:5", data)
+			row := leftOverRow(t, f)
+			if row == nil || !strings.Contains(row.Badge, " OLD") {
+				t.Fatalf("no left-over row after the second install: %+v", row)
+			}
+
+			// Deleting one cart of the second copy frees only the same cart of
+			// the first copy: its other files still have a replacement.
+			f.manageDelete(deleteFile("level2.p8", "Moss Garden 2/"))
+			before := row.Badge
+			row = leftOverRow(t, f)
+			if row == nil || row.Badge == before {
+				t.Fatalf("left-over row after deleting one replacement = %+v, want one file fewer than %q", row, before)
+			}
+
+			// Delete the rest of the second copy, one file at a time.
+			for {
+				var next *appui.ManageItem
+				_, model, err := NewCatManageFlow(f.inv, f.invPath, f.game.URL, f.sources, f.catalog)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range model.Items {
+					if item.Kind == appui.ManageItemFile && strings.Contains(item.Detail, "Moss Garden 2/") {
+						next = &item
+						break
+					}
+				}
+				if next == nil {
+					break
+				}
+				label, detail := next.Label, next.Detail
+				f.manageDelete(func(item appui.ManageItem) bool {
+					return item.Kind == appui.ManageItemFile && item.Label == label && item.Detail == detail
+				})
+			}
+
+			if row := leftOverRow(t, f); row != nil {
+				t.Fatalf("%s: Manage still offers %+v after the second copy was deleted", name, row)
+			}
+			for rel, file := range f.records() {
+				if file.LeftOver {
+					t.Fatalf("%s: %s is still flagged left over", name, rel)
+				}
+			}
+			if got := len(f.records()); got != firstCopy {
+				t.Fatalf("%s: %d records, want the first copy's %d", name, got, firstCopy)
+			}
+		})
+	}
+}
