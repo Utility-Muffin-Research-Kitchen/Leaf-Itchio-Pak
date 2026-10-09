@@ -221,16 +221,7 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 		// Cover art and .m3u launcher for multi-file Pico-8 games.
 		if len(s.extracted) > 0 {
 			gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
-
-			// Cover art: artRef is <gameDir>.p8 so the canonical image uses the
-			// directory name as its Jawaka-visible ROM stem.
-			artRef := gameDir + ".p8"
-			artwork := ensureROMArtwork(s.client, s.inv, s.game, artRef)
-			if artwork.Path != "" {
-				for _, dest := range s.extracted {
-					s.inv.SetArtwork(s.game.URL, dest, artwork.Path, artwork.SHA256, artwork.Created)
-				}
-			}
+			s.savePico8Artwork()
 
 			// .m3u launcher: collect .p8/.p8.png files, sort naturally, write
 			// <safe>.m3u inside the game directory. Leaf does not read it for
@@ -272,7 +263,6 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 						FileType:       inventory.FileTypeM3U,
 						SourceArchive:  s.plan.Upload.Filename,
 					}
-					applyArtwork(&file, artwork)
 					s.inv.Add(s.game.URL, inventory.Entry{
 						GameID:  downloadGameID(s.detail),
 						GameURL: s.game.URL, Title: s.game.Title,
@@ -359,6 +349,9 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 	if s.plan.Pico8GameDir != "" {
 		now := time.Now()
 		s.extractPico8_7z(r, now)
+		if len(s.extracted) > 0 {
+			s.savePico8Artwork()
+		}
 		s.commitInstall()
 		if err := s.inv.Save(s.invPath); err != nil {
 			logger.Warn("7z-download: save inventory: %v", err)
@@ -517,6 +510,35 @@ func readCueFiles(open func() (io.ReadCloser, error)) []string {
 		}
 	}
 	return files
+}
+
+// savePico8Artwork gives each cart this install wrote the launcher art Jawaka
+// looks up for it, once the carts are on the card. Jawaka finds a game's art
+// by the cart's own file name, in the system's one image folder, whatever
+// folder the cart sits in: Images/PICO8/main.png serves Game/main.p8 and
+// Game/world2/main.p8 alike (internal/discovery/art_path.c in Jawaka). The
+// image for a cart is therefore the one inventory.CanonicalArtworkPath gives
+// for its path, made from the game's cover, which is downloaded once for all
+// the carts. A cart that is itself a PNG is its own art, as for a .p8.png
+// downloaded on its own. Carts that share a name share the image, recorded for
+// each of them, so it goes with the last of them. The Lua files and the
+// playlist get no image: the launcher lists no game for them.
+//
+// Art already in place is kept and recorded as whoever's it is (see
+// inventory.KeepExistingArtwork), so a user's image is never replaced and never
+// deleted with the set.
+func (s *ArchiveDownloadWorker) savePico8Artwork() {
+	cover := s.client.NewCoverFetch(s.game.CoverURL)
+	for _, dest := range s.extracted {
+		if ext := strings.ToLower(roms.ROMExt(filepath.Base(dest))); ext != ".p8" && ext != ".p8.png" {
+			continue
+		}
+		// Recording each cart before the next one's lookup lets a later cart
+		// of the same name see the image as the app's.
+		if artwork := ensureROMArtworkFrom(cover, s.inv, s.game, dest); artwork.Path != "" {
+			s.inv.SetArtwork(s.game.URL, dest, artwork.Path, artwork.SHA256, artwork.Created)
+		}
+	}
 }
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,

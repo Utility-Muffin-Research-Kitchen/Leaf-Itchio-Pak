@@ -244,6 +244,13 @@ Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
 
+Each cart of a multi-file Pico-8 game gets its own launcher art, saved as
+`Images/PICO8/<cart name>.png` because the launcher looks art up by the cart's
+file name, not its folder. The game's cover is downloaded once for all of them,
+and a cart that is itself a `.p8.png` image is its own art. Two carts with the
+same name in different folders share one image, which is removed with the
+last of them.
+
 Where safe, **Rename ROM files** can rename a ROM plus selected saves/states.
 New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits

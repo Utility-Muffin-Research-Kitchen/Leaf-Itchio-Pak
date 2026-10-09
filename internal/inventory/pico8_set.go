@@ -112,3 +112,19 @@ func (e Entry) inPico8SetByNeighbour(file DownloadedFile, role pico8Role) bool {
 	}
 	return false
 }
+
+// ListsNoGame reports whether the launcher shows no game for file, so launcher
+// art for it would match no entry and only add a stray image: a Pico-8 set's
+// .lua files and its playlist. Leaf's PICO8 system lists carts only, each as
+// its own game (Jawaka's scan takes .p8 and .png files and reads no playlist
+// for it), and finds a game's art by the cart's own file name. The set's carts
+// get the game's art; these files get none.
+func (e Entry) ListsNoGame(file DownloadedFile) bool {
+	switch pico8RoleOf(file.DestPath) {
+	case pico8Lua:
+		return true
+	case pico8Playlist:
+		return e.InPico8Set(file)
+	}
+	return false
+}
