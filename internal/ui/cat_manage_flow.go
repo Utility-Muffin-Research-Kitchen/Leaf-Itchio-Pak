@@ -750,8 +750,8 @@ func discoverRenamePairs(root, oldBase, newBase string, states bool) ([]renamePa
 	if root == "" {
 		return nil, nil
 	}
-	oldStem := strings.TrimSuffix(oldBase, roms.ROMExt(oldBase))
-	newStem := strings.TrimSuffix(newBase, roms.ROMExt(newBase))
+	oldStem := roms.TrimROMExt(oldBase)
+	newStem := roms.TrimROMExt(newBase)
 	dirs := []string{root}
 	entries, err := os.ReadDir(root)
 	if err != nil {

@@ -55,6 +55,9 @@ func TestArtworkPathUsesSourceCanonicalImageRootAndJawakaStem(t *testing.T) {
 		"/leaf/Roms/PSX/nolibgs_demo.cue":         "/leaf/Images/PSX/nolibgs_demo.png",
 		"/secondary/Roms/GBC/RPG/game [v1.2].gbc": "/secondary/Images/GBC/game [v1.2].png",
 		"/leaf/Roms/PICO8/cart.p8.png":            "/leaf/Images/PICO8/cart.png",
+		"/leaf/Roms/PICO8/CART.P8.PNG":            "/leaf/Images/PICO8/CART.png",
+		"/leaf/Roms/PICO8/Cart.P8.png":            "/leaf/Images/PICO8/Cart.png",
+		"/leaf/Roms/GB/Game.GB":                   "/leaf/Images/GB/Game.png",
 		"/leaf/Roms/PICO8/Multi/Multi.m3u":        "/leaf/Images/PICO8/Multi.png",
 	}
 	for romPath, want := range tests {
