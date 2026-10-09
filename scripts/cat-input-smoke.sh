@@ -28,14 +28,15 @@ capture() {
 }
 
 capture filter 960 720 1 0
-capture signin 960 720 1 0
 capture signin 1280 800 0 5
-capture signin-error 960 720 1 0
-capture signin-done 960 720 1 0
-capture signin-qr-failed 960 720 1 2
-capture signin-checking 960 720 1 2
-capture signin-warning 960 720 1 2
 capture signin-warning 1280 800 0 5
+# Every sign-in state at bump 0, 2 and 5 with hints on: the footer keeps Back or
+# Cancel on the left and puts Continue or Try again on the right.
+for bump in 0 2 5; do
+    for state in signin signin-starting signin-warning signin-qr-failed signin-checking signin-done signin-error; do
+        capture "$state" 960 720 1 "$bump"
+    done
+done
 capture detail-signin 960 720 1 0
 capture detail-not-owned 960 720 1 2
 capture filter 1280 800 0 5
@@ -64,6 +65,7 @@ capture detail-unavailable-offline-end 960 720 1 2
 capture detail-unavailable-offline-end 1280 800 0 5
 capture warning 960 720 1 0
 capture warning 960 720 1 2
+capture warning 960 720 1 5
 capture warning 1280 800 0 5
 capture warning-two 960 720 1 0
 capture warning-two 960 720 1 2

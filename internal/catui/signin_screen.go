@@ -42,18 +42,23 @@ func (screen *SignInScreen) HandleInput(event InputEvent) appui.SignInIntent {
 	})
 }
 
+// footer lists the hints of every sign-in state. B (Back, or Cancel while
+// a sign-in is under way) stays in the left group. A, which moves the flow
+// forward (Continue, Try again), is a confirm hint, so it sits in the right
+// group as it does on the other screens. The waiting, checking and finished
+// states have no A hint.
 func (screen *SignInScreen) footer() []FooterHint {
 	switch screen.model.State {
 	case appui.SignInWarning:
-		return []FooterHint{{Button: ButtonA, Label: "Continue", IsConfirm: true}, {Button: ButtonB, Label: "Back"}}
+		return []FooterHint{{Button: ButtonB, Label: "Back"}, {Button: ButtonA, Label: "Continue", IsConfirm: true}}
 	case appui.SignInStarting, appui.SignInWaiting:
 		if screen.model.State == appui.SignInWaiting && screen.model.QRFailed {
-			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Cancel"}}
+			return []FooterHint{{Button: ButtonB, Label: "Cancel"}, {Button: ButtonA, Label: "Try again", IsConfirm: true}}
 		}
 		return []FooterHint{{Button: ButtonB, Label: "Cancel"}}
 	case appui.SignInError:
 		if screen.model.CanRetry {
-			return []FooterHint{{Button: ButtonA, Label: "Try again"}, {Button: ButtonB, Label: "Back"}}
+			return []FooterHint{{Button: ButtonB, Label: "Back"}, {Button: ButtonA, Label: "Try again", IsConfirm: true}}
 		}
 	}
 	return []FooterHint{{Button: ButtonB, Label: "Back"}}

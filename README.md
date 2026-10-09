@@ -83,7 +83,7 @@ This explicit target does not add the app to Leaf's default payload.
 | D-pad Left/Right | Page or alphabetical jump; change the selected value where applicable |
 | A | Open, select, toggle, or confirm |
 | B | Back/cancel; exit only from the main list |
-| Start | Open Settings from the main list or a game detail screen |
+| Start | Open Settings from the main list or a game detail screen; on a content warning, open Content Moderation |
 | Select | Open Filter on the main list; apply changes inside Filter |
 | L1/R1 | Previous/next sort on the main list; page long lists or change gallery image on other screens |
 | L2/R2 | Previous/next platform category on the main list |
