@@ -30,6 +30,15 @@ filters the cached catalogue, or the preview page before the cache exists,
 locally. Each platform's slugs live in `platforms.go`; use canonical tag slugs
 (`tag-gameboy-advance`, not the redirecting `tag-gba`).
 
+These feeds list games in itch.io's default browse order, which the browse page
+calls Popular, not by date; the list's default sort, Popular, keeps that order.
+A catalogue refresh (`FetchAllGames`) reads every page of every slug and reports
+each feed's games and error. `CatalogFetch.Merge` then applies it system by
+system: a system whose feeds all finished takes the new games, a system with a
+failed feed keeps its games from the previous cache, and games are deduplicated
+by URL in `AllPlatforms` order. The cache is saved when at least one system was
+refreshed, and the log names each failed feed.
+
 Each `<item>` contains title, link, description, image URL, and price. The
 `<title>` field may include `[Tag]` brackets (e.g. `[GBC]`) which are stripped
 from the display title but parsed as tags. Price is a free-text string; `$0.00`
@@ -502,7 +511,8 @@ signed download page each issue their own token.
   limiting requests. Wait a minute, then try again."; archive inspection never
   falls back to a full download after one. The feed loop does not retry 429s
   again, and a catalogue refresh waits out at most 2 minutes of cooldown in
-  total before failing with `ErrRateLimited` and keeping the cache.
+  total before stopping with `ErrRateLimited`. The systems whose feeds finished
+  before the stop are saved; the others keep their cached games.
 
 - **Identity.** Requests send `User-Agent: Leaf-Itchio-Pak/<version>
   (+https://github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak)` over

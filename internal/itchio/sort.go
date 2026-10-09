@@ -10,7 +10,7 @@ import (
 type SortMode string
 
 const (
-	SortModeRSS   SortMode = ""
+	SortModeRSS   SortMode = "" // the feeds' order, itch.io's Popular browse order
 	SortModeAZ    SortMode = "az"
 	SortModeZA    SortMode = "za"
 	SortModeNew   SortMode = "new"

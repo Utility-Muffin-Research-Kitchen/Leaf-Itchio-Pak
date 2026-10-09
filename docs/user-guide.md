@@ -34,8 +34,9 @@ usable if refresh fails.
 - B exits from the main list. Menu remains a Leaf control and does not exit.
 
 The supported categories are All, GB, GBC, GBA, NES, Mega Drive, Pico-8, and
-PlayStation. Sort choices are RSS, A-Z, Z-A, Newest, Free, Paid, Downloaded, and
-Owned. Owned requires signing in with itch.io.
+PlayStation. Sort choices are Popular, A-Z, Z-A, Newest, Free, Paid, Downloaded,
+and Owned. Popular is itch.io's own browse order. Owned requires signing in with
+itch.io.
 
 ## Detail and gallery
 
@@ -150,9 +151,10 @@ The last four settings in this table are under **Content Moderation**.
 | **Substance Use** | **Blocked** | **Blocked** or **Allowed** |
 | **Queer Content** | **Allowed** | **All Category Tags** plus individual tags |
 
-**Refresh Game List** rebuilds the public catalogue cache without replacing a
-working cache with partial results. **Update Inventory** checks missing artwork,
-removed upstream games, and newly offered uploads without deleting local files.
+**Refresh Game List** rebuilds the public catalogue cache. If an itch.io feed
+fails, the games of its system stay as they were and the other systems still
+update. **Update Inventory** checks missing artwork, removed upstream games,
+and newly offered uploads without deleting local files.
 The app also checks at launch and when you sign in or out, but then skips games
 it checked in the last six hours, and it waits while a download runs.
 A new version that replaces a file you downloaded, such as a new `.gb` build

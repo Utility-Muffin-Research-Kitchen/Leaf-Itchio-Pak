@@ -3,6 +3,7 @@ package itchio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -476,5 +477,84 @@ func TestRateLimitReplaysOnlyItchHosts(t *testing.T) {
 		if got := limiter.replays(host); got != want {
 			t.Errorf("replays(%q) = %v, want %v", host, got, want)
 		}
+	}
+}
+
+// A refresh that stays rate limited past its cooldown budget stops, but the
+// feeds that finished before it stopped are kept: their systems take the new
+// games, while the rate-limited feed's system and a feed still in flight keep
+// their cached games.
+func TestFetchAllGamesKeepsFeedsFinishedBeforeTheRateLimitStop(t *testing.T) {
+	var p8Page strings.Builder
+	for index := range PerPage {
+		fmt.Fprintf(&p8Page, "<item><title>P8 %d</title><link>https://dev.itch.io/p8-%d</link><price>0</price></item>", index, index)
+	}
+	othersDone := make(chan struct{})
+	var closeOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch r.URL.Path {
+		case "/games/tag-pico-8.xml":
+			if page == "1" {
+				fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel>%s</channel></rss>`, p8Page.String())
+				return
+			}
+			// Page 2 is rate limited once every other finishing feed merged.
+			<-othersDone
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "/games/tag-genesis-rom.xml":
+			<-r.Context().Done() // still in flight when the refresh stops
+		default:
+			slug := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/games/"), ".xml")
+			if page != "1" {
+				slug = "none"
+			}
+			item := ""
+			if slug != "none" {
+				item = fmt.Sprintf("<item><title>%s</title><link>https://dev.itch.io/%s</link><price>0</price></item>",
+					slug, strings.ReplaceAll(slug, "/", "-"))
+			}
+			fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel>%s</channel></rss>`, item)
+		}
+	}))
+	defer srv.Close()
+
+	// Every feed but Pico-8 and tag-genesis-rom finishes with one game.
+	finishing := len(catalogFeeds()) - 2
+	fetch, err := newClockedClient(srv, newFakeClock()).FetchAllGames(context.Background(), func(partial []Game) {
+		if len(partial) == finishing {
+			closeOnce.Do(func() { close(othersDone) })
+		}
+	})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	for _, feed := range fetch.Feeds {
+		stopped := feed.Slug == "tag-pico-8" || feed.Slug == "tag-genesis-rom"
+		if (feed.Err != nil) != stopped {
+			t.Errorf("feed %s error = %v", feed.Slug, feed.Err)
+		}
+		if !stopped && len(feed.Games) != 1 {
+			t.Errorf("feed %s kept %d games, want 1", feed.Slug, len(feed.Games))
+		}
+	}
+	previous := []Game{
+		{Title: "Old P8", URL: "https://dev.itch.io/old-p8", Platform: "P8"},
+		{Title: "Old MD", URL: "https://dev.itch.io/old-md", Platform: "MD"},
+		{Title: "Old NES", URL: "https://dev.itch.io/old-nes", Platform: "NES"},
+	}
+	merge := fetch.Merge(previous)
+	if got := strings.Join(merge.Kept, " "); got != "MD P8" {
+		t.Errorf("systems that kept their cached games = %s, want MD P8", got)
+	}
+	var urls []string
+	for _, game := range merge.Games {
+		urls = append(urls, game.Platform+":"+strings.TrimPrefix(game.URL, "https://dev.itch.io/"))
+	}
+	want := "PSX:tag-homebrew-tag-psx GBC:tag-gameboy-color GBC:tag-gbc GB:made-with-gb-studio GB:tag-gbstudio " +
+		"GB:tag-gameboy-rom GBA:tag-gameboy-advance NES:tag-nes-rom MD:old-md P8:old-p8"
+	if got := strings.Join(urls, " "); got != want {
+		t.Errorf("merged games = %s\nwant %s", got, want)
 	}
 }

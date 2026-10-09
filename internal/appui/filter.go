@@ -12,7 +12,7 @@ const (
 var FilterPlatforms = []string{"", "GB", "GBC", "GBA", "NES", "MD", "P8", "PSX"}
 var FilterPlatformLabels = []string{"All platforms", "GB", "GBC", "GBA", "NES", "Mega Drive", "Pico-8", "PlayStation"}
 var FilterSortValues = []string{"", "az", "za", "new", "free", "paid", "dl", "owned"}
-var FilterSortLabels = []string{"RSS", "A-Z", "Z-A", "Newest", "Free", "Paid", "Downloaded", "Owned"}
+var FilterSortLabels = []string{"Popular", "A-Z", "Z-A", "Newest", "Free", "Paid", "Downloaded", "Owned"}
 
 // PlatformLabel names a platform filter code the way the filter screen does,
 // so the list header and the filter agree. A code the filter does not list
@@ -27,7 +27,8 @@ func PlatformLabel(code string) string {
 }
 
 // SortLabel names a sort value the way the filter screen does. A value it
-// does not list is RSS, as in the sort cycle.
+// does not list is Popular, as in the sort cycle. Popular is the default ""
+// sort: the feeds' own order, which is itch.io's browse order, Popular.
 func SortLabel(value string) string { return FilterSortLabels[indexOf(FilterSortValues, value)] }
 
 type FilterIntent uint8
