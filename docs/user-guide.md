@@ -262,6 +262,18 @@ anything, and an archive skips the later file and lists it on the
 **Download complete** screen. Every committed ROM/artwork change requests one
 Jawaka rescan.
 
+For each ROM it can safely rename, Manage offers one rename row.
+**Use title for leafbound_v2.gb** renames the file after the game's title.
+**Use original name for Glory Hunters.gb** renames it back: a file you
+downloaded on its own gets its upload's name again, and a ROM from an archive
+gets the name of its file in the archive, such as `Glory Hunters 2.0.1.gb`.
+Manage offers a rename only when it changes the name, and it asks before
+renaming the ROM's saves and save states with it. After you go back to an
+original name, downloading the game again keeps original names, even with
+**Rename ROM Files** on. A ROM that an older version of this app extracted
+from an archive has no record of its file in the archive, so it gets no
+**Use original name** row until you download the game again.
+
 A download never replaces a file that another game installed, or a file the
 app did not install. It saves its own copy as `<Title> - <file name>` instead,
 and downloading the same game again later updates that copy. If two games

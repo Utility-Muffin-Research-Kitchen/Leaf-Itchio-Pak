@@ -666,12 +666,20 @@ func (s *ArchiveDownloadWorker) romDest(baseName string) string {
 	if destDir == "" {
 		destDir = roms.DestinationDir(ext)
 	}
+	return archiveOutputPath(destDir, archiveROMName(baseName))
+}
+
+// archiveROMName is the file name an archive ROM entry with baseName gets
+// before any unified rename: emoji and characters FAT32 rejects removed,
+// runs of spaces collapsed, and the extension in lower case. Manage's
+// "Use original name" restores this name.
+func archiveROMName(baseName string) string {
+	ext := strings.ToLower(roms.ROMExt(baseName))
 	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
-	safeName := roms.SanitiseFilename(stem, ext)
-	if safeName == "" {
-		safeName = baseName
+	if safeName := roms.SanitiseFilename(stem, ext); safeName != "" {
+		return safeName
 	}
-	return archiveOutputPath(destDir, safeName)
+	return baseName
 }
 
 // planCueTracks records which files the .cue sheets this archive installs
