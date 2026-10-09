@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
@@ -300,5 +301,68 @@ func TestCatModerationPreservesDefaultPolicyAndPerTagOverrides(t *testing.T) {
 	}
 	if len(cfg.Filter.AdultContent.Disabled) != 1 || cfg.Filter.AdultContent.Disabled[0] != tag {
 		t.Fatalf("disabled tags = %v", cfg.Filter.AdultContent.Disabled)
+	}
+}
+
+// titleCaseLabel reports whether every word of a Settings label starts with a
+// capital, as Jawaka's own Settings labels do. "itch.io" is a brand and keeps
+// its lowercase spelling.
+func titleCaseLabel(label string) bool {
+	for _, word := range strings.Fields(label) {
+		if word == "itch.io" {
+			continue
+		}
+		first := []rune(word)[0]
+		if unicode.IsLetter(first) && !unicode.IsUpper(first) {
+			return false
+		}
+	}
+	return true
+}
+
+// F14 (D8): Settings, Content Moderation and a category's tag list label
+// their rows in Title Case. Tag rows show itch.io's own tags and are left as
+// they are.
+func TestCatSettingsLabelsUseTitleCase(t *testing.T) {
+	cfg := &settings.Config{
+		AuthToken: "private-key", AuthUser: "tester", CredentialWarningAccepted: true,
+		ROMSelection: "auto", ROMLocation: "auto", MusicDownload: "auto", MusicLocation: "auto",
+	}
+	_, model, cfgPath, _ := settingsFixture(t, cfg, nil)
+	var labels []string
+	for _, row := range model.Rows {
+		labels = append(labels, row.Label)
+	}
+	want := []string{
+		"itch.io Account", "Sign Out", "ROM Selection", "ROM Location", "Music Download",
+		"Music Location", "Rename ROM Files", "Log Level", "Remembered ROM Folder",
+		"Remembered Music Folder", "Reset Remembered Folders", "App Data", "Clear Image Cache",
+		"Refresh Game List", "Update Inventory", "Content Moderation", "About",
+	}
+	if strings.Join(labels, "|") != strings.Join(want, "|") {
+		t.Errorf("settings labels =\n  %q\nwant\n  %q", labels, want)
+	}
+
+	moderation, moderationModel := NewCatModerationFlow(cfg, cfgPath)
+	for _, row := range moderationModel.Rows {
+		labels = append(labels, row.Label)
+	}
+	for _, key := range []appui.SettingsKey{
+		appui.SettingsAdultContent, appui.SettingsQueerContent, appui.SettingsHeavyThemes,
+	} {
+		selectSettingsKey(t, moderationModel, key)
+		_, tagModel, err := moderation.Activate(moderationModel)
+		if err != nil || tagModel == nil {
+			t.Fatalf("open tag list %d: %v", key, err)
+		}
+		if got := tagModel.Rows[0]; got.Key != appui.SettingsTagMaster || got.Label != "All Category Tags" {
+			t.Errorf("tag list %q first row = %q, want All Category Tags", tagModel.Title, got.Label)
+		}
+		labels = append(labels, tagModel.Title, tagModel.Rows[0].Label)
+	}
+	for _, label := range labels {
+		if !titleCaseLabel(label) {
+			t.Errorf("label %q is not in Title Case", label)
+		}
 	}
 }

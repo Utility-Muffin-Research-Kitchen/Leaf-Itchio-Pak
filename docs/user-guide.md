@@ -66,7 +66,7 @@ formats. Depending on Settings and the upload, it may ask for:
    name it's saved as. For an archive, the confirmation lists only the
    folders, because the app names its files as it extracts them.
 
-With **ROM Selection** on `auto`, the app downloads every supported upload
+With **ROM Selection** on **Auto**, the app downloads every supported upload
 together when each one is for a different system. A PlayStation game's CUE/BIN
 tracks or discs count as one set. When the game offers more than one build for
 the same system, such as an update and the original jam release, or offers an
@@ -123,29 +123,31 @@ Leaf supplies the ordered source list and canonical system catalogue. The
 primary card is source 1 and the optional second card is source 2. A configured
 but unmounted card is shown as **Not mounted** and cannot be selected.
 
-**ROM Location = auto** uses the primary canonical system directory.
-**ROM Location = ask** lets you select a mounted card and safe subfolder. The
-choice can be remembered independently per system. Artwork is always written to
-the matching source's canonical `Images/<system>` directory.
+**ROM Location** on **Auto** uses the primary canonical system directory.
+**ROM Location** on **Ask** lets you select a mounted card and safe subfolder.
+The choice can be remembered independently per system. Artwork is always
+written to the matching source's canonical `Images/<system>` directory.
 
-**Music Location = auto** uses the primary Music root. **ask** provides the same
-mounted-card/folder picker for music. Remembered destinations can be cleared
-without deleting downloads.
+**Music Location** on **Auto** uses the primary Music root. **Ask** provides the
+same mounted-card/folder picker for music. **Reset Remembered Folders** in
+Settings clears remembered destinations without deleting downloads.
 
 ## Settings and defaults
 
+The last four settings in this table are under **Content Moderation**.
+
 | Setting | Default | Choices/behavior |
 | --- | --- | --- |
-| ROM Selection | `auto` | Automatically choose or ask among supported uploads |
-| ROM Location | `auto` | Primary canonical directory or ask for card/folder |
-| Music Download | `off` | `off`, `auto`, or `ask` |
-| Music Location | `auto` | Primary Music root or ask for card/folder |
-| Rename ROM files | On | Rename safe standalone ROM files to the itch.io title; Leaf display titles are published independently |
-| Log Level | Info | Info or Debug |
-| Adult warnings | On | Master switch plus individual tags |
-| Heavy-theme warnings | On | Master switch plus individual tags |
-| Substance-use warnings | On | Master switch plus individual tags |
-| Queer/LGBTQ+ warnings | Off | Master switch plus individual tags |
+| **ROM Selection** | **Auto** | Automatically choose or ask among supported uploads |
+| **ROM Location** | **Auto** | Primary canonical directory or ask for card/folder |
+| **Music Download** | **Off** | **Off**, **Auto**, or **Ask** |
+| **Music Location** | **Auto** | Primary Music root or ask for card/folder |
+| **Rename ROM Files** | **On** | Rename safe standalone ROM files to the itch.io title; Leaf display titles are published independently |
+| **Log Level** | **Info** | **Info** or **Debug** |
+| **Adult Content** | **Blocked** | **All Category Tags** plus individual tags |
+| **Heavy Themes** | **Blocked** | **All Category Tags** plus individual tags |
+| **Substance Use** | **Blocked** | **Blocked** or **Allowed** |
+| **Queer Content** | **Allowed** | **All Category Tags** plus individual tags |
 
 **Refresh Game List** rebuilds the public catalogue cache without replacing a
 working cache with partial results. **Update Inventory** checks missing artwork,
@@ -186,7 +188,7 @@ API fails or lists nothing, the app tries the web download page once, and it
 does the same if itch.io lists the game but refuses the download. If itch.io
 asks the app to slow down, it stops and asks you to try again later instead.
 
-1. Open Start > Settings > itch.io Account, or press A on a paid game.
+1. Open **Start > Settings > itch.io Account**, or press **A** on a paid game.
 2. Accept the physical-access warning (first time only).
 3. Scan the QR code with your phone. The code expires after a few minutes;
    press A for a new one.
@@ -210,9 +212,9 @@ of games that key owned, on first start and opens Settings so you can sign in.
 
 ## Soundtracks
 
-Music support is disabled by default. Enable `auto` or `ask` to include common
-audio files from an upload/archive. Mixed archives may install both ROM and music
-content in one transaction summary.
+**Music Download** is **Off** by default. Set it to **Auto** or **Ask** to
+include common audio files from an upload/archive. Mixed archives may install
+both ROM and music content in one transaction summary.
 
 A game's tracks go into one Music folder. When an archive holds tracks with the
 same name in different folders, such as `cd1/01 Theme.ogg` and
@@ -244,7 +246,7 @@ Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app
 ownership when the recorded hash no longer matches.
 
-Where safe, **Rename ROM files** can rename a ROM plus selected saves/states.
+Where safe, **Rename ROM Files** can rename a ROM plus selected saves/states.
 New downloads also publish the itch.io title to Leaf as display metadata, even
 when physical renaming is disabled or unsafe. Manual Leaf display-name edits
 take precedence. Existing downloads are not backfilled automatically.
@@ -278,8 +280,8 @@ appear under `.userdata/mlp1/Itch-io` and `.userdata/mlp1/logs`. No state is
 stored inside `.system/leaf` or the replaceable pak directory.
 
 Logs remain local. itch.io keys, authorization/cookie values, signed URLs, account
-names, and known absolute runtime roots are redacted at Info and Debug levels.
-There is no telemetry and no UMRK network service.
+names, and known absolute runtime roots are redacted whether **Log Level** is
+**Info** or **Debug**. There is no telemetry and no UMRK network service.
 
 ## Troubleshooting
 
@@ -317,7 +319,7 @@ different account, clears the old owned cache by design.
 
 ### A network or download request fails
 
-Keep the existing cached catalogue, set **Log Level = Debug**, reproduce once,
-then inspect `$LOGS_PATH/itchio-pak.log`. Return to Info afterward. Do not post
-the raw configuration file; although logs redact registered secrets, config
-contains the saved key.
+Keep the existing cached catalogue, set **Log Level** to **Debug**, reproduce
+once, then inspect `$LOGS_PATH/itchio-pak.log`. Set it back to **Info**
+afterward. Do not post the raw configuration file; although logs redact
+registered secrets, config contains the saved key.
