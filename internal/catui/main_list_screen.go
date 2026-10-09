@@ -105,7 +105,7 @@ func (screen *MainListScreen) Draw() error {
 		platform = "All platforms"
 	}
 	if sort == "" {
-		sort = "Newest"
+		sort = appui.SortLabel("")
 	}
 	subtitle := fmt.Sprintf("%s  ·  %s  ·  %d games", platform, sort, len(screen.model.Items))
 	if screen.model.CacheStatus != "" {

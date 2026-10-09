@@ -34,8 +34,9 @@ usable if refresh fails.
 - B exits from the main list. Menu remains a Leaf control and does not exit.
 
 The supported categories are All, GB, GBC, GBA, NES, Mega Drive, Pico-8, and
-PlayStation. Sort choices are RSS, A-Z, Z-A, Newest, Free, Paid, Downloaded, and
-Owned. Owned requires signing in with itch.io.
+PlayStation. Sort choices are Popular, A-Z, Z-A, Newest, Free, Paid, Downloaded,
+and Owned. Popular is itch.io's own browse order. Owned requires signing in with
+itch.io.
 
 ## Detail and gallery
 
