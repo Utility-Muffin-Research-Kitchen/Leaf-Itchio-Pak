@@ -231,9 +231,17 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		handleIntent = func(InputEvent) bool { return true }
-	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi":
+	case "destination-source", "destination-folder", "destination-music", "destination-confirm", "destination-confirm-multi",
+		"destination-unavailable":
 		model := appui.NewDestinationModel("Leafbound 葉")
 		switch config.Screen {
+		case "destination-unavailable":
+			// The card goes away after the picker opened, so the error keeps
+			// the picker's subtitle, as in the app.
+			model.SetSources([]appui.DestinationItem{
+				{Kind: appui.DestinationItemSource, Label: "Secondary SD", Detail: "Available", Enabled: true},
+			})
+			model.SetError("Secondary SD isn't available. Insert the card, then try again.")
 		case "destination-source":
 			model.SetSources([]appui.DestinationItem{
 				{Kind: appui.DestinationItemSource, Label: "Primary SD", Detail: "Available", Enabled: true},

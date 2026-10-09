@@ -105,6 +105,15 @@ capture destination-folder 1280 800 0 5
 capture destination-music 960 720 1 0
 capture destination-confirm 960 720 1 0
 capture destination-confirm-multi 960 720 1 2
+capture destination-confirm 960 720 1 2
+capture destination-unavailable 960 720 1 0
+capture destination-unavailable 1280 800 0 5
+capture destination-folder 960 720 1 2
+capture destination-source 960 720 1 2
+capture destination-source 960 720 1 5
+capture destination-folder 960 720 1 5
+capture destination-confirm 960 720 1 5
+capture destination-unavailable 960 720 1 5
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
