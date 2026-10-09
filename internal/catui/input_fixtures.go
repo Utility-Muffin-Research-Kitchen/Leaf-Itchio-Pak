@@ -46,9 +46,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 	}
 
 	// A screen name ending in -end shows that screen's body scrolled to its
-	// last line, as Down does on the device.
-	var scrollToEnd bool
+	// last line, as Down does on the device. One ending in -page shows it
+	// after one press of Right, which pages it.
+	var scrollToEnd, pageOnce bool
 	config.Screen, scrollToEnd = strings.CutSuffix(config.Screen, "-end")
+	if !scrollToEnd {
+		config.Screen, pageOnce = strings.CutSuffix(config.Screen, "-page")
+	}
 	var scroll *appui.BodyScroll
 	var draw func() error
 	var handleIntent func(InputEvent) bool
@@ -485,6 +489,9 @@ func RunInputFixture(config InputFixtureConfig) error {
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
 	}
+	if pageOnce && scroll == nil {
+		return fmt.Errorf("input fixture %q does not scroll", config.Screen)
+	}
 	if scrollToEnd {
 		if scroll == nil {
 			return fmt.Errorf("input fixture %q does not scroll", config.Screen)
@@ -500,6 +507,20 @@ func RunInputFixture(config InputFixtureConfig) error {
 			return true, nil
 		}
 		return handleIntent(event), nil
+	}
+	if pageOnce {
+		// The first draw measures the body, which the page is a share of, so
+		// the press comes after it and goes through the screen's own input
+		// handling, as it does on the device. Later draws show the next page.
+		drawBody, pressed := draw, false
+		draw = func() error {
+			if err := drawBody(); err != nil || pressed {
+				return err
+			}
+			pressed = true
+			_, err := handle(InputEvent{Button: ButtonRight, Pressed: true})
+			return err
+		}
 	}
 
 	running, redraw, drawn := true, true, 0

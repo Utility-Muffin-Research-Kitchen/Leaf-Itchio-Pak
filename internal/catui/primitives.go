@@ -485,6 +485,7 @@ func (ui *Composer) DrawScrollingBlocks(rect Rect, title string, blocks []appui.
 	offset := 0
 	if scroll != nil {
 		scroll.SetScrollBounds(layout.maxOffset())
+		scroll.SetScrollRows(layout.rows)
 		offset = scroll.ScrollLine
 	}
 	offset = minInt(maxInt(offset, 0), layout.maxOffset())

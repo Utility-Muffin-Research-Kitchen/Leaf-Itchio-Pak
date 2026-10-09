@@ -98,6 +98,9 @@ capture manage-confirm 960 720 1 0
 capture manage-delete-long 960 720 1 0
 capture manage-delete-long 960 720 1 2
 capture manage-delete-long 1280 800 0 5
+capture manage-delete-long-page 960 720 1 2
+capture manage-delete-long-page 960 720 1 0
+capture manage-delete-long-page 1280 800 0 5
 capture manage-delete-long-end 960 720 1 2
 capture manage-list 960 720 1 2
 capture manage-leftover 960 720 1 2

@@ -64,7 +64,7 @@ func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 		return RenameIntentNone
 	}
 	switch event.Button {
-	case ButtonUp, ButtonDown:
+	case ButtonUp, ButtonDown, ButtonLeft, ButtonRight:
 		m.HandleScroll(event.Button)
 	case ButtonA:
 		return RenameIntentConfirm

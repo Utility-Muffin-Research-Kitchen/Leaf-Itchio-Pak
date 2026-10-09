@@ -232,7 +232,7 @@ root on either card.
 X on a downloaded game's detail screen opens Manage. The screen distinguishes
 ROM and music files and can remove one content group or all app-managed files.
 A confirmation that lists more files than fit, such as **Delete all downloads**
-for a game with a soundtrack, scrolls with Up/Down.
+for a game with a soundtrack, scrolls with Up/Down and pages with Left/Right.
 A file from an archive that was saved under another name, such as the game's
 title, shows which archive file it came from, for example
 **From Glory Hunters 1.3 EZ IV Patched.gba** under `Glory Hunters.gba`.
