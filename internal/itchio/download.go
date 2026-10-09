@@ -19,13 +19,16 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/leaf"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/netlimit"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 )
 
 // knownNonROMExts lists extensions that are definitely not supported ROM/disc files.
 // Uploads with these extensions are silently dropped when scanning a game's
-// upload list. Anything not in this map (including no extension, version-number
-// suffixes like ".0", and ".zip") is returned with NeedsFormat=true so the
-// user can classify it manually.
+// upload list, except the ones roms.UnsupportedSystem names (".nds", ".exe"
+// and the like): those are kept and marked with their system, so the picker
+// can say why it offers nothing. Anything not in this map (including no
+// extension, version-number suffixes like ".0", and ".zip") is returned with
+// NeedsFormat=true so the user can classify it manually.
 var knownNonROMExts = map[string]bool{
 	".tar": true, ".gz": true, ".rar": true, ".bz2": true,
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".webp": true,
@@ -38,6 +41,46 @@ var knownNonROMExts = map[string]bool{
 
 func isSkippableExt(ext string) bool {
 	return knownNonROMExts[strings.ToLower(ext)]
+}
+
+// unsupportedSystemOf names the system filename is for, when the app cannot
+// install that system, or returns "". The extension at the end of the name
+// decides first, so ".nds" wins even though it is also a skippable one. A
+// name whose extension is not one that is known either way is searched for an
+// extension inside it, as in "Hidden_palace.nds v0.1 (Post-jam bug fix)".
+// Supported formats never count, and neither does a name that is plainly
+// another kind of file, such as "notes.nds.txt".
+func unsupportedSystemOf(filename string) string {
+	ext := strings.ToLower(roms.ROMExt(filename))
+	switch {
+	case roms.IsSupportedUploadExt(ext):
+		return ""
+	case roms.UnsupportedSystem(filename) != "":
+		return roms.UnsupportedSystem(filename)
+	case isSkippableExt(ext):
+		return ""
+	}
+	return roms.UnsupportedSystemInName(filename)
+}
+
+// classifyByName decides how an upload listed by name is offered, and reports
+// whether it is kept at all: a supported format as it is, a file for a system
+// the app cannot install marked with that system, a known non-ROM dropped,
+// and anything else flagged for you to classify.
+func (u *Upload) classifyByName() (keep bool) {
+	ext := strings.ToLower(roms.ROMExt(u.Filename))
+	if roms.IsSupportedUploadExt(ext) {
+		return true
+	}
+	if system := unsupportedSystemOf(u.Filename); system != "" {
+		u.UnsupportedSystem = system
+		return true
+	}
+	if isSkippableExt(ext) {
+		return false
+	}
+	u.NeedsFormat = true
+	return true
 }
 
 // presentAbsent returns "present" when s is non-empty, "absent" otherwise.
@@ -164,10 +207,11 @@ func (c *Client) FetchWebUploadsContext(ctx context.Context, gameURL string) ([]
 			"&csrf=" + url.QueryEscape(dlPage.CSRFToken)
 		logger.Debug("uploads: found %s id=%s", u.Filename, u.UploadID)
 		uploads = append(uploads, Upload{
-			Filename:    u.Filename,
-			UploadID:    u.UploadID,
-			URL:         resolverURL,
-			NeedsFormat: u.NeedsFormat,
+			Filename:          u.Filename,
+			UploadID:          u.UploadID,
+			URL:               resolverURL,
+			NeedsFormat:       u.NeedsFormat,
+			UnsupportedSystem: u.UnsupportedSystem,
 		})
 	}
 	return uploads, nil

@@ -74,6 +74,12 @@ capture download-select 960 720 1 0
 capture download-select 1280 800 0 5
 capture download-select-hidden 960 720 1 2
 capture download-select-offline 960 720 1 2
+capture download-select-unsupported 960 720 1 0
+capture download-select-unsupported 960 720 1 2
+capture download-select-unsupported 1280 800 0 5
+capture download-select-format-psx 960 720 1 0
+capture download-select-format-psx 960 720 1 2
+capture download-select-format-psx 1280 800 0 5
 capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0

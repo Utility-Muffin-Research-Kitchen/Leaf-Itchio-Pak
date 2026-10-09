@@ -102,3 +102,19 @@ func TestCountPicksSingularOnlyForOne(t *testing.T) {
 		t.Errorf("two-word noun = %q", got)
 	}
 }
+
+func TestListJoinsNamesIntoAPhrase(t *testing.T) {
+	for _, tc := range []struct {
+		names []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"Windows"}, "Windows"},
+		{[]string{"Nintendo DS", "Windows"}, "Nintendo DS and Windows"},
+		{[]string{"Nintendo DS", "Windows", "Android"}, "Nintendo DS, Windows, and Android"},
+	} {
+		if got := text.List(tc.names); got != tc.want {
+			t.Errorf("List(%q) = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+}

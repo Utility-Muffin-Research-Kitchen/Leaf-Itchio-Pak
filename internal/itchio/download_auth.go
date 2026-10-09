@@ -421,27 +421,26 @@ func (c *Client) FetchUploadsContext(ctx context.Context, apiKey, gameID, downlo
 		upload := Upload{Filename: u.Filename, UploadID: strconv.FormatInt(u.ID, 10), Size: u.Size,
 			DisplayName: u.DisplayName, Type: u.Type, Traits: decodeTraits(u.Traits),
 			MD5: u.MD5, BuildID: u.BuildID, UpdatedAt: parseUploadTime(u.UpdatedAt)}
-		ext := strings.ToLower(roms.ROMExt(u.Filename))
-		if roms.IsSupportedUploadExt(ext) {
+		if upload.classifyByName() {
 			uploads = append(uploads, upload)
-			logger.Debug("auth: found ROM %s id=%d size=%d", u.Filename, u.ID, u.Size)
-		} else if !isSkippableExt(ext) {
-			upload.NeedsFormat = true
-			uploads = append(uploads, upload)
-			logger.Debug("auth: found unknown-format %s id=%d (user will choose)", u.Filename, u.ID)
+			logger.Debug("auth: found %s id=%d size=%d (needs format %v, unsupported system %q)",
+				u.Filename, u.ID, u.Size, upload.NeedsFormat, upload.UnsupportedSystem)
 		} else {
-			logger.Debug("auth: skipping %s (ext=%q)", u.Filename, ext)
+			logger.Debug("auth: skipping %s (ext=%q)", u.Filename, strings.ToLower(roms.ROMExt(u.Filename)))
 		}
 	}
 
-	known := 0
+	known, unsupported := 0, 0
 	for _, u := range uploads {
-		if !u.NeedsFormat {
+		switch {
+		case u.UnsupportedSystem != "":
+			unsupported++
+		case !u.NeedsFormat:
 			known++
 		}
 	}
-	logger.Debug("auth: %d known ROM(s), %d unknown-format from %d total uploads",
-		known, len(uploads)-known, len(items))
+	logger.Debug("auth: %d known ROM(s), %d unknown-format, %d for systems the app cannot install, from %d total uploads",
+		known, len(uploads)-known-unsupported, unsupported, len(items))
 	return uploads, nil
 }
 

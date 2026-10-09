@@ -126,9 +126,22 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
-	case "download-select", "download-select-hidden", "download-select-offline", "archive-contents":
+	case "download-select", "download-select-hidden", "download-select-offline", "archive-contents",
+		"download-select-unsupported", "download-select-format-psx":
 		model := appui.NewDownloadSelectModel("Leafbound 葉")
-		if config.Screen == "download-select-offline" {
+		if config.Screen == "download-select-unsupported" {
+			// Hidden palace (F31): every upload is "Hidden_palace.nds v0.x (...)".
+			model.Title = "Hidden palace"
+			model.SetError("This game has no files the app can install. Its files are for Nintendo DS and Windows.")
+		} else if config.Screen == "download-select-format-psx" {
+			// An upload of a game listed under PlayStation whose type the
+			// file did not show: that system's formats come first (F31).
+			model.Title = "Hidden palace"
+			model.SetChoices("Type not detected. Choose a format", []appui.DownloadChoice{{
+				Title: "Hidden palace v0.1 (Post-jam bug fix)", Badge: "CHD",
+				FormatOptions: []string{"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U", "P8.PNG", "P8"},
+			}})
+		} else if config.Screen == "download-select-offline" {
 			// The device showed "fetch game page: network request failed" here.
 			model.SetError("Can't reach itch.io. Check the connection and try again.")
 		} else if config.Screen == "archive-contents" {

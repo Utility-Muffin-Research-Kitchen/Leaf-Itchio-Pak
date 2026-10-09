@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type DetailState uint8
@@ -108,11 +110,8 @@ func WarningText(categories []string) string {
 	case 0:
 	case 1:
 		subject, them = "your "+categories[0]+" filter", "it"
-	case 2:
-		subject = "your " + categories[0] + " and " + categories[1] + " filters"
 	default:
-		subject = "your " + strings.Join(categories[:len(categories)-1], ", ") + ", and " +
-			categories[len(categories)-1] + " filters"
+		subject = "your " + text.List(categories) + " filters"
 	}
 	return "This game matches " + subject + ".\n\nPress Start to change " + them +
 		" under Content Moderation, then open the game again. Press B to go back."

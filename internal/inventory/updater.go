@@ -637,7 +637,9 @@ func (s *UpdateService) checkGame(gameURL, gameID, token, key string) (upstreamR
 		if err == nil {
 			files := make([]UpstreamFile, 0, len(uploads))
 			for _, upload := range uploads {
-				if upload.Type == "html" {
+				if upload.Type == "html" || upload.UnsupportedSystem != "" {
+					// A file for a system the app cannot install is never
+					// installed, so it is neither an update nor a new build.
 					continue
 				}
 				files = append(files, UpstreamFile{Filename: upload.Filename, DisplayName: upload.DisplayName,

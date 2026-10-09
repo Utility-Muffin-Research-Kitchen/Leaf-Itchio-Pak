@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type CatDownloadPlanKind uint8
@@ -161,7 +163,8 @@ func listedUploads(uploads []itchio.Upload, listing *roms.UploadListing, install
 		listed = append(listed, roms.Upload{
 			Filename: upload.Filename, URL: upload.URL, UploadID: upload.UploadID,
 			UploadFingerprint: upload.Fingerprint(), NeedsFormat: upload.NeedsFormat,
-			DesktopOrWeb: upload.DesktopOrWebOnly(), Install: install, Listing: listing,
+			DesktopOrWeb: upload.DesktopOrWebOnly(), UnsupportedSystem: upload.UnsupportedSystem,
+			Install: install, Listing: listing,
 		})
 	}
 	return listed
@@ -312,9 +315,9 @@ func (flow *CatDownloadFlow) Sync(model *appui.DownloadSelectModel) bool {
 				}
 				flow.mode = catDownloadModeFormats
 				flow.uploads = []roms.Upload{update.upload}
+				formats := formatLabelsFor(flow.game.Platform)[1:] // the detection was just tried
 				model.SetChoices("Type not detected. Choose a format", []appui.DownloadChoice{{
-					Title: update.upload.Filename, Badge: "P8.PNG",
-					FormatOptions: manualFormatLabels(),
+					Title: update.upload.Filename, Badge: formats[0], FormatOptions: formats,
 				}})
 				return true
 			}
@@ -390,7 +393,15 @@ func (flow *CatDownloadFlow) detect(upload roms.Upload) {
 }
 
 func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, uploads []roms.Upload) {
+	uploads, unsupported := dropUnsupported(uploads)
+	if len(unsupported) > 0 {
+		logger.Info("cat download: %d file(s) for systems the app cannot install are not offered", len(unsupported))
+	}
 	if len(uploads) == 0 {
+		if len(unsupported) > 0 {
+			model.SetError(unsupportedFilesMessage(unsupported))
+			return
+		}
 		model.SetError("No downloadable files were found for this game.")
 		return
 	}
@@ -403,7 +414,7 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 		upload.NeedsFormat = true
 		flow.mode, flow.uploads = catDownloadModeFormats, []roms.Upload{upload}
 		model.SetChoices("Detect standalone BIN format", []appui.DownloadChoice{{
-			Title: upload.Filename, Badge: "AUTO", FormatOptions: append([]string(nil), allFormatLabels()...),
+			Title: upload.Filename, Badge: "AUTO", FormatOptions: formatLabelsFor(flow.game.Platform),
 		}})
 		return
 	}
@@ -451,10 +462,35 @@ func (flow *CatDownloadFlow) setUploads(model *appui.DownloadSelectModel, upload
 	choices := make([]appui.DownloadChoice, 0, len(unknown))
 	for _, upload := range unknown {
 		choices = append(choices, appui.DownloadChoice{
-			Title: upload.Filename, Badge: "AUTO", FormatOptions: append([]string(nil), allFormatLabels()...),
+			Title: upload.Filename, Badge: "AUTO", FormatOptions: formatLabelsFor(flow.game.Platform),
 		})
 	}
 	model.SetChoices("Choose file and format", choices)
+}
+
+// dropUnsupported separates the uploads whose names show a system the app
+// cannot install from the ones it can offer, keeping the listing order.
+func dropUnsupported(uploads []roms.Upload) (offered, unsupported []roms.Upload) {
+	for _, upload := range uploads {
+		if upload.UnsupportedSystem != "" {
+			unsupported = append(unsupported, upload)
+		} else {
+			offered = append(offered, upload)
+		}
+	}
+	return offered, unsupported
+}
+
+// unsupportedFilesMessage says that nothing the game offers can be installed,
+// and for which systems its files are.
+func unsupportedFilesMessage(unsupported []roms.Upload) string {
+	var systems []string
+	for _, upload := range unsupported {
+		if !slices.Contains(systems, upload.UnsupportedSystem) {
+			systems = append(systems, upload.UnsupportedSystem)
+		}
+	}
+	return "This game has no files the app can install. Its files are for " + text.List(systems) + "."
 }
 
 // chooseUpload lists uploads for you to pick from. hidden files wait behind
@@ -589,7 +625,40 @@ func allFormatLabels() []string {
 		"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U", "ZIP"}
 }
 
-func manualFormatLabels() []string { return allFormatLabels()[1:] }
+// platformFormats are the formats of each system a game can be listed under,
+// by the feed's platform code, in the order allFormatLabels has them.
+var platformFormats = map[string][]string{
+	"P8":  {"P8.PNG", "P8"},
+	"GBC": {"GBC"},
+	"GB":  {"GB"},
+	"GBA": {"GBA"},
+	"NES": {"NES"},
+	"MD":  {"MD"},
+	"PSX": {"CHD", "PBP", "CUE", "ISO", "IMG", "MDF", "TOC", "CBN", "M3U"},
+}
+
+// formatLabelsFor lists every format to choose from for an upload whose type
+// is unknown, for a game listed under platform: AUTO, which detects the type
+// from the file, then the formats of that system, then the rest. The first
+// choice you step to is therefore a format the game can really be in, not
+// the first of the list. A platform that is empty or not one the app knows
+// leaves the list as allFormatLabels has it.
+func formatLabelsFor(platform string) []string {
+	all := allFormatLabels()
+	own := platformFormats[strings.ToUpper(platform)]
+	if len(own) == 0 {
+		return all
+	}
+	labels := make([]string, 0, len(all))
+	labels = append(labels, all[0])
+	labels = append(labels, own...)
+	for _, label := range all[1:] {
+		if !slices.Contains(own, label) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
 
 func formatExtension(label string) string {
 	switch label {
