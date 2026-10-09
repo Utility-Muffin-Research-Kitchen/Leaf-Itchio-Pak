@@ -188,7 +188,7 @@ API fails or lists nothing, the app tries the web download page once, and it
 does the same if itch.io lists the game but refuses the download. If itch.io
 asks the app to slow down, it stops and asks you to try again later instead.
 
-1. Open Start > Settings > itch.io Account, or press A on a paid game.
+1. Open **Start > Settings > itch.io Account**, or press **A** on a paid game.
 2. Accept the physical-access warning (first time only).
 3. Scan the QR code with your phone. The code expires after a few minutes;
    press A for a new one.

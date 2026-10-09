@@ -173,10 +173,10 @@ confirmation screen in front of flagged detail content. The defaults are:
 | **Queer Content** (LGBTQ+ tags) | **Allowed** |
 
 **Blocked** puts that confirmation screen in front of a matching game's
-details, and **Allowed** shows them directly. Each category and its individual
-tags can be changed under **Settings > Content Moderation**. These tag-based
-advisories are best effort; itch.io authors control their own tags and
-descriptions.
+details, and **Allowed** shows them directly. You can change each category
+under **Settings > Content Moderation**, and the individual tags of every
+category except **Substance Use**. These tag-based advisories are best effort;
+itch.io authors control their own tags and descriptions.
 
 ## App data, logs, and privacy
 
