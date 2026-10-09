@@ -47,6 +47,8 @@ func (screen *DetailScreen) HandleInput(event InputEvent) appui.DetailIntent {
 // larger font bumps, so Settings and then the image hint carry a DropRank:
 // the composer leaves them out before Cat would collapse the footer into a
 // synthetic +1 item. Start and L1/R1 keep working when their hint is hidden.
+// The content warning shows only B Back and Start, labelled for Content
+// Moderation, where Start goes from there.
 func detailFooter(model *appui.DetailModel) []FooterHint {
 	footer := []FooterHint{{Button: ButtonB, Label: "Back"}}
 	if model.State == appui.DetailReady {
@@ -69,6 +71,13 @@ func detailFooter(model *appui.DetailModel) []FooterHint {
 	}
 	if (model.State == appui.DetailReady || model.State == appui.DetailError) && model.Game.Downloaded {
 		footer = append(footer, FooterHint{Button: ButtonX, Label: "Manage"})
+	}
+	if model.State == appui.DetailWarning {
+		// Start opens Content Moderation while the warning shows (the app
+		// routes it there, so a change to the filter is one press away), so
+		// the hint says so. It is the only way forward besides Back, so it
+		// may shorten but is never left out.
+		return append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Content Moderation", NarrowLabel: "Moderation"})
 	}
 	return append(footer, FooterHint{Button: ButtonStart, ButtonText: "STR", Label: "Settings", NarrowLabel: "Set", DropRank: 1})
 }

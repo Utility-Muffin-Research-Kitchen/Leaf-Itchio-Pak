@@ -49,6 +49,53 @@ func TestDetailFooterKeepsBackForDownloadedGames(t *testing.T) {
 	}
 }
 
+// F33: Start opens Content Moderation while the content warning shows, and
+// Settings everywhere else, so the hint is labelled for where it goes. The
+// warning's Start is the only way forward, so the composer may shorten its
+// label but never drop it.
+func TestDetailFooterLabelsStartForWhereItGoes(t *testing.T) {
+	game := appui.DetailGame{Title: "Lava Boy", IsFree: true, CanDownload: true}
+
+	warning := appui.NewDetailModel(game)
+	warning.SetReady("", nil, nil, false, []string{"Heavy Themes"})
+	if warning.State != appui.DetailWarning {
+		t.Fatalf("state = %v, want the content warning", warning.State)
+	}
+	if got := warning.Handle(appui.InputEvent{Button: appui.ButtonStart, Pressed: true}); got != appui.DetailIntentSettings {
+		t.Fatalf("Start on the warning = %v, want the settings intent that main routes to Content Moderation", got)
+	}
+	buttons := footerButtons(detailFooter(warning))
+	start, ok := buttons[ButtonStart]
+	if !ok {
+		t.Fatal("the content warning has no Start hint")
+	}
+	if start.Label != "Content Moderation" || start.NarrowLabel != "Moderation" {
+		t.Errorf("warning Start hint = %q (narrow %q), want %q (narrow %q)",
+			start.Label, start.NarrowLabel, "Content Moderation", "Moderation")
+	}
+	if start.DropRank != 0 {
+		t.Errorf("warning Start drop rank = %d, want 0: it is the only way to change the filter", start.DropRank)
+	}
+	if back, ok := buttons[ButtonB]; !ok || back.Label != "Back" {
+		t.Errorf("warning B hint = %+v (present %v), want Back", back, ok)
+	}
+	if len(buttons) != 2 {
+		t.Errorf("warning footer = %+v, want only Back and Start", buttons)
+	}
+
+	loading := appui.NewDetailModel(game)
+	ready := appui.NewDetailModel(game)
+	ready.SetReady("", nil, []string{"one"}, false, nil)
+	failed := appui.NewDetailModel(game)
+	failed.SetError("Go back and reopen this game to try again.")
+	for name, model := range map[string]*appui.DetailModel{"loading": loading, "ready": ready, "error": failed} {
+		start, ok := footerButtons(detailFooter(model))[ButtonStart]
+		if !ok || start.Label != "Settings" || start.NarrowLabel != "Set" || start.DropRank != 1 {
+			t.Errorf("%s Start hint = %+v (present %v), want Settings", name, start, ok)
+		}
+	}
+}
+
 func TestUnavailableTextOffersManageOnlyForDownloadedGames(t *testing.T) {
 	const removed = "This game was removed from itch.io."
 	if got, want := unavailableText(removed, true), "This game was removed from itch.io. You can still manage your files."; got != want {
