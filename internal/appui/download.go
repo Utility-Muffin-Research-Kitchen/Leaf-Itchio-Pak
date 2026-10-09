@@ -36,6 +36,8 @@ type DownloadSelectModel struct {
 	Cursor      int
 	VisibleRows int
 	Message     string
+	// BodyScroll scrolls the error and the next-step message.
+	BodyScroll
 }
 
 func NewDownloadSelectModel(title string) *DownloadSelectModel {
@@ -59,11 +61,13 @@ func (m *DownloadSelectModel) SetChoices(subtitle string, choices []DownloadChoi
 func (m *DownloadSelectModel) SetError(message string) {
 	m.State = DownloadSelectError
 	m.Message = message
+	m.ResetScroll()
 }
 
 func (m *DownloadSelectModel) SetHandoff(message string) {
 	m.State = DownloadSelectHandoff
 	m.Message = message
+	m.ResetScroll()
 }
 
 func (m *DownloadSelectModel) Handle(event InputEvent) DownloadSelectIntent {
@@ -76,6 +80,9 @@ func (m *DownloadSelectModel) Handle(event InputEvent) DownloadSelectIntent {
 	if m.State != DownloadSelectChoices {
 		if m.State == DownloadSelectError && event.Button == ButtonA {
 			return DownloadSelectIntentBack
+		}
+		if m.State == DownloadSelectError || m.State == DownloadSelectHandoff {
+			m.HandleScroll(event.Button)
 		}
 		return DownloadSelectIntentNone
 	}
@@ -166,6 +173,8 @@ type DownloadProgressModel struct {
 	Skipped       []string
 	Locked        bool // protected operation cannot be cancelled mid-transaction
 	LibraryStatus string
+	// BodyScroll scrolls the done and suspend-protection messages.
+	BodyScroll
 }
 
 // SkippedFilesLine is the done screen's line for skipped files, or "".
@@ -198,5 +207,20 @@ func (m *DownloadProgressModel) Handle(event InputEvent) DownloadProgressIntent 
 	if event.Button == ButtonA || event.Button == ButtonB || event.Button == ButtonQuit {
 		return DownloadProgressIntentBack
 	}
+	if m.State == DownloadProgressDone || m.State == DownloadProgressInhibitBlocked {
+		m.HandleScroll(event.Button)
+	}
 	return DownloadProgressIntentNone
+}
+
+// Apply takes a new snapshot of the download, which the screen gets on
+// every pass. The body keeps its scroll line while the state stays the same,
+// so a library status arriving under it does not move it, and starts at the
+// top in a new state.
+func (m *DownloadProgressModel) Apply(next DownloadProgressModel) {
+	scroll, same := m.BodyScroll, m.State == next.State
+	*m = next
+	if same {
+		m.BodyScroll = scroll
+	}
 }
