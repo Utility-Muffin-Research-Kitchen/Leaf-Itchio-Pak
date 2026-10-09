@@ -26,7 +26,9 @@ func SanitiseFilename(title, ext string) string {
 		b.WriteRune(r)
 	}
 	s := strings.Join(strings.Fields(b.String()), " ")
-	if s == "" {
+	// "." and ".." are the current and parent folder, not names: a game
+	// titled ".." would otherwise install into the folder above its own.
+	if s == "" || s == "." || s == ".." {
 		return ""
 	}
 	return s + ext

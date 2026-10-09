@@ -597,7 +597,20 @@ func pico8Members(entries []archiveEntry) []pico8Member {
 // inventory.Entry.InPico8Set).
 func (s *ArchiveDownloadWorker) extractPico8(entries []archiveEntry, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
-	members := pico8Members(entries)
+	// A member named to leave the archive's own folder ("../x.p8",
+	// "/tmp/x.p8", or "..\..\x.p8", which an entry's name already reads as
+	// "../../x.p8") is never installed: it is skipped, listed on the done
+	// screen, and left out of the shared-folder prefix, the playlist and the
+	// records. Nothing may be written outside the game folder.
+	var members []pico8Member
+	for _, member := range pico8Members(entries) {
+		if !filepath.IsLocal(filepath.FromSlash(member.name)) {
+			logger.Warn("%s: pico8 %s: %q leaves the game folder; not installing it", s.logPrefix(), path.Base(member.entry.name), member.entry.name)
+			s.skipped = append(s.skipped, path.Base(member.entry.name))
+			continue
+		}
+		members = append(members, member)
+	}
 	names := make([]string, len(members))
 	for index, member := range members {
 		names[index] = member.name
@@ -609,6 +622,11 @@ func (s *ArchiveDownloadWorker) extractPico8(entries []archiveEntry, now time.Ti
 		entry := member.entry
 		archiveName := path.Base(entry.name)
 		dest := filepath.Join(gameDir, filepath.FromSlash(strings.TrimPrefix(member.name, prefix)))
+		if rel, err := leaf.RelativeWithin(gameDir, dest); err != nil || rel == "." {
+			logger.Warn("%s: pico8 %s: %q leaves the game folder; not installing it", s.logPrefix(), archiveName, entry.name)
+			s.skipped = append(s.skipped, archiveName)
+			continue
+		}
 		if s.ownedByAnotherGame(dest) {
 			logger.Warn("%s: pico8 %s: another game's file is already saved there", s.logPrefix(), archiveName)
 			s.skipped = append(s.skipped, archiveName)

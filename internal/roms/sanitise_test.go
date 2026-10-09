@@ -26,6 +26,14 @@ func TestSanitiseFilename(t *testing.T) {
 		{"Night 🌙 Crawler", ".gb", "Night Crawler.gb"},
 		{"⚔️Dungeon", ".gbc", "Dungeon.gbc"},
 		{"🎮🌙", ".gb", ""},
+		// "." and ".." name a folder, not a file or a game's own folder.
+		{"..", "", ""},
+		{".", "", ""},
+		{" .. ", "", ""},
+		{"../", "", ""},
+		{"..", ".gb", ""},
+		{"...", "", "..."},
+		{"..\\..", "", "..\\.."},
 	}
 	for _, c := range cases {
 		got := roms.SanitiseFilename(c.title, c.ext)
