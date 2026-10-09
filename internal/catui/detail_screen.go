@@ -192,16 +192,15 @@ func (screen *DetailScreen) drawReady(content Box) error {
 			return err
 		}
 	}
-	y := qrRect.Y + qrRect.H + screen.ctx.Scale(5)
 	caption := "Scan to open on itch.io"
 	if screen.model.Game.NotOwned() && !screen.model.BrowserOnly {
 		caption = "Not owned. Scan to buy."
 	}
-	if _, err := screen.ctx.DrawText(FontTiny, caption, panel.X, y,
-		screen.ctx.ThemeColor(RoleHint), panel.W, true); err != nil {
+	y, err := screen.ui.DrawQRCaption(qrRect, panel.X, panel.W, caption)
+	if err != nil {
 		return err
 	}
-	y += screen.ctx.FontHeight(FontTiny) + screen.ui.BasePadding/2
+	y += screen.ui.BasePadding / 2
 
 	tagsHeight := minInt(screen.ctx.Scale(78), maxInt(0, panel.Y+panel.H-y))
 	used, err := screen.ui.DrawTagPills(Rect{X: panel.X, Y: y, W: panel.W, H: tagsHeight}, screen.model.Tags)

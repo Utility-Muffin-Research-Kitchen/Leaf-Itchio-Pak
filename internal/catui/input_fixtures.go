@@ -405,6 +405,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &screen.scroll
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
 	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
 		model := &appui.SignInModel{

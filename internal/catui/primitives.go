@@ -587,6 +587,31 @@ func bodyLines(paragraphs []string, width int, measure func(string) int) []strin
 	return lines
 }
 
+// QRCaptionHeight is the room DrawQRCaption takes for caption at width.
+func (ui *Composer) QRCaptionHeight(caption string, width int) int {
+	return ui.ctx.Scale(5) + len(ui.qrCaptionLines(caption, width))*ui.ctx.FontHeight(FontTiny)
+}
+
+// DrawQRCaption draws caption in the hint color under the QR code drawn at
+// qr, from x and at most width wide. Detail and About caption their QR
+// codes with it. A caption too wide for one line takes two, and the
+// second ends in "..." if it still does not fit. It returns the y below
+// the caption.
+func (ui *Composer) DrawQRCaption(qr Rect, x, width int, caption string) (int, error) {
+	y := qr.Y + qr.H + ui.ctx.Scale(5)
+	for _, line := range ui.qrCaptionLines(caption, width) {
+		if _, err := ui.ctx.DrawText(FontTiny, line, x, y, ui.ctx.ThemeColor(RoleHint), width, true); err != nil {
+			return y, err
+		}
+		y += ui.ctx.FontHeight(FontTiny)
+	}
+	return y, nil
+}
+
+func (ui *Composer) qrCaptionLines(caption string, width int) []string {
+	return fitLines(caption, width, 2, func(value string) int { return ui.ctx.MeasureText(FontTiny, value) })
+}
+
 func CenteredModalRect(bounds Rect, widthPercent, heightPercent, margin int) Rect {
 	if widthPercent <= 0 || widthPercent > 100 {
 		widthPercent = 72
