@@ -41,23 +41,52 @@ func pico8RoleOf(path string) pico8Role {
 //
 //   - a .lua file: nothing installs one except a set;
 //   - a cart or the playlist with a .lua file or the playlist of the same
-//     game in the same folder; or
+//     game in the same folder;
 //   - a cart with another cart of the same game in the same folder that came
 //     from the same archive. Only a set puts two carts of one archive in one
 //     folder. This catches a set whose playlist was not written because
-//     another game's file was in the way.
+//     another game's file was in the way; or
+//   - a cart in a folder inside the folder of a file the rules above
+//     recognise, from the same archive. A set keeps carts in subfolders
+//     (world2/main.p8), and the carts beside the Lua files may load them by
+//     path.
 //
-// Folder depth is not used. A multi-file install does go into a folder named
-// after the game, but a single cart can sit in a folder too, one you picked
-// as its destination inside the Pico-8 folder, and that cart can be renamed
-// safely. A single cart has no sibling of the kinds above: two single-cart
-// uploads of one game share a folder but not an archive, and a cart you
-// downloaded on its own has no archive at all.
+// Folder depth alone is not used. A multi-file install does go into a folder
+// named after the game, but a single cart can sit in a folder too, one you
+// picked as its destination inside the Pico-8 folder, and that cart can be
+// renamed safely. A single cart has no sibling of the kinds above: two
+// single-cart uploads of one game share a folder but not an archive, and a
+// cart you downloaded on its own has no archive at all. The last rule needs a
+// recognised set to be inside of, so it cannot catch one single-cart upload
+// installed into two folders, which is two records of one archive (the same
+// upload on both cards, or installed again into a folder you picked): neither
+// copy is a set, whatever their folders have in common.
 func (e Entry) InPico8Set(file DownloadedFile) bool {
 	role := pico8RoleOf(file.DestPath)
 	if role == pico8None {
 		return false
 	}
+	if e.inPico8SetByNeighbour(file, role) {
+		return true
+	}
+	if role != pico8Cart || file.SourceArchive == "" {
+		return false
+	}
+	dir := filepath.Dir(file.DestPath)
+	for _, other := range e.Files {
+		if other.SourceArchive != file.SourceArchive || !dirInside(dir, filepath.Dir(other.DestPath)) {
+			continue
+		}
+		if otherRole := pico8RoleOf(other.DestPath); otherRole != pico8None && e.inPico8SetByNeighbour(other, otherRole) {
+			return true
+		}
+	}
+	return false
+}
+
+// inPico8SetByNeighbour applies the rules of InPico8Set that look at a file
+// itself and the files in its own folder.
+func (e Entry) inPico8SetByNeighbour(file DownloadedFile, role pico8Role) bool {
 	if role == pico8Lua {
 		return true
 	}
