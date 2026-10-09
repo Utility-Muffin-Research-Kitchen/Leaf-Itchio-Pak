@@ -384,10 +384,10 @@ func (s *ArchiveDownloadWorker) run7z(tmpPath string) {
 }
 
 // commitInstall acknowledges the upload once the archive is fully extracted,
-// and marks this archive's files the install did not write as left over
-// from an older version, for example a track an older version named
-// differently. Manage offers those files for deletion; nothing is deleted
-// here. A skipped entry means the install did not finish, so the update
+// and marks this archive's files the install did not write as left over: from
+// an older version, for example a track an older version named differently,
+// or an earlier copy of the same version that was installed again into another
+// folder. Manage offers those files for deletion; nothing is deleted here. A skipped entry means the install did not finish, so the update
 // stays pending, nothing is marked, and a retry can complete it.
 func (s *ArchiveDownloadWorker) commitInstall() {
 	if len(s.extracted) == 0 || len(s.skipped) > 0 {

@@ -290,6 +290,33 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.ManageIntentBack
 		}
+	case "manage-earlier-copy", "manage-earlier-copy-confirm":
+		// A Pico-8 game installed twice, the second time into another folder:
+		// the first copy's files are earlier copies, not an older version (F28).
+		model := appui.NewManageModel("Moss Garden")
+		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "main.p8", Badge: "OLD", Detail: "Primary SD / Roms/PICO8/Moss Garden/main.p8", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "lib.lua", Badge: "OLD", Detail: "Primary SD / Roms/PICO8/Moss Garden/lib.lua", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "main.p8", Badge: "ROM", Detail: "Primary SD / Roms/PICO8/Moss Garden 2/main.p8", Enabled: true},
+			{Kind: appui.ManageItemFile, Label: "lib.lua", Badge: "ROM", Detail: "Primary SD / Roms/PICO8/Moss Garden 2/lib.lua", Enabled: true},
+			{Kind: appui.ManageItemDeleteLeftOver, Label: "Delete left-over files", Badge: "2 OLD", Detail: "Earlier copy of files you installed again", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "4 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "4 FILES", Enabled: true},
+		})
+		model.Cursor = 4
+		if config.Screen == "manage-earlier-copy-confirm" {
+			model.SetConfirm("Delete 2 managed files?", []string{"Earlier copy of files you installed again",
+				"main.p8", "Primary SD / Roms/PICO8/Moss Garden/main.p8",
+				"lib.lua", "Primary SD / Roms/PICO8/Moss Garden/lib.lua"})
+		}
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
 	case "manage-rename":
 		// One ROM back on its archive name and one still named after the
 		// title: each offers the other name (F13).

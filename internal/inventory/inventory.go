@@ -97,9 +97,11 @@ type DownloadedFile struct {
 	// archive, files the app wrote itself, and older inventories.
 	SourceMember string `json:"source_member,omitempty"`
 
-	// LeftOver marks a file of an upload that its latest reinstall did not
-	// write, such as a track an older version named differently. Manage
-	// offers it for deletion; nothing deletes it automatically.
+	// LeftOver marks a file of an upload that its latest install did not
+	// write, such as a track an older version named differently, or the
+	// first copy of an upload that was installed again into another
+	// folder. Manage offers it for deletion; nothing deletes it
+	// automatically.
 	LeftOver bool `json:"left_over,omitempty"`
 }
 
@@ -541,9 +543,74 @@ func (inv *Inventory) CommitUploadInstall(gameURL string, install UploadInstall)
 		older, conclusive := fingerprintChanged(file.UploadFingerprint, install.Fingerprint)
 		return (older && conclusive) || install.Replaces == nil || install.Replaces(file)
 	}
-	for _, file := range markLeftOverLocked(e, belongs, written) {
-		logger.Info("inventory: %s is left over from an older version of %s", filepath.Base(file.DestPath), install.Filename)
+	newer := make([]newerFile, 0, len(install.Written))
+	for _, path := range install.Written {
+		newer = append(newer, newerFile{path: path, fingerprint: install.Fingerprint})
 	}
+	for _, file := range markLeftOverLocked(e, belongs, written) {
+		if !isEarlierCopy(file, newer) {
+			logger.Info("inventory: %s is left over from an older version of %s", filepath.Base(file.DestPath), install.Filename)
+		} else if dir := commonDir(install.Written); dir != "" {
+			logger.Info("inventory: %s is an earlier copy of %s; the new install is in %s", filepath.Base(file.DestPath), install.Filename, dir)
+		} else {
+			logger.Info("inventory: %s is an earlier copy of %s", filepath.Base(file.DestPath), install.Filename)
+		}
+	}
+}
+
+// newerFile is a file of an install that is the latest of its upload.
+type newerFile struct{ path, fingerprint string }
+
+// isEarlierCopy tells why a file of an upload was left behind by a later
+// install of it, which wrote newer. The file is an earlier copy when that
+// install is the same version of the upload (not conclusively newer) and wrote
+// its files in a folder of their own, not in or around the file's folder: the
+// upload was installed again somewhere else, such as a Pico-8 game into
+// another folder or onto the other card. Otherwise it is a file of an older
+// version, which also covers a file the same version put in another place in
+// the same folder tree, such as a track an older version of this app kept
+// outside the album's subfolders.
+func isEarlierCopy(file DownloadedFile, newer []newerFile) bool {
+	if len(newer) == 0 {
+		return false
+	}
+	for _, other := range newer {
+		if changed, conclusive := fingerprintChanged(file.UploadFingerprint, other.fingerprint); changed && conclusive {
+			return false
+		}
+	}
+	dir := filepath.Dir(file.DestPath)
+	for _, other := range newer {
+		otherDir := filepath.Dir(other.path)
+		if leftOverKey(dir) == leftOverKey(otherDir) || dirInside(dir, otherDir) || dirInside(otherDir, dir) {
+			return false
+		}
+	}
+	return true
+}
+
+// LeftOverIsEarlierCopy reports whether a left-over file is an earlier copy
+// of its upload, installed again somewhere else, rather than a file of an
+// older version (see isEarlierCopy). Manage words the two apart. The files
+// the upload's latest install wrote are the ones that are not left over.
+func (e Entry) LeftOverIsEarlierCopy(file DownloadedFile) bool {
+	var newer []newerFile
+	for _, other := range e.Files {
+		if other.LeftOver || other.DestPath == file.DestPath || !sameUploadFile(other, file) {
+			continue
+		}
+		newer = append(newer, newerFile{path: other.DestPath, fingerprint: other.UploadFingerprint})
+	}
+	return isEarlierCopy(file, newer)
+}
+
+// sameUploadFile reports whether two records came from one upload: the same
+// upload ID when both have one, else the same upload name.
+func sameUploadFile(a, b DownloadedFile) bool {
+	if a.UploadID != "" && b.UploadID != "" {
+		return a.UploadID == b.UploadID
+	}
+	return a.UploadName() == b.UploadName()
 }
 
 // sameUpload matches by upload ID when both sides have one, else by name.

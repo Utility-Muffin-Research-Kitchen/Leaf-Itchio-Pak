@@ -238,7 +238,9 @@ the new install no longer uses stay on your card. For example, an older version
 of this app put every soundtrack track in one folder, and the new install keeps
 same-named tracks in `cd1/` and `cd2/` subfolders. Manage marks the old copies
 **OLD** and offers **Delete left-over files**. Nothing is deleted until you
-choose it.
+choose it. If you download the same version again into another folder or onto
+the other card, Manage marks the first copy **OLD** too and calls it an earlier
+copy of files you installed again, so you can keep whichever copy you want.
 
 Only artwork recorded as created by this app and no longer referenced by another
 managed file is removed. User artwork is retained. Inventory repair drops app

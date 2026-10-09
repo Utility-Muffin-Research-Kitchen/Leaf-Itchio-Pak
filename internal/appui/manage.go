@@ -17,8 +17,9 @@ const (
 	ManageItemDeleteMusic
 	ManageItemDeleteAll
 	ManageItemRename
-	// ManageItemDeleteLeftOver deletes files a reinstall left behind from
-	// an older version of the same upload.
+	// ManageItemDeleteLeftOver deletes files a later install of the same
+	// upload left behind: files of an older version, or an earlier copy of
+	// the upload that was installed again somewhere else.
 	ManageItemDeleteLeftOver
 )
 
