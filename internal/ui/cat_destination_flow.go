@@ -356,7 +356,7 @@ func (flow *CatDestinationFlow) confirm(model *appui.DestinationModel) (bool, er
 	for uploadIndex, targetIndex := range flow.uploadTargets {
 		flow.destPaths[uploadIndex] = flow.chosenDirs[flow.targets[targetIndex].key]
 	}
-	model.SetConfirm("Confirm download destination", destinationSourceLabel(flow.selected), flow.summaryLines())
+	model.SetConfirm("Confirm download destination", destinationSourceLabel(flow.selected), flow.summary())
 	return false, nil
 }
 
@@ -396,39 +396,39 @@ func (flow *CatDestinationFlow) finalize(_ *appui.DestinationModel) (bool, error
 	return true, nil
 }
 
-// summaryLines lists the files a ROM download installs, then each chosen
-// folder. An archive's file names are decided while it is extracted, so its
-// lines name only the folders.
-func (flow *CatDestinationFlow) summaryLines() []string {
-	var lines []string
+// summary lists the files a ROM download installs, then each chosen folder.
+// An archive's file names are decided while it is extracted, so its summary
+// names only the folders.
+func (flow *CatDestinationFlow) summary() []appui.BodyBlock {
+	var blocks []appui.BodyBlock
 	if flow.music {
 		rel, _ := leaf.RelativeWithin(flow.selected.Root, flow.chosenDirs["music"])
-		return []string{filepath.ToSlash(rel)}
+		return []appui.BodyBlock{appui.Paragraph(filepath.ToSlash(rel))}
 	}
 	installed := flow.installPaths()
 	for targetIndex, target := range flow.targets {
 		dir := flow.chosenDirs[target.key]
 		rel, _ := leaf.RelativeWithin(flow.selected.Root, dir)
-		added := false
+		var files []appui.ListEntry
 		for uploadIndex, mappedTarget := range flow.uploadTargets {
 			if mappedTarget != targetIndex || uploadIndex >= len(flow.uploads) {
 				continue
 			}
 			if uploadIndex < len(installed) {
-				lines = append(lines, flow.displayPath(installed[uploadIndex]))
-				added = true
+				files = append(files, appui.ListEntry{Text: flow.displayPath(installed[uploadIndex])})
 			} else if flow.uploads[uploadIndex].Filename != "" {
-				lines = append(lines, filepath.ToSlash(filepath.Join(rel, flow.uploads[uploadIndex].Filename)))
-				added = true
+				files = append(files, appui.ListEntry{Text: filepath.ToSlash(filepath.Join(rel, flow.uploads[uploadIndex].Filename))})
 			}
 		}
 		label := filepath.ToSlash(rel)
-		if !added || len(flow.uploadTargets) == 0 {
+		if len(files) == 0 {
 			label = target.label + " → " + label
+		} else {
+			blocks = append(blocks, appui.ListBlock(files))
 		}
-		lines = append(lines, label)
+		blocks = append(blocks, appui.Paragraph(label))
 	}
-	return lines
+	return blocks
 }
 
 // installPaths returns where the install leaves each upload, after name

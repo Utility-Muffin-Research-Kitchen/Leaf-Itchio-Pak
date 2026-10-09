@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 )
 
 func TestScreenLayout960x720WithSubHeaderAndFooter(t *testing.T) {
@@ -321,11 +323,11 @@ func TestScrollingBodyWrapsNarrowerWhenItOverflows(t *testing.T) {
 	rect := Rect{X: 5, Y: 7, W: 200, H: 48 + 3*30 + 10}
 	const paragraph = "aaaa bbbb cccc dddd eeee"
 
-	fits := layoutBody(rect, "Title", []string{paragraph}, metrics)
+	fits := layoutBody(rect, "Title", appui.Prose(paragraph), metrics)
 	if fits.overflows() || fits.width != 200 || fits.maxOffset() != 0 {
 		t.Fatalf("fitting body = %+v, want full width and no scroll", fits)
 	}
-	if want := []string{"aaaa bbbb cccc dddd", "eeee"}; !reflect.DeepEqual(fits.lines, want) {
+	if want := []string{"aaaa bbbb cccc dddd", "eeee"}; !reflect.DeepEqual(lineTexts(fits.lines), want) {
 		t.Fatalf("fitting lines = %#v, want %#v", fits.lines, want)
 	}
 	if fits.top != 48 || fits.rows != 3 {
@@ -333,17 +335,17 @@ func TestScrollingBodyWrapsNarrowerWhenItOverflows(t *testing.T) {
 	}
 
 	// Two paragraphs need five lines with the blank between them.
-	long := layoutBody(rect, "Title text here abc", []string{paragraph, paragraph}, metrics)
+	long := layoutBody(rect, "Title text here abc", appui.Prose(paragraph, paragraph), metrics)
 	if !long.overflows() || long.width != 188 {
 		t.Fatalf("overflowing body = %+v, want it to overflow at width 188", long)
 	}
 	want := []string{"aaaa bbbb cccc", "dddd eeee", "", "aaaa bbbb cccc", "dddd eeee"}
-	if !reflect.DeepEqual(long.lines, want) {
+	if !reflect.DeepEqual(lineTexts(long.lines), want) {
 		t.Fatalf("overflowing lines = %#v, want %#v", long.lines, want)
 	}
 	for _, line := range long.lines {
-		if measure(line) > long.width {
-			t.Fatalf("line %q is %d wide, past the scrollbar gutter at %d", line, measure(line), long.width)
+		if measure(line.text) > long.width {
+			t.Fatalf("line %q is %d wide, past the scrollbar gutter at %d", line.text, measure(line.text), long.width)
 		}
 	}
 	if long.maxOffset() != 2 {
@@ -361,16 +363,163 @@ func TestScrollingBodyCountsNoBlankLineAfterTheLastParagraph(t *testing.T) {
 	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
 	metrics := bodyMetrics{titleHeight: 40, titleGap: 8, lineHeight: 30, gutter: 12,
 		measureTitle: measure, measureLine: measure}
-	layout := layoutBody(Rect{W: 200, H: 3 * 30}, "", []string{"one", "two"}, metrics)
-	if want := []string{"one", "", "two"}; !reflect.DeepEqual(layout.lines, want) {
+	layout := layoutBody(Rect{W: 200, H: 3 * 30}, "", appui.Prose("one", "two"), metrics)
+	if want := []string{"one", "", "two"}; !reflect.DeepEqual(lineTexts(layout.lines), want) {
 		t.Fatalf("lines = %#v, want %#v", layout.lines, want)
 	}
 	if layout.top != 0 || layout.overflows() {
 		t.Fatalf("untitled body = %+v, want it to fit from the top", layout)
 	}
 	// A wrapped title takes rows from the body; at least one row stays.
-	tight := layoutBody(Rect{W: 100, H: 100}, "A title that wraps", []string{"one", "two"}, metrics)
+	tight := layoutBody(Rect{W: 100, H: 100}, "A title that wraps", appui.Prose("one", "two"), metrics)
 	if len(tight.titleLines) != 2 || tight.top != 88 || tight.rows != 1 || tight.maxOffset() != 2 {
 		t.Fatalf("tight body = %+v, want a two-line title, one row and offset 2", tight)
+	}
+}
+
+func lineTexts(lines []bodyLine) []string {
+	texts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		texts = append(texts, line.text)
+	}
+	return texts
+}
+
+func listMetrics() (bodyMetrics, func(string) int) {
+	measure := func(value string) int { return utf8.RuneCountInString(value) * 10 }
+	return bodyMetrics{titleHeight: 40, titleGap: 8, lineHeight: 30, gutter: 12,
+		measureTitle: measure, measureLine: measure}, measure
+}
+
+// F20: a list takes two lines per file, its name and then its location,
+// with no blank line between files. The delete prompt for a game with a
+// 30-track soundtrack and a ROM, 31 files, is 62 lines instead of about 123.
+func TestListEntriesTakeTwoLinesEachWithoutBlankLines(t *testing.T) {
+	metrics, _ := listMetrics()
+	entries := make([]appui.ListEntry, 0, 31)
+	for index := range 31 {
+		name := "Track " + string(rune('A'+index%26)) + ".ogg"
+		entries = append(entries, appui.ListEntry{Text: name, Detail: "Primary SD / Music/Leafbound/" + name})
+	}
+	layout := layoutBody(Rect{W: 1000, H: 400}, "Delete 31 managed files?",
+		[]appui.BodyBlock{appui.ListBlock(entries)}, metrics)
+	if len(layout.lines) != 62 {
+		t.Fatalf("31 files = %d body lines, want 62", len(layout.lines))
+	}
+	for index, line := range layout.lines {
+		if line.text == "" {
+			t.Fatalf("line %d is blank; files follow each other without one", index)
+		}
+		if line.detail != (index%2 == 1) {
+			t.Fatalf("line %d %q detail=%v, want the name first and the location under it", index, line.text, line.detail)
+		}
+	}
+	if layout.lines[0].text != entries[0].Text || layout.lines[1].text != entries[0].Detail ||
+		layout.lines[60].text != entries[30].Text {
+		t.Fatalf("lines = %+v ... %+v, want entries in order", layout.lines[:2], layout.lines[60:])
+	}
+	// The title takes 48 of the 400 pixels, which leaves 11 rows of 30.
+	if layout.rows != 11 || layout.maxOffset() != 62-11 {
+		t.Fatalf("rows = %d, last offset = %d, want 11 and 51", layout.rows, layout.maxOffset())
+	}
+}
+
+// Prose paragraphs keep their blank line, and so do the blocks around a
+// list: only the entries of one list run together.
+func TestBlocksStaySeparatedByABlankLine(t *testing.T) {
+	metrics, _ := listMetrics()
+	layout := layoutBody(Rect{W: 1000, H: 600}, "", []appui.BodyBlock{
+		appui.Paragraph("Left over from an older version"),
+		appui.ListBlock([]appui.ListEntry{{Text: "a.ogg", Detail: "Music/a.ogg"}, {Text: "b.ogg", Detail: "Music/b.ogg"}}),
+		appui.Paragraph("Roms/GB"),
+		appui.ListBlock([]appui.ListEntry{{Text: "c.gb"}, {Text: "d.gb"}}),
+		appui.Paragraph("Roms/GBC"),
+	}, metrics)
+	want := []string{
+		"Left over from an older version", "",
+		"a.ogg", "Music/a.ogg", "b.ogg", "Music/b.ogg", "",
+		"Roms/GB", "",
+		"c.gb", "d.gb", "",
+		"Roms/GBC",
+	}
+	if got := lineTexts(layout.lines); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines = %#v, want %#v", got, want)
+	}
+	// Paragraphs and entries without a detail line are drawn in the text color.
+	for _, index := range []int{0, 2, 4, 7, 9, 10, 12} {
+		if layout.lines[index].detail {
+			t.Fatalf("line %d %q is a detail line", index, layout.lines[index].text)
+		}
+	}
+	for _, index := range []int{3, 5} {
+		if !layout.lines[index].detail {
+			t.Fatalf("line %d %q is not a detail line", index, layout.lines[index].text)
+		}
+	}
+	// A block with nothing in it takes no lines, not a blank one.
+	empty := layoutBody(Rect{W: 1000, H: 600}, "", []appui.BodyBlock{
+		appui.Paragraph("one"), appui.ListBlock(nil), appui.Paragraph(""), appui.Paragraph("two"),
+	}, metrics)
+	if got, want := lineTexts(empty.lines), []string{"one", "", "two"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines with empty blocks = %#v, want %#v", got, want)
+	}
+}
+
+// A name or location wider than the body still wraps onto more lines, never
+// off the screen, and the next file still follows without a blank line.
+func TestLongListEntriesWrapWithoutClipping(t *testing.T) {
+	metrics, measure := listMetrics()
+	layout := layoutBody(Rect{W: 200, H: 600}, "", []appui.BodyBlock{appui.ListBlock([]appui.ListEntry{
+		{Text: "Leafbound Original Soundtrack Track 01.ogg", Detail: "Primary SD / Music/Leafbound/Track 01.ogg"},
+		{Text: "Two.ogg", Detail: "Music/Two.ogg"},
+	})}, metrics)
+	if len(layout.lines) <= 4 {
+		t.Fatalf("lines = %#v, want the long entry to take more than two", lineTexts(layout.lines))
+	}
+	for index, line := range layout.lines {
+		if line.text == "" {
+			t.Fatalf("line %d is blank inside a list: %#v", index, lineTexts(layout.lines))
+		}
+		if measure(line.text) > layout.width {
+			t.Fatalf("line %d %q is %d wide, past %d", index, line.text, measure(line.text), layout.width)
+		}
+	}
+	last := layout.lines[len(layout.lines)-2:]
+	if last[0].text != "Two.ogg" || last[1].text != "Music/Two.ogg" || !last[1].detail {
+		t.Fatalf("last entry = %+v, want it to follow the wrapped one", last)
+	}
+}
+
+// A name or path with no space to wrap at, wider than the whole body, breaks
+// across lines instead of being cut off at the edge.
+func TestOverWideWordsBreakInsteadOfClipping(t *testing.T) {
+	metrics, measure := listMetrics()
+	const name = "Artist_-_Album_-_01_-_Track_Name_(Original_Mix).ogg"
+	layout := layoutBody(Rect{W: 200, H: 600}, "", []appui.BodyBlock{
+		appui.ListBlock([]appui.ListEntry{{Text: name, Detail: "Music/" + name}}),
+		appui.Paragraph("done"),
+	}, metrics)
+	var text, detail string
+	for _, line := range layout.lines {
+		if measure(line.text) > layout.width {
+			t.Fatalf("line %q is %d wide, past %d", line.text, measure(line.text), layout.width)
+		}
+		switch {
+		case line.detail:
+			detail += line.text
+		case line.text != "" && line.text != "done":
+			text += line.text
+		}
+	}
+	if text != name || detail != "Music/"+name {
+		t.Fatalf("pieces = %q and %q, want the whole name and path", text, detail)
+	}
+	// A short word still wraps at spaces, and a width narrower than one
+	// character still moves on.
+	if got := lineTexts(layoutBody(Rect{W: 200, H: 600}, "", appui.Prose("aaaa bbbb cccc dddd eeee"), metrics).lines); !reflect.DeepEqual(got, []string{"aaaa bbbb cccc dddd", "eeee"}) {
+		t.Fatalf("spaced text = %#v", got)
+	}
+	if got := bodyLines(appui.Prose("abc"), 5, measure); len(got) != 3 {
+		t.Fatalf("one character per line = %+v, want 3 lines", got)
 	}
 }

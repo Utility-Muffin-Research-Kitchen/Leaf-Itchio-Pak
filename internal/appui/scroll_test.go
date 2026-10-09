@@ -39,11 +39,28 @@ func TestBodyScrollStaysWithinBounds(t *testing.T) {
 	}
 }
 
-// scrollsOnce checks that Down moves the body one line and returns no intent,
-// so scrolling never closes or confirms a screen.
+// scrollsOnce checks that Down moves the body one line, Right a page, and
+// that neither returns an intent, so scrolling never closes or confirms a
+// screen.
 func scrollsOnce[I comparable](t *testing.T, name string, scroll *BodyScroll, handle func(InputEvent) I) {
 	t.Helper()
 	var none I
+	// Left and Right page by the lines that show at once, less one for
+	// context, and never close or confirm a screen either.
+	scroll.SetScrollBounds(30)
+	scroll.SetScrollRows(8)
+	if got := handle(press(ButtonRight)); got != none {
+		t.Fatalf("%s: Right intent = %v, want none", name, got)
+	}
+	if scroll.ScrollLine != 7 {
+		t.Fatalf("%s: Right paged to line %d, want 7", name, scroll.ScrollLine)
+	}
+	if got := handle(press(ButtonLeft)); got != none {
+		t.Fatalf("%s: Left intent = %v, want none", name, got)
+	}
+	if scroll.ScrollLine != 0 {
+		t.Fatalf("%s: Left paged back to line %d, want 0", name, scroll.ScrollLine)
+	}
 	scroll.SetScrollBounds(3)
 	if got := handle(press(ButtonDown)); got != none {
 		t.Fatalf("%s: Down intent = %v, want none", name, got)
@@ -62,7 +79,8 @@ func scrollsOnce[I comparable](t *testing.T, name string, scroll *BodyScroll, ha
 
 func TestManagePromptAndResultScroll(t *testing.T) {
 	model := NewManageModel("Leafbound")
-	model.SetConfirm("Delete 31 managed files?", []string{"01 Theme.ogg", "Primary SD / Music/01 Theme.ogg"})
+	model.SetConfirm("Delete 31 managed files?", []BodyBlock{ListBlock([]ListEntry{
+		{Text: "01 Theme.ogg", Detail: "Primary SD / Music/01 Theme.ogg"}})})
 	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
 	if got := model.Handle(press(ButtonA)); got != ManageIntentConfirm {
 		t.Fatalf("confirm A = %v, want confirm", got)
@@ -70,7 +88,7 @@ func TestManagePromptAndResultScroll(t *testing.T) {
 	if got := model.Handle(press(ButtonB)); got != ManageIntentCancel {
 		t.Fatalf("confirm B = %v, want cancel", got)
 	}
-	model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc"})
+	model.SetConfirm("Delete selected file?", Prose("Leafbound.gbc"))
 	if model.ScrollLine != 0 {
 		t.Fatalf("new prompt kept line %d", model.ScrollLine)
 	}
@@ -164,7 +182,8 @@ func TestDownloadProgressSnapshotKeepsScrollInTheSameState(t *testing.T) {
 
 func TestDestinationPromptsScroll(t *testing.T) {
 	model := NewDestinationModel("Leafbound")
-	model.SetConfirm("Confirm download destination", "Primary SD", []string{"Roms/GBC/Leafbound.gbc", "Roms/GBC"})
+	model.SetConfirm("Confirm download destination", "Primary SD", []BodyBlock{
+		ListBlock([]ListEntry{{Text: "Roms/GBC/Leafbound.gbc"}}), Paragraph("Roms/GBC")})
 	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
 	if got := model.Handle(press(ButtonA)); got != DestinationIntentActivate {
 		t.Fatalf("confirm A = %v, want activate", got)
@@ -185,7 +204,7 @@ func TestDestinationPromptsScroll(t *testing.T) {
 
 func TestRenameCompleteScrolls(t *testing.T) {
 	model := NewRenameModel("Leafbound")
-	model.SetPrompt(RenameConfirmSaves, "Save files", "Rename these save files?", []string{"a", "b"})
+	model.SetPrompt(RenameConfirmSaves, "Save files", "Rename these save files?", []ListEntry{{Text: "a", Detail: "b"}})
 	model.SetScrollBounds(2)
 	model.Handle(press(ButtonDown))
 	model.SetDone("ROM renamed, 1 save, 2 state files.")
@@ -224,4 +243,81 @@ func TestDetailStartsANewBodyAtTheTop(t *testing.T) {
 		t.Fatalf("unavailable page kept line %d", model.ScrollLine)
 	}
 	scrollsOnce(t, "unavailable", &model.BodyScroll, model.Handle)
+}
+
+func TestBodyScrollPagesByTheVisibleLines(t *testing.T) {
+	var scroll BodyScroll
+	scroll.SetScrollBounds(20)
+	scroll.SetScrollRows(8)
+	// A page is the 8 visible lines less one, so the last line read stays
+	// on screen after the page.
+	for _, want := range []int{7, 14, 20, 20} {
+		if !scroll.HandleScroll(ButtonRight) || scroll.ScrollLine != want {
+			t.Fatalf("Right = line %d, want %d (clamped to the last)", scroll.ScrollLine, want)
+		}
+	}
+	for _, want := range []int{13, 6, 0, 0} {
+		if !scroll.HandleScroll(ButtonLeft) || scroll.ScrollLine != want {
+			t.Fatalf("Left = line %d, want %d (clamped to the first)", scroll.ScrollLine, want)
+		}
+	}
+	// A body that shows one line pages by one, and so does one that has not
+	// been drawn yet.
+	scroll.SetScrollRows(1)
+	scroll.HandleScroll(ButtonRight)
+	scroll.SetScrollRows(0)
+	scroll.HandleScroll(ButtonRight)
+	if scroll.ScrollLine != 2 {
+		t.Fatalf("one-line pages reached line %d, want 2", scroll.ScrollLine)
+	}
+	// Paging stays within a body that fits.
+	scroll.SetScrollBounds(0)
+	scroll.SetScrollRows(8)
+	scroll.HandleScroll(ButtonRight)
+	if scroll.ScrollLine != 0 {
+		t.Fatalf("Right in a body that fits = line %d, want 0", scroll.ScrollLine)
+	}
+}
+
+// The rename prompts scroll with Up and Down and page with Left and Right,
+// and no scroll button confirms or skips.
+func TestRenamePromptPages(t *testing.T) {
+	model := NewRenameModel("Leafbound")
+	model.SetPrompt(RenameConfirmStates, "Save states", "Rename these state files?", []ListEntry{{Text: "a", Detail: "b"}})
+	model.SetScrollBounds(30)
+	model.SetScrollRows(8)
+	for _, step := range []struct {
+		button Button
+		line   int
+	}{{ButtonDown, 1}, {ButtonRight, 8}, {ButtonLeft, 1}, {ButtonUp, 0}} {
+		if got := model.Handle(press(step.button)); got != RenameIntentNone {
+			t.Fatalf("button %v intent = %v, want none", step.button, got)
+		}
+		if model.ScrollLine != step.line {
+			t.Fatalf("button %v = line %d, want %d", step.button, model.ScrollLine, step.line)
+		}
+	}
+}
+
+// Detail keeps Left and Right (and L1 and R1) for the images; only Up and
+// Down scroll the description there.
+func TestDetailLeftRightStillMoveTheImages(t *testing.T) {
+	model := NewDetailModel(DetailGame{Title: "Leafbound"})
+	model.SetReady("<p>One</p><p>Two</p>", nil, []string{"cover", "shot", "shot2"}, false, false)
+	model.SetScrollBounds(30)
+	model.SetScrollRows(8)
+	for _, step := range []struct {
+		button Button
+		image  int
+	}{{ButtonRight, 1}, {ButtonR1, 2}, {ButtonLeft, 1}, {ButtonL1, 0}} {
+		model.Handle(press(step.button))
+		if model.ImageIndex != step.image || model.ScrollLine != 0 {
+			t.Fatalf("button %v = image %d line %d, want image %d and no scroll",
+				step.button, model.ImageIndex, model.ScrollLine, step.image)
+		}
+	}
+	model.Handle(press(ButtonDown))
+	if model.ScrollLine != 1 || model.ImageIndex != 0 {
+		t.Fatalf("Down = line %d image %d, want line 1 and the same image", model.ScrollLine, model.ImageIndex)
+	}
 }

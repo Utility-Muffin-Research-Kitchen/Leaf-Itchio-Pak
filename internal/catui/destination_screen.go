@@ -61,8 +61,8 @@ func (screen *DestinationScreen) Draw() error {
 		return frame.Finish()
 	}
 	if screen.model.Phase == appui.DestinationConfirm {
-		if err := screen.ui.DrawScrollingBody(body, "Download to this location?",
-			screen.model.SummaryLines, &screen.model.BodyScroll); err != nil {
+		if err := screen.ui.DrawScrollingBlocks(body, "Download to this location?",
+			screen.model.Summary, &screen.model.BodyScroll); err != nil {
 			return err
 		}
 		return frame.Finish()

@@ -24,7 +24,7 @@ type RenameModel struct {
 	Title         string
 	Subtitle      string
 	Heading       string
-	Lines         []string
+	Entries       []ListEntry
 	Message       string
 	LibraryStatus string
 	BodyScroll
@@ -32,9 +32,9 @@ type RenameModel struct {
 
 func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: title} }
 
-func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, lines []string) {
+func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, entries []ListEntry) {
 	m.State, m.Subtitle, m.Heading = state, subtitle, heading
-	m.Lines = append([]string(nil), lines...)
+	m.Entries = append([]ListEntry(nil), entries...)
 	m.Message, m.LibraryStatus = "", ""
 	m.ResetScroll()
 }
@@ -64,7 +64,7 @@ func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 		return RenameIntentNone
 	}
 	switch event.Button {
-	case ButtonUp, ButtonDown:
+	case ButtonUp, ButtonDown, ButtonLeft, ButtonRight:
 		m.HandleScroll(event.Button)
 	case ButtonA:
 		return RenameIntentConfirm

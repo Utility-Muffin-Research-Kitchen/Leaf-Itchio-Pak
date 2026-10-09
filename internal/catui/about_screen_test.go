@@ -31,6 +31,24 @@ func TestAboutScrollsWithoutClosing(t *testing.T) {
 	}
 }
 
+// Left and Right page About by the lines that show at once and never close it.
+func TestAboutPagesWithLeftAndRight(t *testing.T) {
+	screen := &AboutScreen{}
+	screen.scroll.SetScrollBounds(20)
+	screen.scroll.SetScrollRows(6)
+	for _, step := range []struct {
+		button Button
+		line   int
+	}{{ButtonRight, 5}, {ButtonRight, 10}, {ButtonLeft, 5}} {
+		if screen.HandleInput(InputEvent{Button: step.button, Pressed: true}) {
+			t.Fatalf("button %d closed About", step.button)
+		}
+		if screen.scroll.ScrollLine != step.line {
+			t.Fatalf("button %d = line %d, want %d", step.button, screen.scroll.ScrollLine, step.line)
+		}
+	}
+}
+
 // D9: the repository is a caption under the QR code, not a body line, so
 // the body fits at the device's font size.
 func TestAboutLeavesTheRepositoryToTheQRCaption(t *testing.T) {

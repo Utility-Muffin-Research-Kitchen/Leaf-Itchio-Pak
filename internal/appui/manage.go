@@ -50,7 +50,7 @@ type ManageModel struct {
 	Cursor        int
 	VisibleRows   int
 	PromptTitle   string
-	PromptLines   []string
+	Prompt        []BodyBlock
 	Message       string
 	LibraryStatus string
 	// BodyScroll scrolls the confirm prompt and the result.
@@ -65,7 +65,7 @@ func (m *ManageModel) SetItems(subtitle string, items []ManageItem) {
 	m.State = ManageList
 	m.Subtitle = subtitle
 	m.Items = append([]ManageItem(nil), items...)
-	m.PromptTitle, m.PromptLines, m.Message, m.LibraryStatus = "", nil, "", ""
+	m.PromptTitle, m.Prompt, m.Message, m.LibraryStatus = "", nil, "", ""
 	m.ResetScroll()
 	if m.Cursor >= len(m.Items) {
 		m.Cursor = len(m.Items) - 1
@@ -75,10 +75,10 @@ func (m *ManageModel) SetItems(subtitle string, items []ManageItem) {
 	}
 }
 
-func (m *ManageModel) SetConfirm(title string, lines []string) {
+func (m *ManageModel) SetConfirm(title string, prompt []BodyBlock) {
 	m.State = ManageConfirm
 	m.PromptTitle = title
-	m.PromptLines = append([]string(nil), lines...)
+	m.Prompt = append([]BodyBlock(nil), prompt...)
 	m.Message, m.LibraryStatus = "", ""
 	m.ResetScroll()
 }
