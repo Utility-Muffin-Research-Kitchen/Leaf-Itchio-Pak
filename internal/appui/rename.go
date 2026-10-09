@@ -27,8 +27,7 @@ type RenameModel struct {
 	Lines         []string
 	Message       string
 	LibraryStatus string
-	ScrollLine    int
-	ScrollMax     int
+	BodyScroll
 }
 
 func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: title} }
@@ -36,7 +35,8 @@ func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: titl
 func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, lines []string) {
 	m.State, m.Subtitle, m.Heading = state, subtitle, heading
 	m.Lines = append([]string(nil), lines...)
-	m.Message, m.LibraryStatus, m.ScrollLine = "", "", 0
+	m.Message, m.LibraryStatus = "", ""
+	m.ResetScroll()
 }
 
 func (m *RenameModel) SetDone(message string) {
@@ -49,16 +49,6 @@ func (m *RenameModel) SetError(message string) {
 
 func (m *RenameModel) SetLibraryStatus(status string) { m.LibraryStatus = status }
 
-func (m *RenameModel) SetScrollBounds(maximum int) {
-	if maximum < 0 {
-		maximum = 0
-	}
-	m.ScrollMax = maximum
-	if m.ScrollLine > maximum {
-		m.ScrollLine = maximum
-	}
-}
-
 func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 	if !event.Pressed {
 		return RenameIntentNone
@@ -70,14 +60,8 @@ func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 		return RenameIntentNone
 	}
 	switch event.Button {
-	case ButtonUp:
-		if m.ScrollLine > 0 {
-			m.ScrollLine--
-		}
-	case ButtonDown:
-		if m.ScrollLine < m.ScrollMax {
-			m.ScrollLine++
-		}
+	case ButtonUp, ButtonDown:
+		m.HandleScroll(event.Button)
 	case ButtonA:
 		return RenameIntentConfirm
 	case ButtonB, ButtonQuit:

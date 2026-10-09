@@ -3,6 +3,7 @@ package catui
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -44,6 +45,11 @@ func RunInputFixture(config InputFixtureConfig) error {
 		return err
 	}
 
+	// A screen name ending in -end shows that screen's body scrolled to its
+	// last line, as Down does on the device.
+	var scrollToEnd bool
+	config.Screen, scrollToEnd = strings.CutSuffix(config.Screen, "-end")
+	var scroll *appui.BodyScroll
 	var draw func() error
 	var handleIntent func(InputEvent) bool
 	var closeScreen func()
@@ -111,6 +117,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		draw = screen.Draw
 		closeScreen = screen.Close
+		scroll = &model.BodyScroll
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DetailIntentBack
 		}
@@ -440,6 +447,13 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 	default:
 		return fmt.Errorf("unknown input fixture %q", config.Screen)
+	}
+	if scrollToEnd {
+		if scroll == nil {
+			return fmt.Errorf("input fixture %q does not scroll", config.Screen)
+		}
+		// The first draw clamps this to the body's last line.
+		scroll.ScrollLine = math.MaxInt32
 	}
 	if closeScreen != nil {
 		defer closeScreen()

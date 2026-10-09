@@ -50,7 +50,7 @@ func (screen *AboutScreen) Draw() error {
 	}
 	split := ListDetailSplit(frame.Layout.Content, 66, screen.ui.BasePadding)
 	if err := screen.ui.DrawScrollingBody(split.List.Content(), "Version "+screen.appVersion,
-		[]string{catAboutText, "Leaf " + screen.leafVersion, "Repository: scan the QR code"}, 0); err != nil {
+		[]string{catAboutText, "Leaf " + screen.leafVersion, "Repository: scan the QR code"}, nil); err != nil {
 		return err
 	}
 	if screen.qr != nil {

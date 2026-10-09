@@ -39,7 +39,8 @@ Owned. Owned requires signing in with itch.io.
 
 ## Detail and gallery
 
-Up/Down scrolls the description. Left/Right or L1/R1 moves through the cover,
+Up/Down scrolls the description, and a scrollbar at its right edge shows when
+there is more to read. Left/Right or L1/R1 moves through the cover,
 animated GIF, and screenshots. A begins the available download flow. X opens
 Manage when the game has installed files. Start opens Settings and B returns to
 the main list.

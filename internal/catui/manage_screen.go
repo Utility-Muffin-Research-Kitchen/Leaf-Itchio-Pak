@@ -57,13 +57,13 @@ func (screen *ManageScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	switch screen.model.State {
 	case appui.ManageConfirm:
-		err = screen.ui.DrawScrollingBody(body, screen.model.PromptTitle, screen.model.PromptLines, 0)
+		err = screen.ui.DrawScrollingBody(body, screen.model.PromptTitle, screen.model.PromptLines, nil)
 	case appui.ManageResult:
 		lines := []string{screen.model.Message}
 		if screen.model.LibraryStatus != "" {
 			lines = append(lines, screen.model.LibraryStatus)
 		}
-		err = screen.ui.DrawScrollingBody(body, "Changes complete", lines, 0)
+		err = screen.ui.DrawScrollingBody(body, "Changes complete", lines, nil)
 	case appui.ManageError:
 		err = screen.ui.DrawState(body, StateError, "Could not continue", screen.model.Message)
 	default:
