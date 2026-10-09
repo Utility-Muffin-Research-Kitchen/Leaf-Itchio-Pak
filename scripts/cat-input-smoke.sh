@@ -35,6 +35,7 @@ capture signin-done 960 720 1 0
 capture signin-qr-failed 960 720 1 2
 capture signin-checking 960 720 1 2
 capture signin-warning 960 720 1 2
+capture signin-warning 1280 800 0 5
 capture detail-signin 960 720 1 0
 capture detail-not-owned 960 720 1 2
 capture filter 1280 800 0 5
@@ -70,6 +71,10 @@ capture download-progress 960 720 1 0
 capture download-progress 1280 800 0 5
 capture download-done 960 720 1 0
 capture download-done 960 720 1 2
+capture download-done-long 960 720 1 0
+capture download-done-long 960 720 1 2
+capture download-done-long 1280 800 0 5
+capture download-done-long-end 960 720 1 2
 capture download-error 960 720 1 0
 capture download-error 960 720 1 2
 capture download-stalled 960 720 1 2
@@ -89,6 +94,10 @@ capture destination-confirm 960 720 1 0
 capture manage-list 960 720 1 0
 capture manage-list 1280 800 0 5
 capture manage-confirm 960 720 1 0
+capture manage-delete-long 960 720 1 0
+capture manage-delete-long 960 720 1 2
+capture manage-delete-long 1280 800 0 5
+capture manage-delete-long-end 960 720 1 2
 capture manage-list 960 720 1 2
 capture manage-leftover 960 720 1 2
 capture manage-result 960 720 1 0

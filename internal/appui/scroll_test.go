@@ -60,6 +60,160 @@ func scrollsOnce[I comparable](t *testing.T, name string, scroll *BodyScroll, ha
 	scroll.HandleScroll(ButtonDown)
 }
 
+func TestManagePromptAndResultScroll(t *testing.T) {
+	model := NewManageModel("Leafbound")
+	model.SetConfirm("Delete 31 managed files?", []string{"01 Theme.ogg", "Primary SD / Music/01 Theme.ogg"})
+	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonA)); got != ManageIntentConfirm {
+		t.Fatalf("confirm A = %v, want confirm", got)
+	}
+	if got := model.Handle(press(ButtonB)); got != ManageIntentCancel {
+		t.Fatalf("confirm B = %v, want cancel", got)
+	}
+	model.SetConfirm("Delete selected file?", []string{"Leafbound.gbc"})
+	if model.ScrollLine != 0 {
+		t.Fatalf("new prompt kept line %d", model.ScrollLine)
+	}
+	model.SetResult("Deleted 31 managed file(s).")
+	if model.ScrollLine != 0 {
+		t.Fatal("result kept the prompt's scroll line")
+	}
+	scrollsOnce(t, "result", &model.BodyScroll, model.Handle)
+	model.SetLibraryStatus("Leaf library rescan queued.")
+	if model.ScrollLine != 1 {
+		t.Fatalf("library status moved the result to line %d", model.ScrollLine)
+	}
+	if got := model.Handle(press(ButtonA)); got != ManageIntentBack {
+		t.Fatalf("result A = %v, want back", got)
+	}
+	model.SetItems("1 managed file", []ManageItem{{Label: "a"}, {Label: "b"}})
+	model.Handle(press(ButtonDown))
+	if model.Cursor != 1 || model.ScrollLine != 0 {
+		t.Fatalf("list Down = cursor %d line %d, want the cursor to move", model.Cursor, model.ScrollLine)
+	}
+}
+
+func TestSettingsPromptScrolls(t *testing.T) {
+	model := NewSettingsModel("Settings")
+	model.SetRows("", []SettingsRow{{Label: "a"}, {Label: "b"}})
+	model.SetConfirm("Sign out of itch.io?", []string{"Owned-game data on this device is cleared."})
+	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonA)); got != SettingsIntentConfirm {
+		t.Fatalf("confirm A = %v, want confirm", got)
+	}
+	if got := model.Handle(press(ButtonB)); got != SettingsIntentCancel {
+		t.Fatalf("confirm B = %v, want cancel", got)
+	}
+	model.SetConfirm("Reset remembered folders?", nil)
+	if model.ScrollLine != 0 {
+		t.Fatalf("new prompt kept line %d", model.ScrollLine)
+	}
+}
+
+func TestDownloadScreensScroll(t *testing.T) {
+	done := &DownloadProgressModel{State: DownloadProgressDone, SavedPaths: []string{"a.ogg"}}
+	scrollsOnce(t, "done", &done.BodyScroll, done.Handle)
+	if got := done.Handle(press(ButtonA)); got != DownloadProgressIntentBack {
+		t.Fatalf("done A = %v, want back", got)
+	}
+	blocked := &DownloadProgressModel{State: DownloadProgressInhibitBlocked}
+	scrollsOnce(t, "inhibit", &blocked.BodyScroll, blocked.Handle)
+	if got := blocked.Handle(press(ButtonA)); got != DownloadProgressIntentContinue {
+		t.Fatalf("inhibit A = %v, want continue", got)
+	}
+	if got := blocked.Handle(press(ButtonB)); got != DownloadProgressIntentBack {
+		t.Fatalf("inhibit B = %v, want back", got)
+	}
+
+	selection := NewDownloadSelectModel("Leafbound")
+	selection.SetError("Can't reach itch.io. Check the connection and try again.")
+	scrollsOnce(t, "select error", &selection.BodyScroll, selection.Handle)
+	if got := selection.Handle(press(ButtonA)); got != DownloadSelectIntentBack {
+		t.Fatalf("select error A = %v, want back", got)
+	}
+	selection.SetHandoff("Choose where to save the soundtrack.")
+	if selection.ScrollLine != 0 {
+		t.Fatalf("handoff kept line %d", selection.ScrollLine)
+	}
+	scrollsOnce(t, "handoff", &selection.BodyScroll, selection.Handle)
+	selection.SetError("Another error.")
+	if selection.ScrollLine != 0 {
+		t.Fatalf("new error kept line %d", selection.ScrollLine)
+	}
+}
+
+// The progress screen takes a new snapshot of the download on every pass.
+// The body keeps its place while the state stays, and starts over when it
+// changes.
+func TestDownloadProgressSnapshotKeepsScrollInTheSameState(t *testing.T) {
+	model := &DownloadProgressModel{State: DownloadProgressDone, SavedPaths: []string{"a.ogg"}}
+	model.SetScrollBounds(4)
+	model.Handle(press(ButtonDown))
+	model.Handle(press(ButtonDown))
+	model.Apply(DownloadProgressModel{State: DownloadProgressDone, SavedPaths: []string{"a.ogg"},
+		LibraryStatus: "Leaf library rescan requested."})
+	if model.ScrollLine != 2 || model.LibraryStatus == "" {
+		t.Fatalf("same-state snapshot = line %d status %q, want line 2 and the new status",
+			model.ScrollLine, model.LibraryStatus)
+	}
+	model.Apply(DownloadProgressModel{State: DownloadProgressError, Detail: "Download failed."})
+	if model.ScrollLine != 0 || model.State != DownloadProgressError {
+		t.Fatalf("new-state snapshot = line %d state %v, want line 0", model.ScrollLine, model.State)
+	}
+}
+
+func TestDestinationPromptsScroll(t *testing.T) {
+	model := NewDestinationModel("Leafbound")
+	model.SetConfirm("Confirm download destination", "Primary SD", []string{"Roms/GBC/Leafbound.gbc", "Roms/GBC"})
+	scrollsOnce(t, "confirm", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonA)); got != DestinationIntentActivate {
+		t.Fatalf("confirm A = %v, want activate", got)
+	}
+	model.SetError("The SD card was removed.")
+	if model.ScrollLine != 0 {
+		t.Fatalf("error kept line %d", model.ScrollLine)
+	}
+	scrollsOnce(t, "error", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonA)); got != DestinationIntentBack {
+		t.Fatalf("error A = %v, want back", got)
+	}
+	model.SetConfirm("Confirm download destination", "Primary SD", nil)
+	if model.ScrollLine != 0 {
+		t.Fatalf("new prompt kept line %d", model.ScrollLine)
+	}
+}
+
+func TestRenameCompleteScrolls(t *testing.T) {
+	model := NewRenameModel("Leafbound")
+	model.SetPrompt(RenameConfirmSaves, "Save files", "Rename these save files?", []string{"a", "b"})
+	model.SetScrollBounds(2)
+	model.Handle(press(ButtonDown))
+	model.SetDone("ROM renamed, 1 save, 2 state files.")
+	if model.ScrollLine != 0 {
+		t.Fatalf("result kept the prompt's line %d", model.ScrollLine)
+	}
+	scrollsOnce(t, "done", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonB)); got != RenameIntentBack {
+		t.Fatalf("done B = %v, want back", got)
+	}
+}
+
+func TestSignInWarningAndCodeScroll(t *testing.T) {
+	model := &SignInModel{State: SignInWarning}
+	scrollsOnce(t, "warning", &model.BodyScroll, model.Handle)
+	if got := model.Handle(press(ButtonA)); got != SignInIntentAccept {
+		t.Fatalf("warning A = %v, want accept", got)
+	}
+	if got := model.Handle(press(ButtonB)); got != SignInIntentBack {
+		t.Fatalf("warning B = %v, want back", got)
+	}
+	code := &SignInModel{State: SignInWaiting, UserCode: "KXR4-7PLM"}
+	scrollsOnce(t, "code", &code.BodyScroll, code.Handle)
+	if got := code.Handle(press(ButtonB)); got != SignInIntentCancel {
+		t.Fatalf("code B = %v, want cancel", got)
+	}
+}
+
 func TestDetailStartsANewBodyAtTheTop(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Leafbound", Downloaded: true})
 	model.SetReady("<p>One</p><p>Two</p>", nil, nil, false, false)

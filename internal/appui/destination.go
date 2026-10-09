@@ -42,6 +42,8 @@ type DestinationModel struct {
 	VisibleRows  int
 	ErrorDetail  string
 	SummaryLines []string
+	// BodyScroll scrolls the confirm summary and the error.
+	BodyScroll
 }
 
 func NewDestinationModel(title string) *DestinationModel {
@@ -56,6 +58,7 @@ func (m *DestinationModel) SetSources(items []DestinationItem) {
 	m.SummaryLines = nil
 	m.Cursor = firstEnabledDestination(items)
 	m.ErrorDetail = ""
+	m.ResetScroll()
 }
 
 func (m *DestinationModel) SetFolders(subtitle, path string, items []DestinationItem) {
@@ -65,6 +68,7 @@ func (m *DestinationModel) SetFolders(subtitle, path string, items []Destination
 	m.SummaryLines = nil
 	m.Cursor = 0
 	m.ErrorDetail = ""
+	m.ResetScroll()
 }
 
 func (m *DestinationModel) SetConfirm(subtitle, path string, lines []string) {
@@ -74,11 +78,13 @@ func (m *DestinationModel) SetConfirm(subtitle, path string, lines []string) {
 	m.SummaryLines = append([]string(nil), lines...)
 	m.Cursor = 0
 	m.ErrorDetail = ""
+	m.ResetScroll()
 }
 
 func (m *DestinationModel) SetError(detail string) {
 	m.Phase = DestinationError
 	m.ErrorDetail = detail
+	m.ResetScroll()
 }
 
 func (m *DestinationModel) Handle(event InputEvent) DestinationIntent {
@@ -92,12 +98,14 @@ func (m *DestinationModel) Handle(event InputEvent) DestinationIntent {
 		if event.Button == ButtonA {
 			return DestinationIntentBack
 		}
+		m.HandleScroll(event.Button)
 		return DestinationIntentNone
 	}
 	if m.Phase == DestinationConfirm {
 		if event.Button == ButtonA {
 			return DestinationIntentActivate
 		}
+		m.HandleScroll(event.Button)
 		return DestinationIntentNone
 	}
 	page := m.VisibleRows

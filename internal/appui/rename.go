@@ -41,6 +41,7 @@ func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, lin
 
 func (m *RenameModel) SetDone(message string) {
 	m.State, m.Subtitle, m.Message, m.LibraryStatus = RenameDone, "Rename complete", message, ""
+	m.ResetScroll()
 }
 
 func (m *RenameModel) SetError(message string) {
@@ -56,6 +57,9 @@ func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 	if m.State == RenameDone || m.State == RenameError {
 		if event.Button == ButtonA || event.Button == ButtonB || event.Button == ButtonQuit {
 			return RenameIntentBack
+		}
+		if m.State == RenameDone {
+			m.HandleScroll(event.Button)
 		}
 		return RenameIntentNone
 	}

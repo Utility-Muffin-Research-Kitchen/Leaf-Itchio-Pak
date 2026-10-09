@@ -50,7 +50,7 @@ func (screen *SettingsScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	switch screen.model.State {
 	case appui.SettingsConfirm:
-		err = screen.ui.DrawScrollingBody(body, screen.model.PromptTitle, screen.model.PromptLines, nil)
+		err = screen.ui.DrawScrollingBody(body, screen.model.PromptTitle, screen.model.PromptLines, &screen.model.BodyScroll)
 	case appui.SettingsMessage:
 		err = screen.ui.DrawState(body, StateEmpty, "Settings updated", screen.model.Message)
 	case appui.SettingsError:

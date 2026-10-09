@@ -60,9 +60,9 @@ func (screen *DownloadSelectScreen) Draw() error {
 	case appui.DownloadSelectLoading:
 		err = screen.ui.DrawState(body, StateLoading, "Finding available files", "Contacting itch.io…")
 	case appui.DownloadSelectError:
-		err = screen.ui.DrawScrollingBody(body, "Could not continue", []string{screen.model.Message}, nil)
+		err = screen.ui.DrawScrollingBody(body, "Could not continue", []string{screen.model.Message}, &screen.model.BodyScroll)
 	case appui.DownloadSelectHandoff:
-		err = screen.ui.DrawScrollingBody(body, "Next download step", []string{screen.model.Message}, nil)
+		err = screen.ui.DrawScrollingBody(body, "Next download step", []string{screen.model.Message}, &screen.model.BodyScroll)
 	default:
 		geometry := FitScrollingList(frame.Layout.Content,
 			screen.ctx.FontHeight(FontMedium)+screen.ctx.Scale(18), len(screen.model.Choices), 0)
@@ -171,9 +171,10 @@ func (screen *DownloadProgressScreen) Draw() error {
 		if screen.model.LibraryStatus != "" {
 			lines = append(lines, screen.model.LibraryStatus)
 		}
-		err = screen.ui.DrawScrollingBody(body, "Download complete", lines, nil)
+		err = screen.ui.DrawScrollingBody(body, "Download complete", lines, &screen.model.BodyScroll)
 	case appui.DownloadProgressInhibitBlocked:
-		err = screen.ui.DrawScrollingBody(body, "Suspend protection unavailable", []string{screen.model.Detail}, nil)
+		err = screen.ui.DrawScrollingBody(body, "Suspend protection unavailable", []string{screen.model.Detail},
+			&screen.model.BodyScroll)
 	case appui.DownloadProgressCancelled:
 		err = screen.ui.DrawState(body, StateOffline, "Download cancelled", screen.model.Detail)
 	default:

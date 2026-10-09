@@ -50,7 +50,7 @@ func (screen *RenameScreen) Draw() error {
 		if screen.model.LibraryStatus != "" {
 			lines = append(lines, screen.model.LibraryStatus)
 		}
-		err = screen.ui.DrawScrollingBody(body, "Rename complete", lines, nil)
+		err = screen.ui.DrawScrollingBody(body, "Rename complete", lines, &screen.model.BodyScroll)
 	case appui.RenameError:
 		err = screen.ui.DrawState(body, StateError, "Rename failed", screen.model.Message)
 	default:
