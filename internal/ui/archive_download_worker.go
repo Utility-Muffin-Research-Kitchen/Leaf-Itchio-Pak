@@ -675,7 +675,7 @@ func (s *ArchiveDownloadWorker) romDest(baseName string) string {
 // "Use original name" restores this name.
 func archiveROMName(baseName string) string {
 	ext := strings.ToLower(roms.ROMExt(baseName))
-	stem := strings.TrimSuffix(baseName, roms.ROMExt(baseName))
+	stem := roms.TrimROMExt(baseName)
 	if safeName := roms.SanitiseFilename(stem, ext); safeName != "" {
 		return safeName
 	}

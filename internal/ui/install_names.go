@@ -64,7 +64,7 @@ func (n *installNamer) superseded(file inventory.DownloadedFile) bool {
 		return false
 	}
 	name := file.UploadName()
-	stem := strings.TrimSuffix(name, roms.ROMExt(name))
+	stem := roms.TrimROMExt(name)
 	for _, listed := range n.listing.Uploads {
 		if file.UploadID != "" && listed.UploadID == file.UploadID || listed.Filename == name || listed.Filename == stem {
 			return false
@@ -129,7 +129,7 @@ func (n *installNamer) uploadStem() string {
 	if isArchive(n.upload) {
 		return strings.TrimSuffix(n.upload, filepath.Ext(n.upload))
 	}
-	return strings.TrimSuffix(n.upload, roms.ROMExt(n.upload))
+	return roms.TrimROMExt(n.upload)
 }
 
 // ownName returns path when this install may write it. Otherwise it returns
@@ -142,7 +142,7 @@ func (n *installNamer) ownName(path string) (string, error) {
 	}
 	base := filepath.Base(path)
 	ext := roms.ROMExt(base)
-	prefix := strings.TrimSuffix(base, ext)
+	prefix := roms.TrimROMExt(base)
 	if title := roms.SanitiseFilename(n.title, ""); title != "" {
 		prefix = title + " - " + prefix
 	}

@@ -35,6 +35,10 @@ type CatManageFlow struct {
 const (
 	filesChanged  = "Your files changed in the meantime. Go back and try again."
 	notOnLeafCard = "This file isn't on an SD card Leaf uses."
+
+	// pico8SetKeepsNames is why a file of a Pico-8 game that came in several
+	// files cannot be renamed; see inventory.Entry.InPico8Set.
+	pico8SetKeepsNames = "Files of a multi-file Pico-8 game keep their original names, so the game still finds them."
 )
 
 // nameTakenError stops a rename onto a name another file has.
@@ -114,7 +118,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 	})
 	for _, index := range romIndices {
 		file := entry.Files[index]
-		if !roms.SupportsUnifiedNaming(file.DestPath) {
+		if !roms.SupportsUnifiedNaming(file.DestPath) || entry.InPico8Set(file) {
 			continue
 		}
 		// Offer a rename only when it changes the name. FAT32 ignores
@@ -531,6 +535,9 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 		return nil, nil, screentext.Wrap(fmt.Errorf("managed ROM is no longer in the inventory"), filesChanged)
 	}
 	file := entry.Files[fileIndex]
+	if entry.InPico8Set(file) {
+		return nil, nil, screentext.New(pico8SetKeepsNames)
+	}
 	if !roms.SupportsUnifiedNaming(file.DestPath) {
 		return nil, nil, screentext.New("PlayStation disc files keep their original names, so the game still finds them.")
 	}
@@ -757,8 +764,8 @@ func discoverRenamePairs(root, oldBase, newBase string, states bool) ([]renamePa
 	if root == "" {
 		return nil, nil
 	}
-	oldStem := strings.TrimSuffix(oldBase, roms.ROMExt(oldBase))
-	newStem := strings.TrimSuffix(newBase, roms.ROMExt(newBase))
+	oldStem := roms.TrimROMExt(oldBase)
+	newStem := roms.TrimROMExt(newBase)
 	dirs := []string{root}
 	entries, err := os.ReadDir(root)
 	if err != nil {

@@ -60,6 +60,13 @@ func romFileExt(filename string) string {
 	return filepath.Ext(filename)
 }
 
+// trimROMFileExt returns filename without romFileExt. The ".p8.png" it
+// reports is in lower case whatever the name's case, so the cut goes by
+// length: strings.TrimSuffix would leave "GAME.P8.PNG" whole.
+func trimROMFileExt(filename string) string {
+	return filename[:len(filename)-len(romFileExt(filename))]
+}
+
 type DownloadedFile struct {
 	UpdatedAt         time.Time `json:"updated_at,omitempty"`
 	ContentKind       string    `json:"content_kind"`
@@ -809,7 +816,7 @@ func fileMatchesUpload(file DownloadedFile, upload UpstreamFile) bool {
 		if name == "" {
 			continue
 		}
-		stem := strings.TrimSuffix(name, romFileExt(name))
+		stem := trimROMFileExt(name)
 		if name == upload.Filename || stem == upload.Filename ||
 			(upload.DisplayName != "" && (name == upload.DisplayName || stem == upload.DisplayName)) {
 			return true

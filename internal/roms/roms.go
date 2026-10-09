@@ -17,6 +17,18 @@ func ROMExt(filename string) string {
 	return filepath.Ext(filename)
 }
 
+// TrimROMExt returns filename without its ROM extension, keeping the case of
+// the rest of the name. ROMExt reports ".p8.png" in lower case whatever the
+// case of the name, so strings.TrimSuffix(name, ROMExt(name)) leaves
+// "GAME.P8.PNG" whole; this cuts by length, which is right for any case.
+func TrimROMExt(filename string) string {
+	ext := ROMExt(filename)
+	if cut := len(filename) - len(ext); cut >= 0 && strings.EqualFold(filename[cut:], ext) {
+		return filename[:cut]
+	}
+	return filename
+}
+
 type Upload struct {
 	UploadFingerprint string // metadata captured when this version was selected
 	Filename          string
@@ -281,7 +293,7 @@ func ArtworkPath(romDestPath string) string {
 	if dir == "" {
 		return ""
 	}
-	base := strings.TrimSuffix(filepath.Base(romDestPath), ROMExt(romDestPath))
+	base := TrimROMExt(filepath.Base(romDestPath))
 	return filepath.Join(dir, base+".png")
 }
 
