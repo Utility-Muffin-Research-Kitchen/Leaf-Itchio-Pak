@@ -90,8 +90,8 @@ func TestCatROMDestinationSecondarySubfolder(t *testing.T) {
 	if err != nil || complete || model.Phase != appui.DestinationConfirm {
 		t.Fatalf("summary = %v, state %v, %v", complete, model.Phase, err)
 	}
-	if len(model.SummaryLines) < 1 || model.SummaryLines[0] != "Roms/GBC/RPG/game.gbc" {
-		t.Fatalf("destination summary = %v", model.SummaryLines)
+	if got := summaryPaths(model); len(got) < 1 || got[0] != "Roms/GBC/RPG/game.gbc" {
+		t.Fatalf("destination summary = %q", got)
 	}
 	complete, err = flow.Activate(model)
 	if err != nil || !complete {
@@ -370,8 +370,8 @@ func TestCatROMDestinationConfirmShowsTheInstalledName(t *testing.T) {
 			if complete, err := flow.Activate(model); err != nil || complete || model.Phase != appui.DestinationConfirm {
 				t.Fatalf("summary = %v, state %v, %v", complete, model.Phase, err)
 			}
-			if len(model.SummaryLines) == 0 || model.SummaryLines[0] != tc.want {
-				t.Fatalf("confirm lines = %q, want %q first", model.SummaryLines, tc.want)
+			if got := summaryPaths(model); len(got) == 0 || got[0] != tc.want {
+				t.Fatalf("confirm lines = %q, want %q first", got, tc.want)
 			}
 			if complete, err := flow.Activate(model); err != nil || !complete {
 				t.Fatalf("confirm = %v, %v", complete, err)
@@ -389,4 +389,19 @@ func TestCatROMDestinationConfirmShowsTheInstalledName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// summaryPaths is the destination summary's text in order: each file's
+// path and each folder line.
+func summaryPaths(model *appui.DestinationModel) []string {
+	var lines []string
+	for _, block := range model.Summary {
+		if !block.IsList() {
+			lines = append(lines, block.Text)
+		}
+		for _, entry := range block.Entries {
+			lines = append(lines, entry.Text)
+		}
+	}
+	return lines
 }

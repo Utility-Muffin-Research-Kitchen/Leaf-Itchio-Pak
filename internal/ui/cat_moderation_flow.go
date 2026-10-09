@@ -72,7 +72,7 @@ func newCatTagFlow(cfg *settings.Config, cfgPath, title string, tags []string,
 
 func (flow *CatTagFlow) Refresh(model *appui.SettingsModel) {
 	rows := []appui.SettingsRow{{
-		Key: appui.SettingsTagMaster, Label: "All category tags", Value: blockedAllowed(flow.category.Enabled), ActionEnabled: true,
+		Key: appui.SettingsTagMaster, Label: "All Category Tags", Value: blockedAllowed(flow.category.Enabled), ActionEnabled: true,
 	}}
 	for index, tag := range flow.tags {
 		blocked := flow.category.Enabled && !slices.Contains(flow.category.Disabled, tag)

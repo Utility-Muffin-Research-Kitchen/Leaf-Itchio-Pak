@@ -24,10 +24,10 @@ func leftOverActionText(t *testing.T, inv *inventory.Inventory, invPath string, 
 			continue
 		}
 		model.Cursor = index
-		if _, _, err := flow.Activate(model); err != nil || model.State != appui.ManageConfirm || len(model.PromptLines) == 0 {
+		if _, _, err := flow.Activate(model); err != nil || model.State != appui.ManageConfirm || len(model.Prompt) == 0 {
 			t.Fatalf("left-over action = state %v, %v", model.State, err)
 		}
-		return item.Label + " / " + item.Badge, item.Detail, model.PromptLines[0]
+		return item.Label + " / " + item.Badge, item.Detail, model.Prompt[0].Text
 	}
 	t.Fatalf("no left-over row in %+v", model.Items)
 	return "", "", ""

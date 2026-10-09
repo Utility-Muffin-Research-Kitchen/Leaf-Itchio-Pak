@@ -80,6 +80,8 @@ type SettingsModel struct {
 	PromptTitle string
 	PromptLines []string
 	Message     string
+	// BodyScroll scrolls the confirm prompt.
+	BodyScroll
 }
 
 func NewSettingsModel(title string) *SettingsModel {
@@ -90,6 +92,7 @@ func (m *SettingsModel) SetRows(subtitle string, rows []SettingsRow) {
 	m.State, m.Subtitle = SettingsList, subtitle
 	m.Rows = append([]SettingsRow(nil), rows...)
 	m.PromptTitle, m.PromptLines, m.Message = "", nil, ""
+	m.ResetScroll()
 	if len(m.Rows) == 0 {
 		m.Cursor = 0
 	} else if m.Cursor >= len(m.Rows) {
@@ -109,6 +112,7 @@ func (m *SettingsModel) Selected() (SettingsRow, bool) {
 func (m *SettingsModel) SetConfirm(title string, lines []string) {
 	m.State, m.PromptTitle = SettingsConfirm, title
 	m.PromptLines = append([]string(nil), lines...)
+	m.ResetScroll()
 }
 
 func (m *SettingsModel) SetMessage(message string) {
@@ -130,6 +134,7 @@ func (m *SettingsModel) Handle(event InputEvent) SettingsIntent {
 		case ButtonB, ButtonQuit:
 			return SettingsIntentCancel
 		}
+		m.HandleScroll(event.Button)
 		return SettingsIntentNone
 	}
 	if m.State == SettingsWorking {
