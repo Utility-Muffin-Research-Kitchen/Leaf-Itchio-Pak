@@ -117,9 +117,15 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 		if !roms.SupportsUnifiedNaming(file.DestPath) {
 			continue
 		}
-		label := "Use title for " + filepath.Base(file.DestPath)
+		// Offer a rename only when it changes the name. FAT32 ignores
+		// letter case, so a case-only change is no rename either.
+		current := filepath.Base(file.DestPath)
+		label, target := "Use title for "+current, filepath.Base(roms.UnifiedTarget(file.DestPath, entry.Title))
 		if file.UnifiedName {
-			label = "Restore upload name for " + filepath.Base(file.DestPath)
+			label, target = "Use original name for "+current, originalName(file)
+		}
+		if target == "" || target == "." || strings.EqualFold(target, current) {
+			continue
 		}
 		items = append(items, appui.ManageItem{
 			Kind: appui.ManageItemRename, Label: label, Badge: "RENAME",
@@ -134,11 +140,43 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 // one title name. It names the member by its file name, as the member picker
 // does; archive folders can be long enough to push the name off the row.
 func memberNote(member, installedName string) string {
-	base := path.Base(strings.ReplaceAll(member, "\\", "/"))
+	base := memberBase(member)
 	if member == "" || strings.EqualFold(base, installedName) {
 		return ""
 	}
 	return "From " + base
+}
+
+// memberBase is the file name of an archive member. Archives made on
+// Windows can separate folders with backslashes.
+func memberBase(member string) string {
+	return path.Base(strings.ReplaceAll(member, "\\", "/"))
+}
+
+// originalName is the name a ROM had before a rename to the game's title,
+// or "" when it is not known. For a file downloaded on its own it is the
+// upload's name. For a file from an archive it is the name an install with
+// Rename ROM Files off gives its member; archive records from before
+// members were recorded have none.
+func originalName(file inventory.DownloadedFile) string {
+	name := filepath.Base(file.Filename)
+	if file.SourceArchive != "" {
+		if file.SourceMember == "" {
+			return ""
+		}
+		name = memberBase(file.SourceMember)
+		// The install named a member whose name does not say what it is,
+		// such as extra.dat, by the extension its first bytes showed. No
+		// rename changes an extension, so the file still has that one.
+		if ext := roms.ROMExt(filepath.Base(file.DestPath)); !strings.EqualFold(roms.ROMExt(name), ext) {
+			name = strings.TrimSuffix(name, filepath.Ext(name)) + ext
+		}
+		name = archiveROMName(name)
+	}
+	if name == "" || name == "." || name == ".." || name == "/" || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 func (flow *CatManageFlow) indicesAvailable(indices []int) bool {
@@ -518,14 +556,15 @@ func NewCatRenameFlow(inv *inventory.Inventory, inventoryPath, gameURL string, f
 	if flow.enable {
 		flow.targetPath, _ = roms.ResolveUnifiedDest(file.DestPath, entry.Title)
 	} else {
-		name := filepath.Base(file.Filename)
-		if name == "." || name == string(filepath.Separator) || name == "" {
-			return nil, nil, screentext.Wrap(fmt.Errorf("original upload name is not safe"),
-				"The original upload name can't be used as a file name.")
+		name := originalName(file)
+		if name == "" {
+			return nil, nil, screentext.Wrap(fmt.Errorf("original name is unknown or not a file name"),
+				"This ROM's original name isn't known.")
 		}
 		flow.targetPath = filepath.Join(filepath.Dir(file.DestPath), name)
 	}
-	if filepath.Clean(flow.targetPath) == filepath.Clean(file.DestPath) {
+	// Manage offers no rename that keeps the name; this guards the flow.
+	if roms.SameFAT32Path(flow.targetPath, file.DestPath) {
 		return nil, nil, screentext.New("This ROM already has that name.")
 	}
 	if _, err := leaf.RelativeWithin(source.Root, flow.targetPath); err != nil {
