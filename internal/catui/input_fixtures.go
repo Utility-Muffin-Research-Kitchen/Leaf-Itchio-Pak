@@ -533,7 +533,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		closeScreen = screen.Close
 		scroll = &screen.scroll
 		handleIntent = func(event InputEvent) bool { return !screen.HandleInput(event) }
-	case "signin", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
+	case "signin", "signin-starting", "signin-error", "signin-done", "signin-qr-failed", "signin-checking", "signin-warning", "detail-signin", "detail-not-owned":
 		model := &appui.SignInModel{
 			State: appui.SignInWaiting, UserCode: "KXR4-7PLM",
 			QRURL:   "https://itch.io/user/oauth/device?code=fixture-signin-request",
@@ -545,6 +545,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.Heading, model.Detail = "The code expired", "Press A for a new code."
 		case "signin-done":
 			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned games found."
+		case "signin-starting":
+			model.State = appui.SignInStarting
 		case "signin-checking":
 			model.State = appui.SignInChecking
 		case "signin-warning":
