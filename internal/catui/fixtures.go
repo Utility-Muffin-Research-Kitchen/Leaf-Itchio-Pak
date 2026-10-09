@@ -199,7 +199,7 @@ func drawOverlayFixture(ui *Composer) error {
 	if err := ui.DrawScrollingBody(body, "A clipped, full-width scrolling body", []string{
 		"Remote descriptions wrap inside cat_box_content and remain clipped to their final-pixel viewport.",
 		"The overlay examples below use named modal padding and live Catastrophe theme roles.",
-	}, 0); err != nil {
+	}, nil); err != nil {
 		return err
 	}
 	overlayTop := body.Y + body.H*42/100

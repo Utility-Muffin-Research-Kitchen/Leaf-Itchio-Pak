@@ -644,7 +644,7 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 			}()
 		}
 		snapshot.LibraryStatus = downloadLibraryStatus
-		*downloadProgressModel = snapshot
+		downloadProgressModel.Apply(snapshot)
 	}
 	var startDownloadPlan func(*ui.CatDownloadPlan) error
 	var handleArchiveAction func(ui.CatArchiveAction) error

@@ -40,6 +40,8 @@ type SignInModel struct {
 	// QRFailed is set by the screen when it cannot draw the QR code. itch.io
 	// has no manual code entry, so A then asks for a new code.
 	QRFailed bool
+	// BodyScroll scrolls the warning and the code's instructions.
+	BodyScroll
 }
 
 func NewSignInModel() *SignInModel { return &SignInModel{State: SignInStarting} }
@@ -68,12 +70,16 @@ func (m *SignInModel) Handle(event InputEvent) SignInIntent {
 		if back {
 			return SignInIntentBack
 		}
+		m.HandleScroll(event.Button)
 	case SignInStarting, SignInWaiting:
 		if back {
 			return SignInIntentCancel
 		}
 		if m.State == SignInWaiting && m.QRFailed && event.Button == ButtonA {
 			return SignInIntentRetry
+		}
+		if m.State == SignInWaiting && !m.QRFailed {
+			m.HandleScroll(event.Button)
 		}
 	case SignInChecking:
 		if back {

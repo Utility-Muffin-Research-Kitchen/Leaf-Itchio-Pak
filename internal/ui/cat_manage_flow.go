@@ -221,20 +221,25 @@ func (flow *CatManageFlow) Activate(model *appui.ManageModel) (*CatRenameFlow, *
 		return nil, nil, nil
 	}
 	flow.pending = append([]int(nil), indices...)
-	lines := make([]string, 0, len(indices)*2+1)
+	// Each file is its name with its location under it, one entry after
+	// another, so a soundtrack of thirty tracks does not take a screen per
+	// ten.
+	var prompt []appui.BodyBlock
 	if item.Kind == appui.ManageItemDeleteLeftOver {
-		lines = append(lines, leftOverDetail)
+		prompt = append(prompt, appui.Paragraph(leftOverDetail))
 	}
+	files := make([]appui.ListEntry, 0, len(indices))
 	for _, index := range indices {
 		file := flow.entry.Files[index]
 		_, rel, _ := flow.resolveFile(file, false)
-		lines = append(lines, filepath.Base(file.DestPath), rel)
+		files = append(files, appui.ListEntry{Text: filepath.Base(file.DestPath), Detail: rel})
 	}
+	prompt = append(prompt, appui.ListBlock(files))
 	title := "Delete selected file?"
 	if len(indices) > 1 {
 		title = fmt.Sprintf("Delete %d managed files?", len(indices))
 	}
-	model.SetConfirm(title, lines)
+	model.SetConfirm(title, prompt)
 	return nil, nil, nil
 }
 
@@ -736,14 +741,16 @@ func (flow *CatRenameFlow) LibraryTitleGroups() []leaf.LibraryTitleGroup {
 		[]string{flow.renamedROMPath})
 }
 
-func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []string {
-	lines := make([]string, 0, len(pairs)*2)
+// displayPairs lists each file to rename as its current path, then the path
+// it becomes under it.
+func (flow *CatRenameFlow) displayPairs(pairs []renamePair) []appui.ListEntry {
+	entries := make([]appui.ListEntry, 0, len(pairs))
 	for _, pair := range pairs {
 		oldRel, _ := leaf.RelativeWithin(flow.source.Root, pair.oldPath)
 		newRel, _ := leaf.RelativeWithin(flow.source.Root, pair.newPath)
-		lines = append(lines, filepath.ToSlash(oldRel), "→ "+filepath.ToSlash(newRel))
+		entries = append(entries, appui.ListEntry{Text: filepath.ToSlash(oldRel), Detail: "→ " + filepath.ToSlash(newRel)})
 	}
-	return lines
+	return entries
 }
 
 func discoverRenamePairs(root, oldBase, newBase string, states bool) ([]renamePair, error) {

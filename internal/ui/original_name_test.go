@@ -106,8 +106,8 @@ func TestManageRestoresAnArchiveROMsOriginalName(t *testing.T) {
 	if err != nil || rename == nil {
 		t.Fatalf("rename = %v, %q", rename, screentext.FromError(err))
 	}
-	if len(renameModel.Lines) != 2 || renameModel.Lines[1] != "→ Roms/GB/Glory Hunters 2.0.1.gb" {
-		t.Fatalf("rename prompt = %q", renameModel.Lines)
+	if len(renameModel.Entries) != 1 || renameModel.Entries[0].Detail != "→ Roms/GB/Glory Hunters 2.0.1.gb" {
+		t.Fatalf("rename prompt = %+v", renameModel.Entries)
 	}
 	for _, want := range []appui.RenameState{appui.RenameConfirmSaves, appui.RenameConfirmStates, appui.RenameDone} {
 		if err := rename.Confirm(renameModel); err != nil || renameModel.State != want {
@@ -207,8 +207,8 @@ func TestManageOffersOnlyRenamesThatChangeTheName(t *testing.T) {
 			if err != nil || rename == nil {
 				t.Fatalf("rename = %v, %v", rename, err)
 			}
-			if want := "→ Roms/GB/" + tc.target; len(renameModel.Lines) != 2 || renameModel.Lines[1] != want {
-				t.Fatalf("rename prompt = %q, want %q", renameModel.Lines, want)
+			if want := "→ Roms/GB/" + tc.target; len(renameModel.Entries) != 1 || renameModel.Entries[0].Detail != want {
+				t.Fatalf("rename prompt = %+v, want %q", renameModel.Entries, want)
 			}
 			if err := rename.Confirm(renameModel); err != nil || renameModel.State != appui.RenameDone {
 				t.Fatalf("confirm = state %v, %v", renameModel.State, err)
