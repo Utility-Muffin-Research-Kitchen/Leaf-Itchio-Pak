@@ -235,6 +235,9 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			// .m3u launcher: collect .p8/.p8.png files, sort naturally, write
 			// <safe>.m3u inside the game directory. Leaf does not read it for
 			// Pico-8, which is why the 7z path writes none; see extractPico8_7z.
+			// Each entry is the cart's path relative to the playlist, with
+			// forward slashes, as an .m3u file has it. Bare names would list
+			// the carts of subfolders under the same name twice.
 			safe := roms.SanitiseFilename(s.game.Title, "")
 			if safe == "" {
 				safe = "Unknown"
@@ -243,7 +246,11 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			for _, dest := range s.extracted {
 				ext := strings.ToLower(roms.ROMExt(filepath.Base(dest)))
 				if ext == ".p8" || ext == ".p8.png" {
-					p8Files = append(p8Files, filepath.Base(dest))
+					rel, err := filepath.Rel(gameDir, dest)
+					if err != nil {
+						rel = filepath.Base(dest)
+					}
+					p8Files = append(p8Files, filepath.ToSlash(rel))
 				}
 			}
 			if len(p8Files) > 1 {
