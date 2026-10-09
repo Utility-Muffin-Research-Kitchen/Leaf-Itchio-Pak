@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
@@ -108,6 +110,57 @@ func TestCatManageDeletesSourceOwnedFile(t *testing.T) {
 	}
 	if flow.TakeLibraryScanRequest() {
 		t.Fatal("one deletion batch requested more than one library rescan")
+	}
+}
+
+// The delete prompt for a game with a long soundtrack is one list: each
+// file is its name with its location under it, so the body takes two lines
+// per file once it is laid out.
+func TestCatManageDeleteAllListsEachFileAsOneEntry(t *testing.T) {
+	sources, catalog, cfgPath := destinationFixture(t)
+	configureManageFixture(t, sources, catalog)
+	inv := &inventory.Inventory{Entries: make(map[string]*inventory.Entry)}
+	gameURL := "https://example.invalid/game"
+	addManagedROM(t, inv, gameURL, "Game", filepath.Join(sources[0].RomsPath, "GBC", "Game.gbc"))
+	album := filepath.Join(sources[0].MusicPath, "Game")
+	if err := os.MkdirAll(album, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for track := 1; track <= 30; track++ {
+		name := fmt.Sprintf("%02d Theme.ogg", track)
+		if err := os.WriteFile(filepath.Join(album, name), []byte("track"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inv.Add(gameURL, inventory.Entry{Title: "Game"}, inventory.DownloadedFile{
+			Filename: name, DestPath: filepath.Join(album, name), FileType: inventory.FileTypeMusic, SourceArchive: "game.zip",
+		})
+	}
+	flow, model, err := NewCatManageFlow(inv, cfgPath, gameURL, sources, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Cursor = -1
+	for index, item := range model.Items {
+		if item.Kind == appui.ManageItemDeleteAll {
+			model.Cursor = index
+		}
+	}
+	if model.Cursor < 0 {
+		t.Fatalf("items = %+v, want a delete-all action", model.Items)
+	}
+	if _, _, err := flow.Activate(model); err != nil {
+		t.Fatal(err)
+	}
+	if model.State != appui.ManageConfirm || model.PromptTitle != "Delete 31 managed files?" {
+		t.Fatalf("prompt = state %v %q", model.State, model.PromptTitle)
+	}
+	if len(model.Prompt) != 1 || !model.Prompt[0].IsList() || len(model.Prompt[0].Entries) != 31 {
+		t.Fatalf("prompt = %+v, want one list of 31 files", model.Prompt)
+	}
+	for _, entry := range model.Prompt[0].Entries {
+		if entry.Text == "" || strings.Contains(entry.Text, "/") || !strings.HasSuffix(entry.Detail, "/"+entry.Text) {
+			t.Fatalf("entry = %+v, want the file name, then its location ending in it", entry)
+		}
 	}
 }
 
@@ -278,11 +331,22 @@ func TestCatRenameKeepsSaveAndStatesOnROMSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Each file is its current path, then the path it becomes.
+	if want := []appui.ListEntry{{Text: "Roms/GBC/Original.gbc", Detail: "→ Roms/GBC/Leaf Title.gbc"}}; !reflect.DeepEqual(model.Entries, want) {
+		t.Fatalf("ROM prompt = %+v, want %+v", model.Entries, want)
+	}
 	if err := flow.Confirm(model); err != nil || model.State != appui.RenameConfirmSaves {
 		t.Fatalf("ROM confirm = state %v, %v", model.State, err)
 	}
+	if want := []appui.ListEntry{{Text: "Saves/GBC/Original.srm", Detail: "→ Saves/GBC/Leaf Title.srm"}}; !reflect.DeepEqual(model.Entries, want) {
+		t.Fatalf("save prompt = %+v, want %+v", model.Entries, want)
+	}
 	if err := flow.Confirm(model); err != nil || model.State != appui.RenameConfirmStates {
 		t.Fatalf("save confirm = state %v, %v", model.State, err)
+	}
+	if len(model.Entries) != 2 || model.Entries[0].Text != "States/GBC-gambatte/Original.state1" ||
+		model.Entries[1].Detail != "→ States/GBC-gambatte/Leaf Title.state1.png" {
+		t.Fatalf("state prompt = %+v, want the state and its thumbnail", model.Entries)
 	}
 	if err := flow.Confirm(model); err != nil || model.State != appui.RenameDone {
 		t.Fatalf("state confirm = state %v, %v", model.State, err)

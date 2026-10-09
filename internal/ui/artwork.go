@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
@@ -10,6 +12,12 @@ import (
 )
 
 func ensureROMArtwork(client *itchio.Client, inv *inventory.Inventory, game itchio.Game, romPath string) itchio.ArtworkResult {
+	return ensureROMArtworkFrom(client.NewCoverFetch(game.CoverURL), inv, game, romPath)
+}
+
+// ensureROMArtworkFrom is ensureROMArtwork for one of several ROMs of a game
+// that share a CoverFetch, so the cover is downloaded once for all of them.
+func ensureROMArtworkFrom(cover *itchio.CoverFetch, inv *inventory.Inventory, game itchio.Game, romPath string) itchio.ArtworkResult {
 	if roms.IsPSXSupportExt(roms.ROMExt(romPath)) {
 		return itchio.ArtworkResult{}
 	}
@@ -17,10 +25,10 @@ func ensureROMArtwork(client *itchio.Client, inv *inventory.Inventory, game itch
 		result itchio.ArtworkResult
 		err    error
 	)
-	if roms.ROMExt(romPath) == ".p8.png" {
+	if strings.EqualFold(roms.ROMExt(romPath), ".p8.png") {
 		result, err = itchio.EnsureCopiedCoverArt(romPath)
 	} else {
-		result, err = client.EnsureCoverArt(game.CoverURL, romPath)
+		result, err = cover.EnsureCoverArt(romPath)
 	}
 	if err != nil {
 		logger.Warn("cover-art: game=%q: %v", game.Title, err)

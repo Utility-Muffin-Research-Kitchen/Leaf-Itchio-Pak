@@ -441,12 +441,14 @@ func (s *UpdateService) repairCoverArt(gameURL string) {
 	if !ok {
 		return
 	}
-	coverURL, files := entry.CoverURL, entry.Files
+	files := entry.Files
+	// One cover download serves every image this pass writes for the game.
+	cover := s.client.NewCoverFetch(entry.CoverURL)
 
 	// 1. Cover art repair.
 	for _, f := range files {
 		if f.ContentKind == ContentKindMusic || f.FileType == FileTypeMusic ||
-			roms.IsPSXSupportExt(roms.ROMExt(f.DestPath)) {
+			roms.IsPSXSupportExt(roms.ROMExt(f.DestPath)) || entry.ListsNoGame(f) {
 			continue
 		}
 		if artworkCurrent(f) {
@@ -455,7 +457,7 @@ func (s *UpdateService) repairCoverArt(gameURL string) {
 		result, migrated := s.migrateOwnedArtwork(f)
 		var err error
 		if !migrated {
-			result, err = s.client.EnsureCoverArt(coverURL, f.DestPath)
+			result, err = cover.EnsureCoverArt(f.DestPath)
 		}
 		if err != nil {
 			logger.Error("update-svc: cover art repair failed for %s: %v", f.Filename, err)

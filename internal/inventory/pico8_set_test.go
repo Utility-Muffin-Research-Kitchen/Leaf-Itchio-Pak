@@ -1,0 +1,168 @@
+package inventory_test
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/inventory"
+)
+
+// p8 is a record of a file the app wrote at path from archive.
+func p8(path, archive string) inventory.DownloadedFile {
+	return inventory.DownloadedFile{
+		Filename: filepath.Base(path), DestPath: path, SourceArchive: archive, OriginalUpload: archive,
+	}
+}
+
+// F19: the files of a Pico-8 game that came in several files are told apart
+// from single carts by the records alone.
+func TestInPico8Set(t *testing.T) {
+	const root = "/leaf/Roms/PICO8"
+	game := root + "/Moss Garden/"
+	cases := []struct {
+		name  string
+		files []inventory.DownloadedFile
+		// want maps the base name of each file to whether it is in a set.
+		want map[string]bool
+	}{
+		{"carts, Lua and a playlist", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"level2.p8", "moss.zip"),
+			p8(game+"lib.lua", "moss.zip"), p8(game+"Moss Garden.m3u", "moss.zip"),
+		}, map[string]bool{"main.p8": true, "level2.p8": true, "lib.lua": true, "Moss Garden.m3u": true}},
+		{"one cart and Lua", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"),
+		}, map[string]bool{"main.p8": true, "lib.lua": true}},
+		{"a Lua file on its own", []inventory.DownloadedFile{p8(game+"lib.lua", "moss.zip")},
+			map[string]bool{"lib.lua": true}},
+		{"carts of one archive in one folder, no playlist written", []inventory.DownloadedFile{
+			p8(game+"a.p8", "moss.zip"), p8(game+"b.p8.png", "moss.zip"),
+		}, map[string]bool{"a.p8": true, "b.p8.png": true}},
+		{"extensions in capitals", []inventory.DownloadedFile{
+			p8(game+"MAIN.P8.PNG", "moss.zip"), p8(game+"LIB.LUA", "moss.zip"),
+		}, map[string]bool{"MAIN.P8.PNG": true, "LIB.LUA": true}},
+		{"folder named in another letter case", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8("/leaf/Roms/PICO8/MOSS GARDEN/lib.lua", "moss.zip"),
+		}, map[string]bool{"main.p8": true, "lib.lua": true}},
+		{"a cart of another upload beside the Lua files of this one", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss-carts.zip"), p8(game+"lib.lua", "moss-web.zip"),
+		}, map[string]bool{"main.p8": true, "lib.lua": true}},
+
+		{"a single cart in the Pico-8 folder", []inventory.DownloadedFile{p8(root+"/cart.p8.png", "moss.zip")},
+			map[string]bool{"cart.p8.png": false}},
+		{"a single cart downloaded on its own", []inventory.DownloadedFile{p8(root+"/cart.p8", "")},
+			map[string]bool{"cart.p8": false}},
+		{"single carts of two uploads in the Pico-8 folder", []inventory.DownloadedFile{
+			p8(root+"/web.p8.png", "moss-web.zip"), p8(root+"/native.p8", "moss-native.zip"),
+		}, map[string]bool{"web.p8.png": false, "native.p8": false}},
+		{"single carts downloaded on their own into a folder you picked", []inventory.DownloadedFile{
+			p8(root+"/Platformers/jump.p8", ""), p8(root+"/Platformers/run.p8.png", ""),
+		}, map[string]bool{"jump.p8": false, "run.p8.png": false}},
+		{"a single cart in a folder you picked", []inventory.DownloadedFile{p8(root+"/Platformers/jump.p8", "moss.zip")},
+			map[string]bool{"jump.p8": false}},
+		{"carts in different folders", []inventory.DownloadedFile{
+			p8(root+"/Platformers/a.p8", "moss.zip"), p8(root+"/Puzzles/b.p8", "moss.zip"),
+		}, map[string]bool{"a.p8": false, "b.p8": false}},
+		{"a playlist on its own", []inventory.DownloadedFile{p8(game+"Moss Garden.m3u", "moss.zip")},
+			map[string]bool{"Moss Garden.m3u": false}},
+		{"PlayStation playlists", []inventory.DownloadedFile{
+			p8("/leaf/Roms/PSX/disc.m3u", "moss.zip"), p8("/leaf/Roms/PSX/other.m3u", "moss.zip"),
+		}, map[string]bool{"disc.m3u": false, "other.m3u": false}},
+		{"a Game Boy ROM beside Lua files", []inventory.DownloadedFile{
+			p8("/leaf/Roms/GB/moss.gb", "moss.zip"), p8("/leaf/Roms/GB/lib.lua", "moss.zip"),
+		}, map[string]bool{"moss.gb": false, "lib.lua": true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := inventory.Entry{Title: "Moss Garden", Files: tc.files}
+			for _, file := range tc.files {
+				name := filepath.Base(file.DestPath)
+				want, ok := tc.want[name]
+				if !ok {
+					t.Fatalf("no expectation for %s", name)
+				}
+				if got := entry.InPico8Set(file); got != want {
+					t.Errorf("InPico8Set(%s) = %v, want %v", file.DestPath, got, want)
+				}
+			}
+		})
+	}
+}
+
+// F24: a cart in a folder inside a set's folder is a file of the set too. The
+// set's playlist or code may load it by name, and the archive it came from is
+// the same. Only a set anchors this: one single-cart upload installed into two
+// unrelated folders (F23 keeps a record for each) has no set to be inside of.
+func TestInPico8SetFindsCartsBelowASetsFolder(t *testing.T) {
+	const root = "/leaf/Roms/PICO8"
+	game := root + "/Moss Garden/"
+	cases := []struct {
+		name  string
+		files []inventory.DownloadedFile
+		// want maps the path of each file below the Pico-8 folder to whether
+		// it is in a set.
+		want map[string]bool
+	}{
+		{"a cart in a subfolder of a set", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(game+"world2/main.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Moss Garden/world2/main.p8": true}},
+		{"carts two folders down and a PNG cart", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"),
+			p8(game+"world2/zone3/boss.p8", "moss.zip"), p8(game+"world2/cover.p8.png", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true,
+			"Moss Garden/world2/zone3/boss.p8": true, "Moss Garden/world2/cover.p8.png": true}},
+		{"a set whose carts all sit in subfolders", []inventory.DownloadedFile{
+			p8(game+"lib.lua", "moss.zip"), p8(game+"a/main.p8", "moss.zip"), p8(game+"b/main.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/lib.lua": true, "Moss Garden/a/main.p8": true, "Moss Garden/b/main.p8": true}},
+		{"a subfolder named in another letter case", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"),
+			p8("/leaf/Roms/PICO8/MOSS GARDEN/World2/main.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "MOSS GARDEN/World2/main.p8": true}},
+		{"the same set installed into two folders", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(game+"world2/main.p8", "moss.zip"),
+			p8(root+"/Copy/main.p8", "moss.zip"), p8(root+"/Copy/lib.lua", "moss.zip"), p8(root+"/Copy/world2/main.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Moss Garden/world2/main.p8": true,
+			"Copy/main.p8": true, "Copy/lib.lua": true, "Copy/world2/main.p8": true}},
+
+		// Not in a set: nothing here is a set, or the file is not of it.
+		{"one single-cart upload installed into two unrelated folders", []inventory.DownloadedFile{
+			p8(root+"/Platformers/jump.p8", "jump.zip"), p8(root+"/Puzzles/jump.p8", "jump.zip"),
+		}, map[string]bool{"Platformers/jump.p8": false, "Puzzles/jump.p8": false}},
+		{"one single-cart upload installed into a folder and one inside it", []inventory.DownloadedFile{
+			p8(root+"/Platformers/jump.p8", "jump.zip"), p8(root+"/Platformers/Copy/jump.p8", "jump.zip"),
+		}, map[string]bool{"Platformers/jump.p8": false, "Platformers/Copy/jump.p8": false}},
+		{"one single-cart upload on both cards", []inventory.DownloadedFile{
+			p8(root+"/jump.p8", "jump.zip"), p8("/secondary/Roms/PICO8/jump.p8", "jump.zip"),
+		}, map[string]bool{"jump.p8": false}},
+		{"a cart of another upload inside a set's folder", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(game+"extras/bonus.p8", "bonus.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Moss Garden/extras/bonus.p8": false}},
+		{"a cart downloaded on its own inside a set's folder", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(game+"extras/bonus.p8", ""),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Moss Garden/extras/bonus.p8": false}},
+		{"a cart of the set's upload outside the set's folder", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(root+"/Other/world.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Other/world.p8": false}},
+		{"a cart in a folder whose name only starts like the set's", []inventory.DownloadedFile{
+			p8(game+"main.p8", "moss.zip"), p8(game+"lib.lua", "moss.zip"), p8(root+"/Moss Garden 2/world.p8", "moss.zip"),
+		}, map[string]bool{"Moss Garden/main.p8": true, "Moss Garden/lib.lua": true, "Moss Garden 2/world.p8": false}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := inventory.Entry{Title: "Moss Garden", Files: tc.files}
+			for _, file := range tc.files {
+				rel := file.DestPath
+				for _, prefix := range []string{root + "/", "/secondary/Roms/PICO8/"} {
+					rel = strings.TrimPrefix(rel, prefix)
+				}
+				want, ok := tc.want[rel]
+				if !ok {
+					t.Fatalf("no expectation for %s", rel)
+				}
+				if got := entry.InPico8Set(file); got != want {
+					t.Errorf("InPico8Set(%s) = %v, want %v", rel, got, want)
+				}
+			}
+		})
+	}
+}
