@@ -151,6 +151,10 @@ func TestSignInStoresTheKeyAndLoadsTheAccount(t *testing.T) {
 	if f.model.State != appui.SignInDone || f.model.Heading != "Signed in as tester" {
 		t.Fatalf("model = %+v", f.model)
 	}
+	// F29: one owned game is "1 owned game found.", not "game(s)".
+	if f.model.Detail != "1 owned game found." {
+		t.Fatalf("detail = %q, want %q", f.model.Detail, "1 owned game found.")
+	}
 	if f.cfg.Credential() != signInKey || f.cfg.AuthUser != "tester" || f.cfg.LegacyKeyRemoved {
 		t.Fatalf("config = %+v", f.cfg)
 	}

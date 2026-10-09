@@ -1,9 +1,8 @@
 package catui
 
 import (
-	"fmt"
-
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type RefreshScreen struct {
@@ -29,6 +28,16 @@ func (screen *RefreshScreen) HandleInput(event InputEvent) appui.RefreshIntent {
 	})
 }
 
+// refreshDoneText says how many games the finished refresh saved.
+func refreshDoneText(total int) string {
+	return "Saved " + text.Count(total, "game", "games") + " to the local cache."
+}
+
+// refreshProgressText says how many games the running refresh has fetched.
+func refreshProgressText(fetched int) string {
+	return text.Count(fetched, "game", "games") + " fetched · B cancels safely"
+}
+
 func (screen *RefreshScreen) Draw() error {
 	footer := []FooterHint{{Button: ButtonB, Label: "Cancel"}}
 	if screen.model.State != appui.RefreshLoading {
@@ -41,15 +50,13 @@ func (screen *RefreshScreen) Draw() error {
 	body := frame.Layout.Content.Content()
 	switch screen.model.State {
 	case appui.RefreshDone:
-		err = screen.ui.DrawState(body, StateEmpty, "Game list updated",
-			fmt.Sprintf("%d games were committed to the local cache.", screen.model.Total))
+		err = screen.ui.DrawState(body, StateEmpty, "Game list updated", refreshDoneText(screen.model.Total))
 	case appui.RefreshError:
 		err = screen.ui.DrawState(body, StateError, "Refresh failed", screen.model.Detail)
 	case appui.RefreshCancelled:
 		err = screen.ui.DrawState(body, StateEmpty, "Refresh cancelled", "No partial catalogue was saved.")
 	default:
-		err = screen.ui.DrawState(body, StateLoading, "Fetching game list",
-			fmt.Sprintf("%d games fetched · B cancels safely", screen.model.Fetched))
+		err = screen.ui.DrawState(body, StateLoading, "Fetching game list", refreshProgressText(screen.model.Fetched))
 	}
 	if err != nil {
 		return err

@@ -12,6 +12,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/itchio"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 const (
@@ -261,7 +262,7 @@ func (flow *CatSignInFlow) finish(model *appui.SignInModel, update signInUpdate)
 		if update.user != "" {
 			model.Heading = "Signed in as " + update.user
 		}
-		model.Detail = fmt.Sprintf("%d owned game(s) found.", len(update.owned))
+		model.Detail = text.Count(len(update.owned), "owned game", "owned games") + " found."
 	}
 }
 

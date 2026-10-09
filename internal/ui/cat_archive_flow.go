@@ -17,6 +17,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/settings"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type CatArchiveAction uint8
@@ -235,7 +236,7 @@ func (flow *CatArchiveFlow) showNextChoice(model *appui.DownloadSelectModel) {
 		return
 	}
 	if flow.choiceIndex == len(flow.choiceExts) && flow.plan.Manifest.HasMusic() && flow.cfg.MusicDownload == "ask" {
-		model.SetChoices(fmt.Sprintf("Archive contains %d soundtrack file(s)", flow.plan.Manifest.MusicCount()),
+		model.SetChoices("Archive contains "+text.Count(flow.plan.Manifest.MusicCount(), "soundtrack file", "soundtrack files"),
 			[]appui.DownloadChoice{{Title: "Download soundtrack", Badge: "YES"}, {Title: "Skip soundtrack", Badge: "NO"}})
 		return
 	}

@@ -222,7 +222,7 @@ func TestCatSettingsAccountCheckStoresNameAndOwnedGames(t *testing.T) {
 		t.Fatalf("account check = action %v state %v err %v", action, model.State, err)
 	}
 	syncSettings(t, flow, model)
-	if model.State != appui.SettingsMessage || !strings.Contains(model.Message, "1 owned game") {
+	if model.State != appui.SettingsMessage || model.Message != "Signed in to itch.io. 1 owned game found." {
 		t.Fatalf("check state=%v message=%q", model.State, model.Message)
 	}
 	if len(liveOwned) != 1 || liveOwned[0].URL != "https://example.itch.io/leafbound" {

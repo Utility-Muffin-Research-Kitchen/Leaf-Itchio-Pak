@@ -17,6 +17,7 @@ import (
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/roms"
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/screentext"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type CatManageFlow struct {
@@ -112,8 +113,12 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 			Enabled: flow.indicesAvailable(musicIndices),
 		})
 	}
+	// "1 FILE", "2 FILES": a count of a noun that takes a plural. The badges
+	// above are category tags, a count of an adjective, an initialism and a
+	// mass noun, so they stay as they are.
+	allFiles := strings.ToUpper(text.Count(len(entry.Files), "file", "files"))
 	items = append(items, appui.ManageItem{
-		Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: fmt.Sprintf("%d FILES", len(entry.Files)),
+		Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: allFiles,
 		Enabled: flow.indicesAvailable(allFileIndices(entry.Files)),
 	})
 	for _, index := range romIndices {
@@ -136,7 +141,7 @@ func (flow *CatManageFlow) refresh(model *appui.ManageModel) {
 			FileIndex: index, Enabled: flow.indicesAvailable([]int{index}),
 		})
 	}
-	model.SetItems(fmt.Sprintf("%d managed file(s) · source-owned paths only", len(entry.Files)), items)
+	model.SetItems(text.Count(len(entry.Files), "managed file", "managed files")+" · source-owned paths only", items)
 }
 
 // memberNote names the archive member a file came from, when its name on the
@@ -348,7 +353,7 @@ func (flow *CatManageFlow) Confirm(model *appui.ManageModel) (bool, error) {
 		model.SetError(screentext.FromError(deleteErr))
 		return !stillPresent, deleteErr
 	}
-	result := fmt.Sprintf("Deleted %d managed file(s).", len(deleted))
+	result := "Deleted " + text.Count(len(deleted), "managed file", "managed files") + "."
 	if len(kept) > 0 {
 		result += fmt.Sprintf(" Kept %d that another game uses.", len(kept))
 	}
@@ -744,10 +749,10 @@ func (flow *CatRenameFlow) execute(model *appui.RenameModel) error {
 	flow.renamedROMPath = flow.targetPath
 	parts := []string{"ROM renamed"}
 	if flow.renameSaves {
-		parts = append(parts, fmt.Sprintf("%d save(s)", len(flow.saves)))
+		parts = append(parts, text.Count(len(flow.saves), "save", "saves"))
 	}
 	if flow.renameStates {
-		parts = append(parts, fmt.Sprintf("%d state file(s)", len(flow.states)))
+		parts = append(parts, text.Count(len(flow.states), "state file", "state files"))
 	}
 	model.SetDone(strings.Join(parts, ", ") + ".")
 	return nil

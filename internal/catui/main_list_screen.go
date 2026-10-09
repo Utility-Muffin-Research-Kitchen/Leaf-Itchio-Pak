@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/appui"
+	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/text"
 )
 
 type MainListScreen struct {
@@ -74,6 +75,23 @@ func appButton(button Button) appui.Button {
 	}
 }
 
+// mainListSubtitle is the line under the main list's title: the platform, the
+// sort, how many games match, and how old the cache is.
+func mainListSubtitle(model *appui.MainListModel) string {
+	platform, sort := model.Platform, model.Sort
+	if platform == "" {
+		platform = "All platforms"
+	}
+	if sort == "" {
+		sort = appui.SortLabel("")
+	}
+	subtitle := fmt.Sprintf("%s  ·  %s  ·  %s", platform, sort, text.Count(len(model.Items), "game", "games"))
+	if model.CacheStatus != "" {
+		subtitle += "  ·  " + model.CacheStatus
+	}
+	return subtitle
+}
+
 func (screen *MainListScreen) Draw() error {
 	screen.cache.BeginFrame()
 	footer := []FooterHint{{Button: ButtonB, Label: "Exit"}}
@@ -100,18 +118,7 @@ func (screen *MainListScreen) Draw() error {
 	if err != nil {
 		return err
 	}
-	platform, sort := screen.model.Platform, screen.model.Sort
-	if platform == "" {
-		platform = "All platforms"
-	}
-	if sort == "" {
-		sort = appui.SortLabel("")
-	}
-	subtitle := fmt.Sprintf("%s  ·  %s  ·  %d games", platform, sort, len(screen.model.Items))
-	if screen.model.CacheStatus != "" {
-		subtitle += "  ·  " + screen.model.CacheStatus
-	}
-	if err := screen.ui.DrawSubHeader(frame.Layout.SubHeader, subtitle); err != nil {
+	if err := screen.ui.DrawSubHeader(frame.Layout.SubHeader, mainListSubtitle(screen.model)); err != nil {
 		return err
 	}
 	body := frame.Layout.Content.Content()
@@ -274,6 +281,11 @@ func RunMainListFixture(config MainListFixtureConfig) error {
 		// The header names the platform and sort as the filter screen does.
 		model.Platform, model.Sort = appui.PlatformLabel("PSX"), appui.SortLabel("dl")
 		model.CacheStatus = "Cache 47h old"
+	case "one-game":
+		// One match counts as "1 game", as on the device's Owned filter.
+		model.SetItems(items[:1])
+		model.Platform, model.Sort = appui.PlatformLabel("GB"), appui.SortLabel("owned")
+		model.CacheStatus = "Cache 10m old"
 	case "long-titles":
 		// Long titles end in "..." before the price column, on the
 		// highlighted row too, where the price takes the row's text color.

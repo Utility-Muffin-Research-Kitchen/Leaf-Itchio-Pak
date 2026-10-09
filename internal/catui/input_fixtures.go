@@ -268,6 +268,23 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.DestinationIntentBack
 		}
+	case "manage-one-file":
+		// A game with one file counts "1 managed file" and "1 FILE" (F29).
+		model := appui.NewManageModel("Leafbound 葉")
+		model.SetItems("1 managed file · source-owned paths only", []appui.ManageItem{
+			{Kind: appui.ManageItemFile, Label: "Leafbound.gbc", Badge: "ROM", Detail: "Primary SD / Roms/GBC/Leafbound.gbc", Enabled: true},
+			{Kind: appui.ManageItemDeleteROMs, Label: "Delete ROM files", Badge: "1 ROM", Enabled: true},
+			{Kind: appui.ManageItemDeleteAll, Label: "Delete all downloads", Badge: "1 FILE", Enabled: true},
+			{Kind: appui.ManageItemRename, Label: "Use title for Leafbound.gbc", Badge: "RENAME", Enabled: true},
+		})
+		screen, screenErr := NewManageScreen(ctx, model)
+		if screenErr != nil {
+			return screenErr
+		}
+		draw = screen.Draw
+		handleIntent = func(event InputEvent) bool {
+			return screen.HandleInput(event) != appui.ManageIntentBack
+		}
 	case "manage-list", "manage-confirm", "manage-leftover", "manage-result", "manage-error", "manage-delete-long":
 		model := appui.NewManageModel("Leafbound 葉")
 		model.SetItems("4 managed files · source-owned paths only", []appui.ManageItem{
@@ -290,7 +307,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 				appui.ListBlock([]appui.ListEntry{{Text: "forest-theme.ogg", Detail: "Primary SD / Music/Leafbound/forest-theme.ogg"}}),
 			})
 		} else if config.Screen == "manage-result" {
-			model.SetResult("Deleted 1 managed file(s). Kept 1 that another game uses.")
+			model.SetResult("Deleted 1 managed file. Kept 1 that another game uses.")
 			model.SetLibraryStatus("Leaf library rescan queued.")
 		} else if config.Screen == "manage-error" {
 			model.SetError("Couldn't delete Leafbound Deluxe Edition (PlayStation).bin. Check the SD card, then try again.")
@@ -505,7 +522,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 			model.State, model.CanRetry = appui.SignInError, true
 			model.Heading, model.Detail = "The code expired", "Press A for a new code."
 		case "signin-done":
-			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned game(s) found."
+			model.State, model.Heading, model.Detail = appui.SignInDone, "Signed in as leafbound-player", "12 owned games found."
 		case "signin-checking":
 			model.State = appui.SignInChecking
 		case "signin-warning":
