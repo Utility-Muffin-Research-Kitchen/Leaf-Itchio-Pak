@@ -233,7 +233,8 @@ func (s *ArchiveDownloadWorker) run(allowUninhibited bool) {
 			}
 
 			// .m3u launcher: collect .p8/.p8.png files, sort naturally, write
-			// <safe>.m3u inside the game directory so the emulator loads all carts.
+			// <safe>.m3u inside the game directory. Leaf does not read it for
+			// Pico-8, which is why the 7z path writes none; see extractPico8_7z.
 			safe := roms.SanitiseFilename(s.game.Title, "")
 			if safe == "" {
 				safe = "Unknown"
@@ -513,6 +514,20 @@ func readCueFiles(open func() (io.ReadCloser, error)) []string {
 
 // extractPico8_7z extracts .p8, .p8.png, and .lua files from a 7z archive,
 // preserving relative paths into s.plan.Pico8GameDir.
+//
+// Unlike the ZIP path it writes no .m3u playlist, on purpose: Leaf does not use
+// one for Pico-8, so a set from a 7z archive lists and launches exactly like a
+// set from a ZIP. Jawaka's PICO8 system (Leaf's systems.json) declares no
+// playlist extensions and "m3u_generation": "none". Its scan
+// (jw__metadata_accepts_rom in Jawaka's internal/discovery/discovery.c) takes
+// only .p8 and .png files as games, so a .m3u in Roms/PICO8 is not indexed, and
+// jw__collect_m3u_members reads no playlist when the system lists no playlist
+// extensions, so no cart is hidden behind one. Every cart of a set is therefore
+// its own library entry, and launching one runs fake-08 (or the optional native
+// PICO-8 pak) on that cart alone; the other carts and the .lua files it uses
+// are found by name in its folder. If Leaf ever indexes playlists for Pico-8,
+// give both archive types the playlist together instead of adding it to this
+// path alone.
 func (s *ArchiveDownloadWorker) extractPico8_7z(r *sevenzip.ReadCloser, now time.Time) {
 	gameDir := strings.TrimSuffix(s.plan.Pico8GameDir, "/")
 	var relevantPaths []string
