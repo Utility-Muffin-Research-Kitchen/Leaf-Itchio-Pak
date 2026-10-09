@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"image"
 	_ "image/jpeg"
 	"image/png"
 	"io"
@@ -58,6 +59,33 @@ func existingArtwork(path string) (ArtworkResult, bool, error) {
 // animation in the app cache; launcher art deliberately uses the bounded
 // first decoded frame.
 func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, error) {
+	return c.NewCoverFetch(coverURL).EnsureCoverArt(romDestPath)
+}
+
+// CoverFetch saves one game's cover as launcher art under the name of any
+// number of ROMs, downloading and decoding the cover at most once, and not at
+// all while every image asked for exists. A game with several launchable files
+// (a Pico-8 set's carts, the discs of a game) needs an image for each, and
+// Jawaka looks one up by the ROM's own name. A failed download is remembered:
+// later images report the same error without asking again.
+//
+// A CoverFetch is for one pass over one game's files, on one goroutine.
+type CoverFetch struct {
+	client  *Client
+	url     string
+	fetched bool
+	frame   *image.RGBA
+	err     error
+}
+
+// NewCoverFetch returns a fetch for the cover at coverURL, which may be empty
+// for a game without one.
+func (c *Client) NewCoverFetch(coverURL string) *CoverFetch {
+	return &CoverFetch{client: c, url: coverURL}
+}
+
+// EnsureCoverArt is Client.EnsureCoverArt for the fetch's cover.
+func (f *CoverFetch) EnsureCoverArt(romDestPath string) (ArtworkResult, error) {
 	lease, guardErr := leaf.BeginOperation(context.Background(), "artwork conversion", false)
 	if guardErr != nil {
 		return ArtworkResult{}, fmt.Errorf("protect artwork conversion: %w", guardErr)
@@ -72,35 +100,14 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	if existing, found, err := existingArtwork(artPath); found || err != nil {
 		return existing, err
 	}
-	if coverURL == "" {
+	if f.url == "" {
 		logger.Debug("cover-art: no cover URL, skipping")
 		return ArtworkResult{}, nil
 	}
 
-	logger.Info("cover-art: downloading for %s", filepath.Base(romDestPath))
-
-	resp, err := c.http.Get(coverURL)
+	frame, err := f.cover(romDestPath)
 	if err != nil {
-		logger.Error("cover-art: fetch: %v", err)
-		return ArtworkResult{}, fmt.Errorf("cover-art: fetch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logger.Error("cover-art: HTTP %d", resp.StatusCode)
-		return ArtworkResult{}, fmt.Errorf("cover-art: HTTP %d", resp.StatusCode)
-	}
-
-	data, err := media.ReadSource(resp.Body, resp.ContentLength)
-	if err != nil {
-		return ArtworkResult{}, fmt.Errorf("cover-art: %w", err)
-	}
-	decoded, err := media.Decode(data)
-	if err != nil {
-		return ArtworkResult{}, fmt.Errorf("cover-art: %w", err)
-	}
-	if len(decoded.Frames) == 0 || decoded.Frames[0] == nil {
-		return ArtworkResult{}, fmt.Errorf("cover-art: decoded image has no frames")
+		return ArtworkResult{}, err
 	}
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
 		return ArtworkResult{}, fmt.Errorf("cover-art: mkdir: %w", err)
@@ -118,7 +125,7 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	}()
 
 	hash := sha256.New()
-	if err := png.Encode(io.MultiWriter(tmp, hash), decoded.Frames[0]); err != nil {
+	if err := png.Encode(io.MultiWriter(tmp, hash), frame); err != nil {
 		logger.Error("cover-art: encode png: %v", err)
 		return ArtworkResult{}, fmt.Errorf("cover-art: encode png: %w", err)
 	}
@@ -141,6 +148,47 @@ func (c *Client) EnsureCoverArt(coverURL, romDestPath string) (ArtworkResult, er
 	}
 	logger.Info("cover-art: saved → %s", artPath)
 	return ArtworkResult{Path: artPath, SHA256: fmt.Sprintf("%x", hash.Sum(nil)), Created: true}, nil
+}
+
+// cover returns the cover's first decoded frame, downloading it on the first
+// call only. romDestPath names the ROM that needed it, for the log.
+func (f *CoverFetch) cover(romDestPath string) (*image.RGBA, error) {
+	if f.fetched {
+		return f.frame, f.err
+	}
+	f.fetched = true
+	logger.Info("cover-art: downloading for %s", filepath.Base(romDestPath))
+
+	resp, err := f.client.http.Get(f.url)
+	if err != nil {
+		logger.Error("cover-art: fetch: %v", err)
+		f.err = fmt.Errorf("cover-art: fetch: %w", err)
+		return nil, f.err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logger.Error("cover-art: HTTP %d", resp.StatusCode)
+		f.err = fmt.Errorf("cover-art: HTTP %d", resp.StatusCode)
+		return nil, f.err
+	}
+
+	data, err := media.ReadSource(resp.Body, resp.ContentLength)
+	if err != nil {
+		f.err = fmt.Errorf("cover-art: %w", err)
+		return nil, f.err
+	}
+	decoded, err := media.Decode(data)
+	if err != nil {
+		f.err = fmt.Errorf("cover-art: %w", err)
+		return nil, f.err
+	}
+	if len(decoded.Frames) == 0 || decoded.Frames[0] == nil {
+		f.err = fmt.Errorf("cover-art: decoded image has no frames")
+		return nil, f.err
+	}
+	f.frame = decoded.Frames[0]
+	return f.frame, nil
 }
 
 func (c *Client) DownloadCoverArt(coverURL, romDestPath string) error {

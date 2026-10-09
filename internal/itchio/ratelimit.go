@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Utility-Muffin-Research-Kitchen/Leaf-Itchio-Pak/internal/logger"
@@ -123,6 +124,9 @@ func (t *rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error
 			return resp, nil
 		}
 		t.record429(host, resp.Header.Get("Retry-After"))
+		if stats := refreshStatsFrom(req.Context()); stats != nil {
+			stats.rateLimited.Add(1)
+		}
 		if !replayable || attempt >= rateLimitMaxRetries {
 			return resp, nil
 		}
@@ -184,6 +188,21 @@ func (t *rateLimitTransport) waitTurn(ctx context.Context, host string) error {
 			return err
 		}
 	}
+}
+
+// refreshStats counts the HTTP 429 answers one catalogue refresh got,
+// replays included, for its log line.
+type refreshStats struct{ rateLimited atomic.Int64 }
+
+type refreshStatsKey struct{}
+
+func withRefreshStats(ctx context.Context, stats *refreshStats) context.Context {
+	return context.WithValue(ctx, refreshStatsKey{}, stats)
+}
+
+func refreshStatsFrom(ctx context.Context) *refreshStats {
+	stats, _ := ctx.Value(refreshStatsKey{}).(*refreshStats)
+	return stats
 }
 
 type cooldownHooks struct{ pause, resume func() }

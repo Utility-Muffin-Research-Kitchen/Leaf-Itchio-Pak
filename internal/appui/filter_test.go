@@ -55,7 +55,12 @@ func TestHeaderLabelsMatchTheFilterScreen(t *testing.T) {
 	if got := PlatformLabel("SNES"); got != "SNES" {
 		t.Errorf("PlatformLabel(SNES) = %q, want SNES", got)
 	}
-	if got := SortLabel("bogus"); got != "RSS" {
-		t.Errorf("SortLabel(bogus) = %q, want RSS like the sort cycle", got)
+	if got := SortLabel("bogus"); got != "Popular" {
+		t.Errorf("SortLabel(bogus) = %q, want Popular like the sort cycle", got)
+	}
+	// The default sort is itch.io's browse order, which it calls Popular.
+	// The stored value stays "", so saved filters keep working.
+	if got := SortLabel(""); got != "Popular" {
+		t.Errorf("SortLabel(\"\") = %q, want Popular", got)
 	}
 }

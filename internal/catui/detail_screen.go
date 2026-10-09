@@ -50,8 +50,9 @@ func (screen *DetailScreen) HandleInput(event InputEvent) appui.DetailIntent {
 func detailFooter(model *appui.DetailModel) []FooterHint {
 	footer := []FooterHint{{Button: ButtonB, Label: "Back"}}
 	if model.State == appui.DetailReady {
-		// D-pad scrolling remains fully functional. It is conventional enough to
-		// omit from this width-constrained footer so Settings stays visible.
+		// D-pad scrolling has no hint in this width-constrained footer, so
+		// Settings stays visible: a description that does not fit shows the
+		// scrollbar instead.
 		footer = append(footer, FooterHint{Button: ButtonL1, ButtonText: "L1/R1", Label: "Img.", DropRank: 2})
 		if model.Game.CanDownload && !model.BrowserOnly {
 			label := "Download"
@@ -191,16 +192,15 @@ func (screen *DetailScreen) drawReady(content Box) error {
 			return err
 		}
 	}
-	y := qrRect.Y + qrRect.H + screen.ctx.Scale(5)
 	caption := "Scan to open on itch.io"
 	if screen.model.Game.NotOwned() && !screen.model.BrowserOnly {
 		caption = "Not owned. Scan to buy."
 	}
-	if _, err := screen.ctx.DrawText(FontTiny, caption, panel.X, y,
-		screen.ctx.ThemeColor(RoleHint), panel.W, true); err != nil {
+	y, err := screen.ui.DrawQRCaption(qrRect, panel.X, panel.W, caption)
+	if err != nil {
 		return err
 	}
-	y += screen.ctx.FontHeight(FontTiny) + screen.ui.BasePadding/2
+	y += screen.ui.BasePadding / 2
 
 	tagsHeight := minInt(screen.ctx.Scale(78), maxInt(0, panel.Y+panel.H-y))
 	used, err := screen.ui.DrawTagPills(Rect{X: panel.X, Y: y, W: panel.W, H: tagsHeight}, screen.model.Tags)
@@ -220,15 +220,9 @@ func (screen *DetailScreen) drawReady(content Box) error {
 	} else if len(paragraphs) == 0 {
 		paragraphs = []string{"No description was provided."}
 	}
-	totalLines := 0
-	for _, paragraph := range paragraphs {
-		totalLines += len(wrapText(paragraph, description.W, func(value string) int {
-			return screen.ctx.MeasureText(FontSmall, value)
-		})) + 1
-	}
-	visible := screen.ui.ScrollingBodyRows(description, heading)
-	screen.model.SetScrollBounds(maxInt(0, totalLines-visible))
-	return screen.ui.DrawScrollingBody(description, heading, paragraphs, screen.model.ScrollLine)
+	// The scrollbar beside a description that does not fit is the scroll
+	// hint the footer leaves out.
+	return screen.ui.DrawScrollingBody(description, heading, paragraphs, &screen.model.BodyScroll)
 }
 
 // unavailableText follows the reason the game page is unavailable with what

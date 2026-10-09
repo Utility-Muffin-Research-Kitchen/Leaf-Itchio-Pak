@@ -130,7 +130,7 @@ func TestBackgroundRefreshKeepsCommittedCacheOnError(t *testing.T) {
 		cacheUpdateCh: make(chan []itchio.Game, 1),
 	}
 	controller.cacheCommitted.Store(true)
-	controller.buildCache()
+	controller.buildCache(nil)
 	select {
 	case partial := <-controller.cacheUpdateCh:
 		t.Fatalf("failed refresh replaced committed cache with %d partial games", len(partial))
@@ -372,7 +372,7 @@ func TestCatalogControllerKeepsPreviewUntilCacheHasGames(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		controller.buildCache()
+		controller.buildCache(nil)
 	}()
 	select {
 	case <-page2Requested:

@@ -24,23 +24,24 @@ type RenameModel struct {
 	Title         string
 	Subtitle      string
 	Heading       string
-	Lines         []string
+	Entries       []ListEntry
 	Message       string
 	LibraryStatus string
-	ScrollLine    int
-	ScrollMax     int
+	BodyScroll
 }
 
 func NewRenameModel(title string) *RenameModel { return &RenameModel{Title: title} }
 
-func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, lines []string) {
+func (m *RenameModel) SetPrompt(state RenameState, subtitle, heading string, entries []ListEntry) {
 	m.State, m.Subtitle, m.Heading = state, subtitle, heading
-	m.Lines = append([]string(nil), lines...)
-	m.Message, m.LibraryStatus, m.ScrollLine = "", "", 0
+	m.Entries = append([]ListEntry(nil), entries...)
+	m.Message, m.LibraryStatus = "", ""
+	m.ResetScroll()
 }
 
 func (m *RenameModel) SetDone(message string) {
 	m.State, m.Subtitle, m.Message, m.LibraryStatus = RenameDone, "Rename complete", message, ""
+	m.ResetScroll()
 }
 
 func (m *RenameModel) SetError(message string) {
@@ -48,16 +49,6 @@ func (m *RenameModel) SetError(message string) {
 }
 
 func (m *RenameModel) SetLibraryStatus(status string) { m.LibraryStatus = status }
-
-func (m *RenameModel) SetScrollBounds(maximum int) {
-	if maximum < 0 {
-		maximum = 0
-	}
-	m.ScrollMax = maximum
-	if m.ScrollLine > maximum {
-		m.ScrollLine = maximum
-	}
-}
 
 func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 	if !event.Pressed {
@@ -67,17 +58,14 @@ func (m *RenameModel) Handle(event InputEvent) RenameIntent {
 		if event.Button == ButtonA || event.Button == ButtonB || event.Button == ButtonQuit {
 			return RenameIntentBack
 		}
+		if m.State == RenameDone {
+			m.HandleScroll(event.Button)
+		}
 		return RenameIntentNone
 	}
 	switch event.Button {
-	case ButtonUp:
-		if m.ScrollLine > 0 {
-			m.ScrollLine--
-		}
-	case ButtonDown:
-		if m.ScrollLine < m.ScrollMax {
-			m.ScrollLine++
-		}
+	case ButtonUp, ButtonDown, ButtonLeft, ButtonRight:
+		m.HandleScroll(event.Button)
 	case ButtonA:
 		return RenameIntentConfirm
 	case ButtonB, ButtonQuit:

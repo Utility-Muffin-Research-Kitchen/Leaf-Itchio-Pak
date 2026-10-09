@@ -31,16 +31,16 @@ func NewCatCacheRefreshFlow(client *itchio.Client, cachePath string, wake func()
 	flow := &CatCacheRefreshFlow{cancel: cancel, wake: wake, result: make(chan catCacheRefreshResult, 1)}
 	model := appui.NewRefreshModel("Refreshing Game List")
 	go func() {
-		games, err := client.FetchAllGames(ctx, func(partial []itchio.Game) {
+		// A system whose feed fails keeps its games from the current cache.
+		previous, _ := itchio.LoadGamesCache(cachePath)
+		fetch, err := client.FetchAllGames(ctx, func(partial []itchio.Game) {
 			flow.fetched.Store(int64(len(partial)))
 			if flow.wake != nil {
 				flow.wake()
 			}
 		})
+		games, err := commitCatalogFetch(cachePath, previous, fetch, err)
 		result := catCacheRefreshResult{games: games, err: err, cancelled: errors.Is(err, context.Canceled)}
-		if err == nil {
-			result.err = itchio.SaveGamesCache(cachePath, games)
-		}
 		flow.done.Store(true)
 		flow.result <- result
 		if flow.wake != nil {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,76 @@ func TestSaveGamesCache_AtomicWrite(t *testing.T) {
 	// Temp file must not linger.
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Error("temp file .tmp should not exist after successful save")
+	}
+}
+
+// D2: a launch reads every feed again when the last full crawl is a week
+// old or the cache is of another revision, checks the newest feeds when the
+// last check is a day old, and otherwise does nothing.
+func TestGameCacheDueRefresh(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	ago := func(d time.Duration) time.Time { return now.Add(-d) }
+	const day = 24 * time.Hour
+	for _, tc := range []struct {
+		name string
+		meta itchio.CacheMeta
+		want itchio.CacheRefresh
+	}{
+		{"checked an hour ago", itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FullFetchedAt: ago(2 * day), CheckedAt: ago(time.Hour)}, itchio.CacheRefreshNone},
+		{"checked a day ago", itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FullFetchedAt: ago(2 * day), CheckedAt: ago(day)}, itchio.CacheRefreshIncremental},
+		{"checked 25 h ago", itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FullFetchedAt: ago(6 * day), CheckedAt: ago(25 * time.Hour)}, itchio.CacheRefreshIncremental},
+		{"full crawl a week ago", itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FullFetchedAt: ago(7 * day), CheckedAt: ago(time.Hour)}, itchio.CacheRefreshFull},
+		{"full crawl 8 days ago, checked 25 h ago", itchio.CacheMeta{Revision: itchio.GamesCacheRevision, FullFetchedAt: ago(8 * day), CheckedAt: ago(25 * time.Hour)}, itchio.CacheRefreshFull},
+		{"revision 1 saved an hour ago", itchio.CacheMeta{Revision: 1, FetchedAt: ago(time.Hour)}, itchio.CacheRefreshFull},
+		{"newer revision", itchio.CacheMeta{Revision: itchio.GamesCacheRevision + 1, FullFetchedAt: ago(time.Hour), CheckedAt: ago(time.Hour)}, itchio.CacheRefreshFull},
+	} {
+		cache := &itchio.GameCache{Meta: tc.meta}
+		if got := cache.DueRefresh(now); got != tc.want {
+			t.Errorf("%s: DueRefresh = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Revision 2 records the last full crawl and the last check next to the
+// last save. A full crawl's save sets all three; a check's save keeps the
+// full crawl's time.
+func TestSaveGamesCacheRecordsTheFullCrawlAndTheCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "games_cache.json")
+	games := []itchio.Game{{Title: "Alpha", URL: "https://dev.itch.io/alpha", Platform: "GB"}}
+	if err := itchio.SaveGamesCache(path, games); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"revision":2`, `"fetched_at":`, `"full_fetched_at":`, `"checked_at":`, `"total_games":1`} {
+		if !strings.Contains(string(data), field) {
+			t.Errorf("saved meta lacks %s: %.200s", field, data)
+		}
+	}
+	full, err := itchio.LoadGamesCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := full.Meta
+	if time.Since(meta.FullFetchedAt) > 5*time.Second || !meta.CheckedAt.Equal(meta.FullFetchedAt) || !meta.FetchedAt.Equal(meta.CheckedAt) {
+		t.Fatalf("full crawl meta = %+v, want fetched, checked and full crawl all now", meta)
+	}
+
+	lastFull := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+	if err := itchio.SaveCheckedGamesCache(path, games, lastFull); err != nil {
+		t.Fatal(err)
+	}
+	checked, err := itchio.LoadGamesCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta = checked.Meta
+	if !meta.FullFetchedAt.Equal(lastFull) || time.Since(meta.CheckedAt) > 5*time.Second || !meta.FetchedAt.Equal(meta.CheckedAt) {
+		t.Fatalf("check meta = %+v, want the full crawl kept at %v and fetched/checked now", meta, lastFull)
+	}
+	if !checked.CurrentRevision() || meta.TotalGames != 1 {
+		t.Fatalf("check meta = %+v", meta)
 	}
 }

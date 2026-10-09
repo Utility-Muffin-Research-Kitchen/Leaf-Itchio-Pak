@@ -72,8 +72,12 @@ func TestDetectROMExt(t *testing.T) {
 		{"GBC compatible (flag 0x80)", gbHeader(0x80), ".gbc"},
 		{"GBC only (flag 0xC0)", gbHeader(0xC0), ".gbc"},
 		{"Sega Genesis", mdHeader(), ".md"},
-		{"PNG width=128 → p8.png", pngHeader(128), ".p8.png"},
-		{"PNG width=256 → not p8.png", pngHeader(256), ""},
+		// A PNG is never a cart by its bytes (F27). A Pico-8 cart image is 160
+		// pixels wide, so a width of 128 matched a screenshot or label, and
+		// a 160-pixel PNG is as likely a cover. Only a .p8.png name makes one.
+		{"PNG width=128 → not a cart", pngHeader(128), ""},
+		{"PNG width=160 → not a cart", pngHeader(160), ""},
+		{"PNG width=256 → not a cart", pngHeader(256), ""},
 		{"Pico-8 .p8 text cart", []byte("pico-8 cartridge // http://www.pico-8.com\n"), ".p8"},
 		{"ZIP magic", []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00}, ".zip"},
 		{"CHD magic", []byte("MComprHD fixture"), ".chd"},
