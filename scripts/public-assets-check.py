@@ -11,14 +11,14 @@ import struct
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXPECTED = {
     "pak/res/icon.png": (256, 256, "b5ea2fbf5d7c6fbc77af40f7dc069c4f7a900f0a6aab4f848eed54604aa14a11"),
-    "docs/screenshots/main-list.png": (960, 720, "f397b9ac98b8570051fc431852a180458602b1eb3f044dd9578d9e97f3729454"),
-    "docs/screenshots/filter-search.png": (960, 720, "09828b490d6c9709ac0768b8883648f96efb966724dea215f7081376e4aab829"),
-    "docs/screenshots/detail-gallery.png": (960, 720, "859e2faab406b4d5a3dfd2d070f162c563979d2402ae9c3276e484440c6e7802"),
-    "docs/screenshots/content-warning.png": (960, 720, "602d67cbe845902927bcfb77a25197756e48d7ec75227de6a0274cdafa5da3c2"),
-    "docs/screenshots/download-progress.png": (960, 720, "eb569f943a779738861d005f453d094240aa2421c240f8af31203eb3401fd44b"),
-    "docs/screenshots/settings.png": (960, 720, "40c39acf9fa4a2327365f1756061c7fe3846afed57d00a4fe237588aace84b2c"),
-    "docs/screenshots/dual-sd-destination.png": (960, 720, "350be9e0d313281b15b46cf2f0328616cefb9c74fb6dcaa2d20ed313bc16d87d"),
-    "docs/screenshots/downloaded-manage.png": (960, 720, "16c882fdf8be2c9b909c1e99d9ab8ec00e61b9a6eebd515ef1c41b59e2ffc898"),
+    "docs/screenshots/main-list.png": (960, 720, "da660df96cc167c1db095505d7589a1b6b852b18f938147f87182ea097a8aa55"),
+    "docs/screenshots/filter-search.png": (960, 720, "26f2a435ca89a851593020373684f2f808fb996fd02a4a3079732dbfcf0a6a7a"),
+    "docs/screenshots/detail-gallery.png": (960, 720, "8d2e3f75bbfca518030e242f9058b9e2a182151aee789579d469b2540c41df20"),
+    "docs/screenshots/content-warning.png": (960, 720, "968ba609536f4002027f4cfdb5f74f206e0b4b49c9dfb4df4ce0691f440adc37"),
+    "docs/screenshots/download-progress.png": (960, 720, "e29195572a3dc4e76df66d54282b4fd536498c2dc6430ea6560d036f8ee25574"),
+    "docs/screenshots/settings.png": (960, 720, "784ef753b551cb0e456ca4431846e2119a6d7b2517775e588506d2a343b21849"),
+    "docs/screenshots/dual-sd-destination.png": (960, 720, "e150c02f77a44043365da893213354a5938667cebf110155f4766ebd831877eb"),
+    "docs/screenshots/downloaded-manage.png": (960, 720, "0c6e488dfaf639a3cac4cecef8310b91e54d95fbe58876ea9ed160e64377e917"),
 }
 FORBIDDEN_METADATA = {b"tEXt", b"zTXt", b"iTXt", b"eXIf"}
 
@@ -34,8 +34,9 @@ def png_info(data: bytes) -> tuple[int, int, set[bytes]]:
     if data[12:16] != b"IHDR" or length != 13:
         fail("artifact has no canonical PNG header")
     width, height, depth, color_type = struct.unpack(">IIBB", data[16:26])
-    if depth != 8 or color_type != 6:
-        fail(f"artifact must be 8-bit RGBA, got depth={depth} color={color_type}")
+    # 2 is RGB (screenshots captured on the device), 6 is RGBA (the icon).
+    if depth != 8 or color_type not in (2, 6):
+        fail(f"artifact must be 8-bit RGB or RGBA, got depth={depth} color={color_type}")
     chunks: set[bytes] = set()
     offset = 8
     while offset + 12 <= len(data):
