@@ -356,6 +356,40 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+// recordKey is what tells one recorded file from another.
+//
+// A record stands for one file on a card, so its identity is where that file
+// sits: the source and the path under it, compared case-insensitively as FAT32
+// does (place). Writing a file at the path of an existing record, as a
+// reinstall or an update does, replaces that record. Sharing a name is not
+// identity: an archive can hold main.p8 in two folders, and one upload can sit
+// on both cards, so each of those files keeps its own record.
+//
+// One case is wider. A direct download records the upload's name as Filename
+// whatever the file is called on the card, and the app names the file itself
+// inside its folder: unified naming, numbered names. The same Filename in the
+// same folder (name and folder) is that file under another name, so it is the
+// same record. Files an archive installs record their own name as Filename,
+// so for them this never differs from place. A file the app moves later, such
+// as a rename in Manage, is updated through UpdateFile, not Add.
+type recordKey struct {
+	place  string
+	folder string
+	name   string
+}
+
+func keyOf(file DownloadedFile) recordKey {
+	if source, rel, ok := fileIdentity(file); ok {
+		return recordKey{place: source + ":" + rel, folder: source + ":" + path.Dir(rel), name: file.Filename}
+	}
+	clean := filepath.Clean(file.DestPath)
+	return recordKey{place: leftOverKey(clean), folder: strings.ToLower(filepath.Dir(clean)), name: file.Filename}
+}
+
+func (a recordKey) sameFile(b recordKey) bool {
+	return a.place == b.place || a.name == b.name && a.folder == b.folder
+}
+
 // Save writes the inventory to path atomically (write to .tmp then rename).
 func (inv *Inventory) Save(path string) error {
 	lease, err := leaf.BeginOperation(context.Background(), "inventory commit", false)
@@ -383,7 +417,8 @@ func (inv *Inventory) Save(path string) error {
 	return nil
 }
 
-// Add upserts an entry and appends a file, deduplicating by DestPath.
+// Add upserts an entry and records file. A record of the same file is
+// replaced; see recordKey for what the same file is.
 func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
@@ -437,8 +472,9 @@ func (inv *Inventory) Add(gameURL string, e Entry, file DownloadedFile) {
 		existing.CoverURL = e.CoverURL
 	}
 	replaced := false
+	key := keyOf(file)
 	for i, f := range existing.Files {
-		if f.DestPath == file.DestPath || f.Filename == file.Filename {
+		if f.DestPath == file.DestPath || keyOf(f).sameFile(key) {
 			if file.ArtworkPath == "" {
 				file.ArtworkPath = f.ArtworkPath
 				file.ArtworkHash = f.ArtworkHash
@@ -592,7 +628,8 @@ func (inv *Inventory) Lookup(gameURL string) (Entry, bool) {
 
 // ExistingDestPath returns the dest_path of an already-downloaded file matching
 // the given upload filename, or "" if not found. Used to overwrite an existing
-// download rather than creating a duplicate.
+// download rather than creating a duplicate. When the upload is installed in
+// more than one place, such as on both cards, it is the one installed last.
 func (inv *Inventory) ExistingDestPath(gameURL, uploadFilename string) string {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
@@ -600,12 +637,16 @@ func (inv *Inventory) ExistingDestPath(gameURL, uploadFilename string) string {
 	if !ok {
 		return ""
 	}
-	for _, f := range e.Files {
-		if f.Filename == uploadFilename {
-			return f.DestPath
+	found := -1
+	for i, f := range e.Files {
+		if f.Filename == uploadFilename && (found < 0 || !f.DownloadedAt.Before(e.Files[found].DownloadedAt)) {
+			found = i
 		}
 	}
-	return ""
+	if found < 0 {
+		return ""
+	}
+	return e.Files[found].DestPath
 }
 
 // IsPresent reports whether gameURL has an inventory entry with at least one file.
@@ -644,9 +685,10 @@ func (inv *Inventory) RemoveFile(gameURL, destPath string) bool {
 }
 
 // VerifyAndClean walks all entries, removes DownloadedFile rows whose DestPath no
-// longer exists on disk, deduplicates rows with the same Filename (keeping the
-// most recently downloaded), removes Entry values with no remaining files, saves
-// if any changes were made, and returns the count of removed DownloadedFile rows.
+// longer exists on disk, deduplicates rows of one file (see recordKey), keeping
+// the most recently downloaded, removes Entry values with no remaining files,
+// saves if any changes were made, and returns the count of removed
+// DownloadedFile rows.
 func (inv *Inventory) VerifyAndClean(path string) int {
 	return inv.verifyAndClean(path, nil)
 }
@@ -753,22 +795,32 @@ func (inv *Inventory) verifyAndClean(path string, sources leaf.SourceList) int {
 			}
 		}
 
-		// Pass 2: deduplicate by Filename, keeping the most recently downloaded.
-		best := make(map[string]DownloadedFile, len(present))
+		// Pass 2: fold the rows of one file into the most recently downloaded
+		// one. A row keeps the place of the first row of its file, so the order
+		// of an entry's files does not change.
+		kept := make([]DownloadedFile, 0, len(present))
+		keys := make([]recordKey, 0, len(present))
 		for _, f := range present {
-			if cur, ok := best[f.Filename]; !ok || f.DownloadedAt.After(cur.DownloadedAt) {
-				best[f.Filename] = f
+			key := keyOf(f)
+			index := -1
+			for i := range kept {
+				if keys[i].sameFile(key) {
+					index = i
+					break
+				}
+			}
+			switch {
+			case index < 0:
+				kept, keys = append(kept, f), append(keys, key)
+			case f.DownloadedAt.After(kept[index].DownloadedAt):
+				kept[index], keys[index] = f, key
 			}
 		}
-		if len(best) < len(present) {
-			dropped := len(present) - len(best)
+		if len(kept) < len(present) {
+			dropped := len(present) - len(kept)
 			logger.Debug("inventory: deduplicating %d file(s) for game=%q", dropped, entry.Title)
 			removed += dropped
 			changed = true
-		}
-		var kept []DownloadedFile
-		for _, f := range best {
-			kept = append(kept, f)
 		}
 
 		if len(kept) == 0 {
