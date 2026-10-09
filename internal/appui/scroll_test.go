@@ -235,7 +235,7 @@ func TestSignInWarningAndCodeScroll(t *testing.T) {
 
 func TestDetailStartsANewBodyAtTheTop(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Leafbound", Downloaded: true})
-	model.SetReady("<p>One</p><p>Two</p>", nil, nil, false, false)
+	model.SetReady("<p>One</p><p>Two</p>", nil, nil, false, nil)
 	model.SetScrollBounds(3)
 	model.Handle(press(ButtonDown))
 	model.SetError("Can't reach itch.io. Check the connection, then reopen this game.")
@@ -303,7 +303,7 @@ func TestRenamePromptPages(t *testing.T) {
 // Down scroll the description there.
 func TestDetailLeftRightStillMoveTheImages(t *testing.T) {
 	model := NewDetailModel(DetailGame{Title: "Leafbound"})
-	model.SetReady("<p>One</p><p>Two</p>", nil, []string{"cover", "shot", "shot2"}, false, false)
+	model.SetReady("<p>One</p><p>Two</p>", nil, []string{"cover", "shot", "shot2"}, false, nil)
 	model.SetScrollBounds(30)
 	model.SetScrollRows(8)
 	for _, step := range []struct {

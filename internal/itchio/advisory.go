@@ -68,29 +68,49 @@ func normalizeTagList(list []string) []string {
 	return out
 }
 
+// The categories' names, as the Content Moderation screen shows them. The
+// content warning names a matched category the same way.
+const (
+	CategoryAdultContent = "Adult Content"
+	CategoryQueerContent = "Queer Content"
+	CategoryHeavyThemes  = "Heavy Themes"
+	CategorySubstanceUse = "Substance Use"
+)
+
 // IsAdvisoryTriggered returns true if any tag in pageTags matches an active
 // filter in cfg. Tag matching is case-insensitive and whitespace-trimmed.
 func IsAdvisoryTriggered(pageTags []string, cfg FilterConfig) bool {
-	// Normalise opt-out lists once, outside the per-tag loop.
-	adultDis := normalizeTagList(cfg.AdultContent.Disabled)
-	queerDis := normalizeTagList(cfg.QueerContent.Disabled)
-	heavyDis := normalizeTagList(cfg.HeavyThemes.Disabled)
-	substanceDis := normalizeTagList(cfg.SubstanceUse.Disabled)
+	return len(MatchedCategories(pageTags, cfg)) > 0
+}
 
-	for _, tag := range pageTags {
-		slug := strings.ToLower(strings.TrimSpace(tag))
-		if cfg.AdultContent.Enabled && slices.Contains(AdultContentTags, slug) && !slices.Contains(adultDis, slug) {
-			return true
+// MatchedCategories names the categories whose active filters match a tag in
+// pageTags, each once, in the order the Content Moderation screen lists them.
+// It returns nil when nothing matches. Tag matching is case-insensitive and
+// whitespace-trimmed; a tag you allowed one by one does not match.
+func MatchedCategories(pageTags []string, cfg FilterConfig) []string {
+	var matched []string
+	for _, category := range []struct {
+		name   string
+		tags   []string
+		filter CategoryFilter
+	}{
+		{CategoryAdultContent, AdultContentTags, cfg.AdultContent},
+		{CategoryQueerContent, QueerContentTags, cfg.QueerContent},
+		{CategoryHeavyThemes, HeavyThemesTags, cfg.HeavyThemes},
+		{CategorySubstanceUse, SubstanceUseTags, cfg.SubstanceUse},
+	} {
+		if !category.filter.Enabled {
+			continue
 		}
-		if cfg.QueerContent.Enabled && slices.Contains(QueerContentTags, slug) && !slices.Contains(queerDis, slug) {
-			return true
-		}
-		if cfg.HeavyThemes.Enabled && slices.Contains(HeavyThemesTags, slug) && !slices.Contains(heavyDis, slug) {
-			return true
-		}
-		if cfg.SubstanceUse.Enabled && slices.Contains(SubstanceUseTags, slug) && !slices.Contains(substanceDis, slug) {
-			return true
+		// Normalise the opt-out list once, outside the per-tag loop.
+		allowed := normalizeTagList(category.filter.Disabled)
+		for _, tag := range pageTags {
+			slug := strings.ToLower(strings.TrimSpace(tag))
+			if slices.Contains(category.tags, slug) && !slices.Contains(allowed, slug) {
+				matched = append(matched, category.name)
+				break
+			}
 		}
 	}
-	return false
+	return matched
 }

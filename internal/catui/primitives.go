@@ -723,6 +723,11 @@ func (ui *Composer) DrawWarningCover(bounds Rect, title, body string) error {
 	for _, line := range wrapText(body, inner.W, func(value string) int {
 		return ui.ctx.MeasureText(FontSmall, value)
 	}) {
+		if line == "" {
+			// A blank line separates two paragraphs: leave a gap, draw nothing.
+			y += ui.ctx.FontHeight(FontSmall) / 2
+			continue
+		}
 		if _, err := ui.ctx.DrawText(FontSmall, line, inner.X, y, color, inner.W, false); err != nil {
 			return err
 		}

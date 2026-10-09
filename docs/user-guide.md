@@ -51,8 +51,11 @@ your account doesn't own says **Not owned** under the QR code and has no
 download; scan the code to buy it on itch.io. The page follows your account,
 so signing in or out from Settings updates it right away.
 
-A tag-based content warning must be acknowledged before flagged detail content
-is shown. Warning categories can be changed in Settings; they do not delete or
+A game that matches one of your content filters shows a warning in place of its
+details. The warning names the categories that matched, as **Content
+Moderation** does: **Adult Content**, **Queer Content**, **Heavy Themes** or
+**Substance Use**. Press Start to open **Content Moderation** and change them,
+then open the game again. B goes back to the list. The filters never delete or
 silently remove catalogue entries.
 
 ## Download flow

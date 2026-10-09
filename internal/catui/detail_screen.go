@@ -91,8 +91,7 @@ func (screen *DetailScreen) Draw() error {
 	case appui.DetailLoading:
 		err = screen.ui.DrawState(body, StateLoading, "Loading game details", "Reading screenshots, tags, and download metadata…")
 	case appui.DetailWarning:
-		err = screen.ui.DrawWarningCover(body, "Content warning",
-			"This game matches one or more enabled content filters. Return to the list, or review the filter settings before continuing.")
+		err = screen.ui.DrawWarningCover(body, "Content warning", appui.WarningText(screen.model.WarningCategories))
 	default:
 		err = screen.drawReady(frame.Layout.Content)
 	}

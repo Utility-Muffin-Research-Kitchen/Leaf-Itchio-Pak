@@ -50,8 +50,8 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 			model.Tags = dedupeStrings(loader.game.Tags)
 			model.Images = dedupeStrings([]string{loader.game.CoverURL})
 			model.SetError(unavailableDetail(result.err))
-			if itchio.IsAdvisoryTriggered(model.Tags, catFilterConfig(cfg)) {
-				model.State = appui.DetailWarning
+			if categories := itchio.MatchedCategories(model.Tags, catFilterConfig(cfg)); len(categories) > 0 {
+				model.SetWarning(categories)
 			}
 			return true
 		}
@@ -72,7 +72,7 @@ func (loader *CatDetailLoader) Sync(model *appui.DetailModel, cfg *settings.Conf
 		tags := dedupeStrings(append(append([]string{}, loader.game.Tags...), detail.PageTags...))
 		// Catalogue and page tags together, so a tag that warns on the
 		// unavailable page also warns here.
-		warning := itchio.IsAdvisoryTriggered(tags, catFilterConfig(cfg))
+		warning := itchio.MatchedCategories(tags, catFilterConfig(cfg))
 		model.SetReady(detail.Description, tags, images, detail.BrowserOnly, warning)
 		return true
 	default:

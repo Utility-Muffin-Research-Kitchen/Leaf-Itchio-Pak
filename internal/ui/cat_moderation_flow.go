@@ -25,10 +25,10 @@ func NewCatModerationFlow(cfg *settings.Config, cfgPath string) (*CatModerationF
 
 func (flow *CatModerationFlow) Refresh(model *appui.SettingsModel) {
 	model.SetRows("Local advisory filters · creator tagging may be incomplete", []appui.SettingsRow{
-		{Key: appui.SettingsAdultContent, Label: "Adult Content", Value: categoryValue(flow.cfg.Filter.AdultContent, itchio.AdultContentTags), ActionEnabled: true},
-		{Key: appui.SettingsQueerContent, Label: "Queer Content", Value: categoryValue(flow.cfg.Filter.QueerContent, itchio.QueerContentTags), ActionEnabled: true},
-		{Key: appui.SettingsHeavyThemes, Label: "Heavy Themes", Value: categoryValue(flow.cfg.Filter.HeavyThemes, itchio.HeavyThemesTags), ActionEnabled: true},
-		{Key: appui.SettingsSubstanceUse, Label: "Substance Use", Value: blockedAllowed(flow.cfg.Filter.SubstanceUse.Enabled), ActionEnabled: true},
+		{Key: appui.SettingsAdultContent, Label: itchio.CategoryAdultContent, Value: categoryValue(flow.cfg.Filter.AdultContent, itchio.AdultContentTags), ActionEnabled: true},
+		{Key: appui.SettingsQueerContent, Label: itchio.CategoryQueerContent, Value: categoryValue(flow.cfg.Filter.QueerContent, itchio.QueerContentTags), ActionEnabled: true},
+		{Key: appui.SettingsHeavyThemes, Label: itchio.CategoryHeavyThemes, Value: categoryValue(flow.cfg.Filter.HeavyThemes, itchio.HeavyThemesTags), ActionEnabled: true},
+		{Key: appui.SettingsSubstanceUse, Label: itchio.CategorySubstanceUse, Value: blockedAllowed(flow.cfg.Filter.SubstanceUse.Enabled), ActionEnabled: true},
 	})
 }
 
@@ -39,11 +39,11 @@ func (flow *CatModerationFlow) Activate(model *appui.SettingsModel) (*CatTagFlow
 	}
 	switch row.Key {
 	case appui.SettingsAdultContent:
-		return newCatTagFlow(flow.cfg, flow.cfgPath, "Adult Content", itchio.AdultContentTags, &flow.cfg.Filter.AdultContent)
+		return newCatTagFlow(flow.cfg, flow.cfgPath, itchio.CategoryAdultContent, itchio.AdultContentTags, &flow.cfg.Filter.AdultContent)
 	case appui.SettingsQueerContent:
-		return newCatTagFlow(flow.cfg, flow.cfgPath, "Queer Content", itchio.QueerContentTags, &flow.cfg.Filter.QueerContent)
+		return newCatTagFlow(flow.cfg, flow.cfgPath, itchio.CategoryQueerContent, itchio.QueerContentTags, &flow.cfg.Filter.QueerContent)
 	case appui.SettingsHeavyThemes:
-		return newCatTagFlow(flow.cfg, flow.cfgPath, "Heavy Themes", itchio.HeavyThemesTags, &flow.cfg.Filter.HeavyThemes)
+		return newCatTagFlow(flow.cfg, flow.cfgPath, itchio.CategoryHeavyThemes, itchio.HeavyThemesTags, &flow.cfg.Filter.HeavyThemes)
 	case appui.SettingsSubstanceUse:
 		flow.cfg.Filter.SubstanceUse.Enabled = !flow.cfg.Filter.SubstanceUse.Enabled
 		if err := flow.cfg.Save(flow.cfgPath); err != nil {

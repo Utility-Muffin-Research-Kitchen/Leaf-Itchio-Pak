@@ -73,7 +73,8 @@ func RunInputFixture(config InputFixtureConfig) error {
 		handleIntent = func(event InputEvent) bool {
 			return screen.HandleInput(event) != appui.FilterIntentCancel
 		}
-	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale", "warning",
+	case "detail", "detail-price", "detail-donation", "detail-owned", "detail-minimum", "detail-free-sale",
+		"warning", "warning-two", "warning-four",
 		"detail-unavailable", "detail-unavailable-downloaded", "detail-unavailable-offline", "detail-title-emoji", "detail-title-cjk":
 		model := appui.NewDetailModel(appui.DetailGame{
 			Title: "Leafbound 葉", Author: "UMRK fixture", URL: "https://example.itch.io/leafbound",
@@ -104,7 +105,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 		}
 		model.SetReady(`<h2>A pocket-sized journey</h2><p>Explore a multilingual forest, collect lost seeds, and bring music back to every clearing.</p><ul><li>Controller ready</li><li>Offline after install</li></ul>`,
 			[]string{"Game Boy Color", "Adventure", "日本語", "GIF gallery"},
-			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, config.Screen == "warning")
+			[]string{"fixture://detail-cover", "fixture://detail-shot"}, false, warningFixtureCategories(config.Screen))
 		if strings.HasPrefix(config.Screen, "detail-unavailable") {
 			model.SetError("Go back and reopen this game to try again.")
 			if config.Screen == "detail-unavailable-offline" {
@@ -538,7 +539,7 @@ func RunInputFixture(config InputFixtureConfig) error {
 				Platform: "GBA", Price: 4.99, NeedsSignIn: config.Screen == "detail-signin",
 			})
 			detail.SetReady(`<p>A paid Game Boy Advance release. Sign in with itch.io to download it once you own it.</p>`,
-				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, false)
+				[]string{"Game Boy Advance", "Paid"}, []string{"fixture://detail-cover"}, false, nil)
 			screen, screenErr := NewDetailScreen(ctx, detail, cache)
 			if screenErr != nil {
 				return screenErr
@@ -688,4 +689,18 @@ func fixtureSoundtrack() []string {
 		tracks = append(tracks, fmt.Sprintf("%02d %s.ogg", index+1, names[index%len(names)]))
 	}
 	return tracks
+}
+
+// warningFixtureCategories are the categories the warning fixtures name: one,
+// two, and all four of them, which is the longest warning there is.
+func warningFixtureCategories(screen string) []string {
+	switch screen {
+	case "warning":
+		return []string{"Adult Content"}
+	case "warning-two":
+		return []string{"Adult Content", "Heavy Themes"}
+	case "warning-four":
+		return []string{"Adult Content", "Queer Content", "Heavy Themes", "Substance Use"}
+	}
+	return nil
 }

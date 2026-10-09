@@ -63,6 +63,13 @@ capture detail-unavailable-offline 1280 800 0 5
 capture detail-unavailable-offline-end 960 720 1 2
 capture detail-unavailable-offline-end 1280 800 0 5
 capture warning 960 720 1 0
+capture warning 960 720 1 2
+capture warning 1280 800 0 5
+capture warning-two 960 720 1 0
+capture warning-two 960 720 1 2
+capture warning-two 1280 800 0 5
+capture warning-four 960 720 1 2
+capture warning-four 1280 800 0 5
 capture download-select 960 720 1 0
 capture download-select 1280 800 0 5
 capture download-select-hidden 960 720 1 2
