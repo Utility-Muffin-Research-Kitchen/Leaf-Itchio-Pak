@@ -140,9 +140,9 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 		if !gameCache.CurrentRevision() {
 			logger.Info("cache: catalogue revision %d is older than %d; refreshing platform coverage in background",
 				gameCache.Meta.Revision, itchio.GamesCacheRevision)
-			go controller.buildCache()
+			go controller.buildCache(gameCache.Games)
 		} else {
-			go controller.refreshCacheIfStale(gameCache.Meta.FetchedAt)
+			go controller.refreshCacheIfStale(gameCache)
 		}
 	} else {
 		if err != nil {
@@ -151,7 +151,7 @@ func NewCatalogController(client *itchio.Client, cfg *settings.Config, cfgPath, 
 			logger.Debug("cache: file exists but contains no games, using live feed")
 		}
 		go controller.loadPage(1)
-		go controller.buildCache()
+		go controller.buildCache(nil)
 	}
 	return controller
 }
@@ -569,13 +569,16 @@ func (controller *CatalogController) rebuildView() {
 
 func (controller *CatalogController) IsBusy() bool { return controller.cacheBuilding.Load() }
 
-func (controller *CatalogController) buildCache() {
+// buildCache refreshes the catalogue from every feed. previous is the cache
+// the refresh starts from (nil on first launch): a system whose feed fails
+// keeps its games from it.
+func (controller *CatalogController) buildCache(previous []itchio.Game) {
 	if !controller.cacheBuilding.CompareAndSwap(false, true) {
 		return
 	}
 	defer controller.cacheBuilding.Store(false)
 	logger.Info("cache: starting background full fetch")
-	games, err := controller.client.FetchAllGames(context.Background(), func(partial []itchio.Game) {
+	fetch, err := controller.client.FetchAllGames(context.Background(), func(partial []itchio.Game) {
 		// A partial background refresh must never replace a complete on-disk
 		// catalogue. Progressive results are useful only during first launch,
 		// before any committed cache exists.
@@ -594,15 +597,10 @@ func (controller *CatalogController) buildCache() {
 		}
 		controller.wakeUI()
 	})
+	games, err := commitCatalogFetch(controller.cachePath, previous, fetch, err)
 	if err != nil {
-		logger.Error("cache: full fetch failed after %d games: %v", len(games), err)
 		return
 	}
-	if err := itchio.SaveGamesCache(controller.cachePath, games); err != nil {
-		logger.Error("cache: save failed: %v", err)
-		return
-	}
-	logger.Info("cache: saved %d games to %s", len(games), controller.cachePath)
 	controller.ApplyCatCache(games)
 }
 
@@ -629,12 +627,12 @@ func cacheAgeLabel(now time.Time, fetchedUnix int64) string {
 	}
 }
 
-func (controller *CatalogController) refreshCacheIfStale(fetchedAt time.Time) {
-	age := time.Since(fetchedAt)
+func (controller *CatalogController) refreshCacheIfStale(cache *itchio.GameCache) {
+	age := time.Since(cache.Meta.FetchedAt)
 	if age < cacheTTL {
 		logger.Debug("cache: fresh (age=%v), skipping background refresh", age.Round(time.Second))
 		return
 	}
 	logger.Info("cache: stale (age=%v), refreshing in background", age.Round(time.Second))
-	controller.buildCache()
+	controller.buildCache(cache.Games)
 }

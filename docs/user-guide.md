@@ -148,9 +148,10 @@ without deleting downloads.
 | Substance-use warnings | On | Master switch plus individual tags |
 | Queer/LGBTQ+ warnings | Off | Master switch plus individual tags |
 
-**Refresh Game List** rebuilds the public catalogue cache without replacing a
-working cache with partial results. **Update Inventory** checks missing artwork,
-removed upstream games, and newly offered uploads without deleting local files.
+**Refresh Game List** rebuilds the public catalogue cache. If an itch.io feed
+fails, the games of its system stay as they were and the other systems still
+update. **Update Inventory** checks missing artwork, removed upstream games,
+and newly offered uploads without deleting local files.
 The app also checks at launch and when you sign in or out, but then skips games
 it checked in the last six hours, and it waits while a download runs.
 A new version that replaces a file you downloaded, such as a new `.gb` build

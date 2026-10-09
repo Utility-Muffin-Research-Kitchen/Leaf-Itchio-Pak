@@ -195,7 +195,8 @@ func TestFetchAllGames_logsTitleFallbackOncePerURL(t *testing.T) {
 	client := itchio.NewClientWithBase(srv.URL)
 	for refresh := 1; refresh <= 2; refresh++ {
 		logs.Reset()
-		games, err := client.FetchAllGames(context.Background(), nil)
+		fetch, err := client.FetchAllGames(context.Background(), nil)
+		games := fetch.Games()
 		if err != nil {
 			t.Fatalf("refresh %d: FetchAllGames: %v", refresh, err)
 		}
@@ -384,10 +385,11 @@ func TestFetchAllGames(t *testing.T) {
 	c := itchio.NewClientWithBase(srv.URL)
 	var progressCalls int
 	var lastFetched int
-	games, err := c.FetchAllGames(context.Background(), func(partial []itchio.Game) {
+	fetch, err := c.FetchAllGames(context.Background(), func(partial []itchio.Game) {
 		progressCalls++
 		lastFetched = len(partial)
 	})
+	games := fetch.Games()
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
@@ -501,7 +503,8 @@ func TestFetchAllGames_GBAUsesCanonicalSlug(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	games, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+	fetch, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+	games := fetch.Games()
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
@@ -538,7 +541,8 @@ func TestFetchAllGames_StopsOnWrapAround(t *testing.T) {
 	defer srv.Close()
 
 	c := itchio.NewClientWithBase(srv.URL)
-	games, err := c.FetchAllGames(context.Background(), nil)
+	fetch, err := c.FetchAllGames(context.Background(), nil)
+	games := fetch.Games()
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
@@ -553,7 +557,8 @@ func TestFetchAllGames_StopsOnWrapAround(t *testing.T) {
 
 func TestFetchAllGames_Dedup(t *testing.T) {
 	// The same game URL appears in two different feed slugs.
-	// It should only appear once in the result, tagged with the first platform.
+	// It should only appear once in the result, tagged with the first platform
+	// in AllPlatforms order.
 	dupXML := `<?xml version="1.0"?><rss version="2.0"><channel>
 <item>
   <title>Dup Game</title>
@@ -578,17 +583,18 @@ func TestFetchAllGames_Dedup(t *testing.T) {
 	defer srv.Close()
 
 	c := itchio.NewClientWithBase(srv.URL)
-	games, err := c.FetchAllGames(context.Background(), nil)
+	fetch, err := c.FetchAllGames(context.Background(), nil)
+	games := fetch.Games()
 	if err != nil {
 		t.Fatalf("FetchAllGames: %v", err)
 	}
 	if len(games) != 1 {
 		t.Errorf("got %d games after dedup, want 1", len(games))
 	}
-	// With parallel slug fetching the winning platform is whichever slug completes
-	// first — nondeterministic, but must be one of the two that returned the game.
-	if games[0].Platform != "GBC" && games[0].Platform != "GB" {
-		t.Errorf("Platform = %q, want GBC or GB", games[0].Platform)
+	// Feeds merge in AllPlatforms order, whichever finished first, so the
+	// game keeps the more specific GBC code.
+	if games[0].Platform != "GBC" {
+		t.Errorf("Platform = %q, want GBC", games[0].Platform)
 	}
 }
 
@@ -880,7 +886,8 @@ func TestFetchAllGames_LaterPageNotFoundEndsFeed(t *testing.T) {
 				w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
 			}
 		}))
-		games, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+		fetch, err := itchio.NewClientWithBase(srv.URL).FetchAllGames(context.Background(), nil)
+		games := fetch.Games()
 		srv.Close()
 		if err != nil {
 			t.Fatalf("HTTP %d past the end: %v", status, err)
