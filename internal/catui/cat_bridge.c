@@ -37,6 +37,128 @@ static struct {
     int input_since_draw;
 } catui__state;
 
+/* Text runs drawn and measured by catui__fallback_text. It used to
+   rasterize, upload, draw and destroy every run on every frame, and to
+   measure every run with TTF_SizeUTF8 each time it was asked, which on the
+   MLP1 was most of a list frame. A run is now kept per (font, text): measured
+   once, rasterized white once, and tinted at draw time, as Catastrophe's own
+   text cache does. That cache has 64 entries shared with all of Cat's text,
+   which a list page or a wrapped detail page would cycle through every frame,
+   so the bridge keeps its own. */
+#define CATUI_TEXT_SLOTS 384
+#define CATUI_TEXT_BUCKETS 512 /* a power of two */
+#define CATUI_TEXT_TEXTURE_BYTES (8 * 1024 * 1024)
+
+typedef struct {
+    TTF_Font *font;
+    uint32_t hash;
+    char *text;
+    int measured_w;       /* cat_measure_text width, -1 until measured */
+    SDL_Texture *texture; /* white glyphs tinted per draw, NULL until drawn */
+    int texture_w, texture_h;
+    uint32_t frame;       /* last frame (catui_clear) that used the run */
+    int next;             /* next slot in the same bucket, -1 ends the chain */
+} catui_text_run;
+
+static struct {
+    catui_text_run slots[CATUI_TEXT_SLOTS];
+    int count;
+    int buckets[CATUI_TEXT_BUCKETS];
+    uint32_t frame;
+    size_t texture_bytes;
+    /* Cat's fonts when the cache was last emptied: runs are keyed on font
+       pointers, which a reload can hand to a new font of another size. */
+    TTF_Font *cat_fonts[CAT_FONT_TIER_COUNT];
+} catui__text;
+
+static uint32_t catui__text_hash(TTF_Font *font, const char *text) {
+    uint32_t hash = 2166136261u;
+    uintptr_t key = (uintptr_t)font;
+    for (size_t i = 0; i < sizeof(key); i++) {
+        hash ^= (uint8_t)(key >> (i * 8));
+        hash *= 16777619u;
+    }
+    for (const unsigned char *c = (const unsigned char *)text; *c; c++) {
+        hash ^= *c;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static void catui__text_free(catui_text_run *run) {
+    if (run->texture) {
+        SDL_DestroyTexture(run->texture);
+        catui__text.texture_bytes -= (size_t)run->texture_w * (size_t)run->texture_h * 4;
+    }
+    free(run->text);
+}
+
+static void catui__text_reset(void) {
+    for (int i = 0; i < catui__text.count; i++) catui__text_free(&catui__text.slots[i]);
+    catui__text.count = 0;
+    catui__text.texture_bytes = 0;
+    for (int i = 0; i < CATUI_TEXT_BUCKETS; i++) catui__text.buckets[i] = -1;
+    for (int tier = 0; tier < CAT_FONT_TIER_COUNT; tier++)
+        catui__text.cat_fonts[tier] = cat_get_font((cat_font_tier)tier);
+}
+
+/* Drops the runs neither this frame nor the last one used and reports
+   whether any slot came free. */
+static int catui__text_evict(void) {
+    int kept = 0;
+    for (int i = 0; i < catui__text.count; i++) {
+        catui_text_run *run = &catui__text.slots[i];
+        if (run->frame + 1 >= catui__text.frame) {
+            catui__text.slots[kept++] = *run;
+        } else {
+            catui__text_free(run);
+        }
+    }
+    if (kept == catui__text.count) return 0;
+    catui__text.count = kept;
+    for (int i = 0; i < CATUI_TEXT_BUCKETS; i++) catui__text.buckets[i] = -1;
+    for (int i = 0; i < kept; i++) {
+        catui_text_run *run = &catui__text.slots[i];
+        int bucket = (int)(run->hash & (CATUI_TEXT_BUCKETS - 1));
+        run->next = catui__text.buckets[bucket];
+        catui__text.buckets[bucket] = i;
+    }
+    return 1;
+}
+
+/* The cached run for text in font, or NULL when every slot holds a run this
+   frame or the last one used: the caller then draws or measures the text
+   uncached rather than evicting text that is on screen. The pointer is valid
+   until the next call. */
+static catui_text_run *catui__text_run(TTF_Font *font, const char *text) {
+    uint32_t hash = catui__text_hash(font, text);
+    int bucket = (int)(hash & (CATUI_TEXT_BUCKETS - 1));
+    for (int i = catui__text.buckets[bucket]; i >= 0; i = catui__text.slots[i].next) {
+        catui_text_run *run = &catui__text.slots[i];
+        if (run->hash == hash && run->font == font && strcmp(run->text, text) == 0) {
+            run->frame = catui__text.frame;
+            return run;
+        }
+    }
+    if (catui__text.count == CATUI_TEXT_SLOTS && !catui__text_evict()) return NULL;
+    char *copy = strdup(text);
+    if (!copy) return NULL;
+    int index = catui__text.count++;
+    catui__text.slots[index] = (catui_text_run){
+        .font = font, .hash = hash, .text = copy, .measured_w = -1,
+        .frame = catui__text.frame, .next = catui__text.buckets[bucket],
+    };
+    catui__text.buckets[bucket] = index;
+    return &catui__text.slots[index];
+}
+
+static int catui__measure_run(TTF_Font *font, const char *text) {
+    catui_text_run *run = catui__text_run(font, text);
+    if (!run) return cat_measure_text(font, text);
+    if (run->measured_w < 0) run->measured_w = cat_measure_text(font, text);
+    return run->measured_w;
+}
+
 static const char *catui__fallback_names[CATUI_FALLBACK_CAP] = {
     "font.ttf",
     "font_fallback_arabic.ttf",
@@ -104,6 +226,7 @@ static void catui__close_fallbacks(void) {
 }
 
 static void catui__load_fallbacks(void) {
+    catui__text_reset();
     catui__close_fallbacks();
     if (!catui__state.fallback_dir[0]) return;
 
@@ -179,6 +302,7 @@ int catui_quit(void) {
             catui__state.textures[i].generation++;
         }
     }
+    catui__text_reset();
     catui__close_fallbacks();
     cat_set_idle_wake_fd(-1);
     close(catui__state.wake_pipe[0]);
@@ -239,6 +363,14 @@ int catui_clear(void) {
     /* Every screen frame starts here, so input taken before this point is
        what the frame shows. */
     catui__state.input_since_draw = 0;
+    catui__text.frame++;
+    for (int tier = 0; tier < CAT_FONT_TIER_COUNT; tier++) {
+        if (cat_get_font((cat_font_tier)tier) != catui__text.cat_fonts[tier]) {
+            catui__text_reset();
+            break;
+        }
+    }
+    if (catui__text.texture_bytes > CATUI_TEXT_TEXTURE_BYTES) catui__text_evict();
     return CATUI_OK;
 }
 
@@ -281,6 +413,14 @@ int catui_fixture_frame_pending(void) {
 
 void catui_fixture_settle_input_frame(void) {
     if (catui__guard() == CATUI_OK) catui__settle_input_frame();
+}
+
+void catui_fixture_text_cache(int *runs, int *textures) {
+    int with_texture = 0;
+    for (int i = 0; i < catui__text.count; i++)
+        if (catui__text.slots[i].texture) with_texture++;
+    if (runs) *runs = catui__text.count;
+    if (textures) *textures = with_texture;
 }
 
 static int catui__fallback_text(int tier, const char *text, int draw,
@@ -474,7 +614,9 @@ int catui_set_font_bump(int bump) {
 
 int catui_measure_text(int tier, const char *text) {
     if (catui__guard() != CATUI_OK || !text) return 0;
-    return cat_measure_text(cat_get_font((cat_font_tier)tier), text);
+    TTF_Font *font = cat_get_font((cat_font_tier)tier);
+    if (!font || !text[0]) return 0;
+    return catui__measure_run(font, text);
 }
 
 int catui_draw_text(int tier, const char *text, int x, int y,
@@ -543,12 +685,38 @@ static int catui__draw_transient_text(TTF_Font *font, const char *text,
     return width;
 }
 
+static int catui__draw_run(TTF_Font *font, const char *text, int x, int y,
+                           cat_draw_color color) {
+    if (!font || !text || !text[0]) return 0;
+    catui_text_run *run = catui__text_run(font, text);
+    if (!run) return catui__draw_transient_text(font, text, x, y, color);
+    if (!run->texture) {
+        /* TTF_RenderUTF8_Blended writes (r,g,b,coverage), so white tinted by
+           (r,g,b) and alpha a gives the pixels rendering in that colour did. */
+        SDL_Color white = {255, 255, 255, 255};
+        SDL_Surface *surface = TTF_RenderUTF8_Blended(font, text, white);
+        if (!surface) return 0;
+        run->texture = SDL_CreateTextureFromSurface(cat_get_renderer(), surface);
+        run->texture_w = surface->w;
+        run->texture_h = surface->h;
+        SDL_FreeSurface(surface);
+        if (!run->texture) return 0;
+        SDL_SetTextureBlendMode(run->texture, SDL_BLENDMODE_BLEND);
+        catui__text.texture_bytes += (size_t)run->texture_w * (size_t)run->texture_h * 4;
+    }
+    SDL_SetTextureColorMod(run->texture, color.r, color.g, color.b);
+    SDL_SetTextureAlphaMod(run->texture, color.a);
+    SDL_Rect destination = {x, y, run->texture_w, run->texture_h};
+    SDL_RenderCopy(cat_get_renderer(), run->texture, NULL, &destination);
+    return run->texture_w;
+}
+
 static int catui__flush_run(TTF_Font *font, char *run, int *used,
                             int draw, int x, int y, cat_draw_color color) {
     if (!font || !run || !used || *used <= 0) return 0;
     run[*used] = '\0';
-    int width = draw ? catui__draw_transient_text(font, run, x, y, color)
-                     : cat_measure_text(font, run);
+    int width = draw ? catui__draw_run(font, run, x, y, color)
+                     : catui__measure_run(font, run);
     *used = 0;
     return width;
 }

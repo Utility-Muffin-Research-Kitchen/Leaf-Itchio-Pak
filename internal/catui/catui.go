@@ -631,6 +631,14 @@ func (c *Context) fixtureFramePending() bool { return C.catui_fixture_frame_pend
 
 func (c *Context) fixtureSettleInputFrame() { C.catui_fixture_settle_input_frame() }
 
+// fixtureTextCache reports the bridge's cached text runs and how many of
+// them hold a drawn texture.
+func (c *Context) fixtureTextCache() (runs, textures int) {
+	var cRuns, cTextures C.int
+	C.catui_fixture_text_cache(&cRuns, &cTextures)
+	return int(cRuns), int(cTextures)
+}
+
 func (c *Context) BeginCapture() error {
 	if err := c.ensureOpen(); err != nil {
 		return err
