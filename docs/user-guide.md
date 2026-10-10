@@ -1,18 +1,14 @@
 # Leaf Itch.io Pak user guide
 
-This guide covers Leaf-Itchio-Pak `0.1.x` on the Miniloong Pocket 1. The app is
+This guide covers Leaf-Itchio-Pak `0.2.x` on the Miniloong Pocket 1. The app is
 unofficial and is not affiliated with or endorsed by itch.io.
 
 ## Availability and installation
 
-The public distribution route is Pak Rat, but the app is intentionally absent
-from the production catalogue until all verification gates pass. It is never a
-default Leaf app.
-
-After publication, install **Itch.io** from Pak Rat. If Pak Rat is unavailable,
-download the matching `Itch-io.mlp1.pak.zip` GitHub release asset, verify its
-published SHA-256, and extract its single `Itch-io.pak` directory to
-`Apps/mlp1/` on the Leaf SD card. Do not rename the pak directory or place it in
+Install or update **Itch.io** from Pak Rat. It is never a default Leaf app. If
+Pak Rat is unavailable, download the matching `Itch-io.mlp1.pak.zip` GitHub
+release asset, verify its published SHA-256, and extract its single
+`Itch-io.pak` directory to `Apps/mlp1/` on the Leaf SD card. Do not rename the pak directory or place it in
 another platform folder. Jawaka `0.5.5` or newer is required.
 
 ## Browsing
