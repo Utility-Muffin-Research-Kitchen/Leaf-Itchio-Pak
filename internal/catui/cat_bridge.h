@@ -77,6 +77,9 @@ int catui_present(void);
 void catui_fixture_queue_button(int button, int pressed);
 int catui_fixture_frame_pending(void);
 void catui_fixture_settle_input_frame(void);
+/* Fixture probe for the bridge's text run cache: cached runs, and how many
+   of them hold a drawn texture. */
+void catui_fixture_text_cache(int *runs, int *textures);
 int catui_draw_title_in(int x, int y, int w, int h, const char *title, int tier);
 int catui_title_height(void);
 int catui_hints_enabled(void);

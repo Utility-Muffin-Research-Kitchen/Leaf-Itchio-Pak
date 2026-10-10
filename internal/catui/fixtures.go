@@ -44,6 +44,9 @@ func RunFixtures(config FixtureConfig) error {
 	if err := verifyFixtureInputFrames(ctx); err != nil {
 		return err
 	}
+	if err := verifyFixtureTextCache(ctx); err != nil {
+		return err
+	}
 	ui, err := NewComposer(ctx)
 	if err != nil {
 		return err
@@ -430,6 +433,54 @@ func verifyFixtureInputFrames(ctx *Context) error {
 	}
 	if !settled() {
 		return errors.New("a requested frame was kept after the present that drew it")
+	}
+	return nil
+}
+
+// verifyFixtureTextCache checks the bridge's text run cache: text drawn or
+// measured again in a later frame reuses its run and texture instead of
+// rasterizing it again, and a font size change empties the cache, whose runs
+// are keyed on fonts that the change replaces.
+func verifyFixtureTextCache(ctx *Context) error {
+	const probe = "Text cache probe · 日本 · العربية"
+	frame := func() error {
+		if err := ctx.Clear(); err != nil {
+			return err
+		}
+		_, err := ctx.DrawFallbackText(FontMedium, probe, 0, 0, ctx.ThemeColor(RoleText), 0)
+		return err
+	}
+	if err := frame(); err != nil {
+		return err
+	}
+	runs, textures := ctx.fixtureTextCache()
+	if runs == 0 || textures == 0 {
+		return fmt.Errorf("drawn text was not cached: %d runs, %d textures", runs, textures)
+	}
+	for again := 0; again < 3; again++ {
+		if err := frame(); err != nil {
+			return err
+		}
+		ctx.MeasureFallbackText(FontMedium, probe)
+	}
+	if gotRuns, gotTextures := ctx.fixtureTextCache(); gotRuns != runs || gotTextures != textures {
+		return fmt.Errorf("drawing the same text again cached %d runs and %d textures, was %d and %d",
+			gotRuns, gotTextures, runs, textures)
+	}
+	bump := ctx.FontBump()
+	other := bump + 1
+	if bump > 0 {
+		other = bump - 1
+	}
+	if err := ctx.SetFontBump(other); err != nil {
+		return err
+	}
+	cleared, _ := ctx.fixtureTextCache()
+	if err := ctx.SetFontBump(bump); err != nil {
+		return err
+	}
+	if cleared != 0 {
+		return fmt.Errorf("a font size change kept %d runs drawn with the old fonts", cleared)
 	}
 	return nil
 }
