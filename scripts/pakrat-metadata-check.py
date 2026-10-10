@@ -58,7 +58,22 @@ packages = metadata.get("leaf", {}).get("packages", [])
 require(isinstance(packages, list) and len(packages) == 1, "exactly one Leaf package is required")
 package = packages[0]
 require(package.get("platform") == "mlp1", "package platform must be mlp1")
-require(package.get("version") == runtime.get("pak_version") == "0.1.0", "Pak Rat and runtime versions must agree")
+version = runtime.get("pak_version")
+require(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version) is not None,
+        "pak.json pak_version must be X.Y.Z")
+require(package.get("version") == version, "Pak Rat and runtime versions must agree")
+# The build scripts stamp their default APP_VERSION into the binary and the
+# packaged pak.json, and the release workflow publishes the notes for the tag.
+for name, pattern in (
+    ("Makefile", r"^APP_VERSION \?= (\S+)$"),
+    ("scripts/build.sh", r"^APP_VERSION=\$\{APP_VERSION:-([^}]+)\}$"),
+    ("scripts/package.sh", r"^APP_VERSION=\$\{APP_VERSION:-([^}]+)\}$"),
+):
+    match = re.search(pattern, (ROOT / name).read_text(encoding="utf-8"), re.MULTILINE)
+    require(match is not None and match.group(1) == version,
+            f"{name} default APP_VERSION must be {version}")
+require((ROOT / "docs" / f"release-notes-v{version}.md").is_file(),
+        f"docs/release-notes-v{version}.md is required")
 require(package.get("artifact_name") == "Itch-io.mlp1.pak.zip", "unexpected artifact name")
 require(package.get("install_name") == "Itch-io.pak", "unexpected install name")
 require(package.get("runtime_manifest_path") == "pak.json", "unexpected runtime manifest path")

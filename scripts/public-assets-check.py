@@ -14,11 +14,11 @@ EXPECTED = {
     "docs/screenshots/main-list.png": (960, 720, "da660df96cc167c1db095505d7589a1b6b852b18f938147f87182ea097a8aa55"),
     "docs/screenshots/filter-search.png": (960, 720, "26f2a435ca89a851593020373684f2f808fb996fd02a4a3079732dbfcf0a6a7a"),
     "docs/screenshots/detail-gallery.png": (960, 720, "8d2e3f75bbfca518030e242f9058b9e2a182151aee789579d469b2540c41df20"),
-    "docs/screenshots/content-warning.png": (960, 720, "968ba609536f4002027f4cfdb5f74f206e0b4b49c9dfb4df4ce0691f440adc37"),
+    "docs/screenshots/content-warning.png": (960, 720, "3f4703aea31140691627bf960730cebbbfa447457f27a471461b2dc93a80c485"),
     "docs/screenshots/download-progress.png": (960, 720, "e29195572a3dc4e76df66d54282b4fd536498c2dc6430ea6560d036f8ee25574"),
-    "docs/screenshots/settings.png": (960, 720, "784ef753b551cb0e456ca4431846e2119a6d7b2517775e588506d2a343b21849"),
-    "docs/screenshots/dual-sd-destination.png": (960, 720, "e150c02f77a44043365da893213354a5938667cebf110155f4766ebd831877eb"),
-    "docs/screenshots/downloaded-manage.png": (960, 720, "0c6e488dfaf639a3cac4cecef8310b91e54d95fbe58876ea9ed160e64377e917"),
+    "docs/screenshots/settings.png": (960, 720, "0aa98a540de93c6cc5eb3013c22b43c7d6e751f5f01725143320b7dd6f8005de"),
+    "docs/screenshots/dual-sd-destination.png": (960, 720, "d8a17b298f34a27f549b046bd65fd3ce7fbe7211d90b443b55d2d1f1a28a4014"),
+    "docs/screenshots/downloaded-manage.png": (960, 720, "034ae1553620e3ca81d7ef0150d4f3bea80269c3c7530186faaf64aff7042082"),
 }
 FORBIDDEN_METADATA = {b"tEXt", b"zTXt", b"iTXt", b"eXIf"}
 

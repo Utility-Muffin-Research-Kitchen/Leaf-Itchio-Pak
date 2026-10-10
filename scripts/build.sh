@@ -5,7 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_DIR"
 
-APP_VERSION=${APP_VERSION:-0.1.0}
+APP_VERSION=${APP_VERSION:-0.2.0}
 GIT_COMMIT=${GIT_COMMIT:-$(git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)}
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || printf 0)}
 WORKSPACE_ROOT=${WORKSPACE_ROOT:-$(CDPATH= cd -- "$REPO_DIR/.." && pwd)}
