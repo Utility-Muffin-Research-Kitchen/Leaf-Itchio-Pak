@@ -186,7 +186,7 @@ func (screen *MainListScreen) drawReady(content Box) error {
 		if err := screen.ui.DrawState(art, StateEmpty, "No image", ""); err != nil {
 			return err
 		}
-	} else if texture := screen.cache.Get(selected.CoverKey); texture != nil {
+	} else if texture := screen.cache.Peek(selected.CoverKey); texture != nil {
 		if err := screen.ui.DrawImageFit(texture, art); err != nil {
 			return err
 		}
@@ -194,8 +194,11 @@ func (screen *MainListScreen) drawReady(content Box) error {
 		if err := screen.ui.DrawState(art, StateError, "No image", "Artwork could not be decoded."); err != nil {
 			return err
 		}
-	} else if err := screen.ui.DrawState(art, StateLoading, "Loading artwork", ""); err != nil {
-		return err
+	} else {
+		screen.cache.WarmOnRest(selected.CoverKey)
+		if err := screen.ui.DrawState(art, StateLoading, "Loading artwork", ""); err != nil {
+			return err
+		}
 	}
 
 	y := art.Y + art.H + screen.ui.BasePadding/2

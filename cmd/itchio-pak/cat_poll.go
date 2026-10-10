@@ -3,16 +3,15 @@ package main
 import "time"
 
 // catPollState is the work in flight that the Cat loop must collect without
-// waiting for input. Context.Wake cannot end the idle wait in Present on the
-// device: Catastrophe sleeps in poll() on the gamepad's evdev nodes until a
-// button, a requested frame or the next wall-clock minute. So a screen that
-// waits for a worker asks for frames until the worker reports back.
+// waiting for input. Context.Wake ends the idle wait in Present through the
+// bridge's wake pipe, so cover art, whose cache wakes the loop when a cover
+// is ready, is not polled. The workers below were polled before the bridge
+// could end that wait, and keep their polls.
 type catPollState struct {
 	// AnimationIn is the time to the next frame of a visible GIF; Animated
 	// says whether one is showing.
 	AnimationIn       time.Duration
 	Animated          bool
-	ImagesLoading     bool
 	ListLoading       bool
 	DetailLoading     bool
 	FilesLoading      bool
@@ -48,7 +47,6 @@ func catPollDelay(state catPollState) (uint32, bool) {
 		}
 		need(uint32(milliseconds), true)
 	}
-	need(50, state.ImagesLoading)
 	need(100, state.ListLoading || state.DetailLoading || state.FilesLoading || state.ArchiveInspecting)
 	need(50, state.Downloading)
 	need(100, state.CacheRefreshing)

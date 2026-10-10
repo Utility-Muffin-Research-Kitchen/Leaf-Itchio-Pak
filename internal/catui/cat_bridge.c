@@ -6,6 +6,7 @@
 
 #include "cat_bridge.h"
 
+#include <fcntl.h>
 #include <stdatomic.h>
 
 #define CATUI_TEXTURE_CAP 128
@@ -26,6 +27,9 @@ static struct {
     TTF_Font *fallbacks[CAT_FONT_TIER_COUNT][CATUI_FALLBACK_CAP];
     char fallback_dir[PATH_MAX];
     atomic_uint wake_count;
+    /* catui_wake writes a byte to wake_pipe[1]; Cat polls wake_pipe[0] while
+       it waits in cat_present. */
+    int wake_pipe[2];
     SDL_Texture *capture_target;
     /* catui__settle_input_frame: a frame asked for since the last present,
        and input taken since the last frame began. */
@@ -60,8 +64,13 @@ int catui_keyboard(const char *initial_text, char *out_text,
     if (!out_text || out_size == 0 || !accepted) return CATUI_ERROR;
 
     cat_keyboard_result result = {0};
+    /* cat_keyboard presents in its own loop and never empties the wake pipe,
+       so a wake while it is open would keep its waits from sleeping. Worker
+       results wait until it closes: the pipe is still readable then. */
+    cat_set_idle_wake_fd(-1);
     int rc = cat_keyboard(initial_text ? initial_text : "", NULL,
                           CAT_KB_GENERAL, &result);
+    cat_set_idle_wake_fd(catui__state.wake_pipe[0]);
     if (rc == CAT_ERROR) return CATUI_ERROR;
     *accepted = rc == CAT_OK ? 1 : 0;
     snprintf(out_text, out_size, "%s", result.text);
@@ -131,6 +140,16 @@ int catui_init(const char *title, const char *font_path,
     config.log_path = log_path && log_path[0] ? log_path : NULL;
     config.disable_background = false;
     if (cat_init(&config) != CAT_OK) return CATUI_ERROR;
+    if (pipe(catui__state.wake_pipe) != 0) {
+        cat_quit();
+        return CATUI_ERROR;
+    }
+    for (int i = 0; i < 2; i++) {
+        int fd = catui__state.wake_pipe[i];
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    cat_set_idle_wake_fd(catui__state.wake_pipe[0]);
 
     catui__state.initialized = 1;
     if (fallback_fonts_dir && fallback_fonts_dir[0]) {
@@ -161,6 +180,9 @@ int catui_quit(void) {
         }
     }
     catui__close_fallbacks();
+    cat_set_idle_wake_fd(-1);
+    close(catui__state.wake_pipe[0]);
+    close(catui__state.wake_pipe[1]);
     cat_quit();
     catui__state.initialized = 0;
     return CATUI_OK;
@@ -202,13 +224,11 @@ int catui_poll_input(catui_input_event *out) {
 int catui_wake(void) {
     if (!catui__state.initialized) return CATUI_CLOSED;
     atomic_store_explicit(&catui__state.wake_count, 1, memory_order_release);
-    /* Desktop cat_present() pumps SDL while idle, so a user event wakes it
-       immediately. MLP1 polling is bounded by the app while workers are busy;
-       keeping that policy here avoids changing Catastrophe's global waiter. */
-    SDL_Event event;
-    memset(&event, 0, sizeof(event));
-    event.type = SDL_USEREVENT;
-    SDL_PushEvent(&event);
+    /* Cat polls the read end while it waits in cat_present, on the device as
+       on the desktop, so this ends the wait at once. A full pipe already
+       holds a wake. */
+    ssize_t written = write(catui__state.wake_pipe[1], "w", 1);
+    (void)written;
     return CATUI_OK;
 }
 
@@ -242,6 +262,12 @@ int catui_present(void) {
     if (guard != CATUI_OK) return guard;
     catui__settle_input_frame();
     cat_present();
+    /* Workers publish a result before they wake, so the pass that starts now
+       collects every result whose wake is emptied here. A wake that comes
+       later leaves the pipe readable, and the next present returns at once
+       for the pass after to collect it. */
+    char drained[64];
+    while (read(catui__state.wake_pipe[0], drained, sizeof(drained)) > 0) {}
     return CATUI_OK;
 }
 
