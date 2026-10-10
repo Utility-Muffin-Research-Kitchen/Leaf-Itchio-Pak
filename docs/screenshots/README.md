@@ -14,11 +14,11 @@ scrolled off the screen, and the content warning is a **Heavy Themes** one.
 | `main-list.png` | The game list for Game Boy, sorted by **Popular** | `da660df96cc167c1db095505d7589a1b6b852b18f938147f87182ea097a8aa55` |
 | `filter-search.png` | **Filter & Search** with a platform and a sort staged | `26f2a435ca89a851593020373684f2f808fb996fd02a4a3079732dbfcf0a6a7a` |
 | `detail-gallery.png` | A game's page with its gallery, tags and description | `8d2e3f75bbfca518030e242f9058b9e2a182151aee789579d469b2540c41df20` |
-| `content-warning.png` | The content warning in front of a game with **Heavy Themes** tags | `968ba609536f4002027f4cfdb5f74f206e0b4b49c9dfb4df4ce0691f440adc37` |
+| `content-warning.png` | The content warning in front of a game with **Heavy Themes** tags | `3f4703aea31140691627bf960730cebbbfa447457f27a471461b2dc93a80c485` |
 | `download-progress.png` | A download in progress | `e29195572a3dc4e76df66d54282b4fd536498c2dc6430ea6560d036f8ee25574` |
-| `settings.png` | Settings, scrolled past the account row | `784ef753b551cb0e456ca4431846e2119a6d7b2517775e588506d2a343b21849` |
-| `dual-sd-destination.png` | Choosing the primary or the secondary SD card for a download | `e150c02f77a44043365da893213354a5938667cebf110155f4766ebd831877eb` |
-| `downloaded-manage.png` | **Manage** for a downloaded game, with the archive files its ROMs came from | `0c6e488dfaf639a3cac4cecef8310b91e54d95fbe58876ea9ed160e64377e917` |
+| `settings.png` | Settings, scrolled past the account row | `0aa98a540de93c6cc5eb3013c22b43c7d6e751f5f01725143320b7dd6f8005de` |
+| `dual-sd-destination.png` | Choosing the primary or the secondary SD card for a download | `d8a17b298f34a27f549b046bd65fd3ce7fbe7211d90b443b55d2d1f1a28a4014` |
+| `downloaded-manage.png` | **Manage** for a downloaded game, with the archive files its ROMs came from | `034ae1553620e3ca81d7ef0150d4f3bea80269c3c7530186faaf64aff7042082` |
 
 `scripts/public-assets-check.py` checks each file's size and hash and that it
 carries no text or EXIF metadata. `make test` runs it.
