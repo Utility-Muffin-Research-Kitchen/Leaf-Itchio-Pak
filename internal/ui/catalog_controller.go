@@ -48,6 +48,11 @@ type CatalogController struct {
 	cachePath    string
 	previewGames []itchio.Game // live feed page shown until the cache is ready
 	viewGames    []itchio.Game
+	// viewVersion counts rebuildView calls. SyncCatModel builds a model's
+	// rows again only when it has changed since that model was last filled.
+	viewVersion uint64
+	syncedModel *appui.MainListModel
+	syncedView  uint64
 
 	inv           *inventory.Inventory
 	inventoryPath string
@@ -337,25 +342,54 @@ func (controller *CatalogController) SyncCatModel(model *appui.MainListModel) {
 		model.SetError(screentext.FromError(controller.err))
 		return
 	}
-	items := make([]appui.ListItem, 0, len(controller.viewGames))
-	for _, game := range controller.viewGames {
-		var badge string
-		switch {
-		case controller.inv.HasPendingUpdates(game.URL):
-			badge = "UP"
-		case controller.inv.IsRemoved(game.URL):
-			badge = "!"
-		case controller.inv.IsPresent(game.URL):
-			badge = "DL"
-		case controller.ownedURLs[game.URL]:
-			badge = "OWNED"
-		default:
-			badge = controller.priceBadge(game)
+	// The main loop calls this on every pass, and a row for each of the
+	// full catalogue's ~12,000 games took ~20 ms on the device and made
+	// ~2 MB of garbage. Build the rows only when the view changed.
+	if controller.syncedModel != model || controller.syncedView != controller.viewVersion ||
+		(model.State != appui.ListReady && model.State != appui.ListEmpty) ||
+		len(model.Items) != len(controller.viewGames) {
+		items := make([]appui.ListItem, 0, len(controller.viewGames))
+		for _, game := range controller.viewGames {
+			items = append(items, appui.ListItem{Title: game.Title, Author: game.Author,
+				CoverKey: game.CoverURL, Badge: controller.listBadge(game), Tags: append([]string(nil), game.Tags...)})
 		}
-		items = append(items, appui.ListItem{Title: game.Title, Author: game.Author,
-			CoverKey: game.CoverURL, Badge: badge, Tags: append([]string(nil), game.Tags...)})
+		model.SetItems(items)
+		controller.syncedModel, controller.syncedView = model, controller.viewVersion
+		return
 	}
-	model.SetItems(items)
+	// A download, a removal or a price read this session changes a badge
+	// without a new view. Refresh the rows the screen can show: the list
+	// keeps the cursor in view, so they lie within one page of it.
+	page := model.VisibleRows
+	if page < 1 {
+		page = 1
+	}
+	first, last := model.Cursor-page, model.Cursor+page
+	if first < 0 {
+		first = 0
+	}
+	if last >= len(model.Items) {
+		last = len(model.Items) - 1
+	}
+	for index := first; index <= last; index++ {
+		model.Items[index].Badge = controller.listBadge(controller.viewGames[index])
+	}
+}
+
+// listBadge is the badge or price a list row shows for game.
+func (controller *CatalogController) listBadge(game itchio.Game) string {
+	switch {
+	case controller.inv.HasPendingUpdates(game.URL):
+		return "UP"
+	case controller.inv.IsRemoved(game.URL):
+		return "!"
+	case controller.inv.IsPresent(game.URL):
+		return "DL"
+	case controller.ownedURLs[game.URL]:
+		return "OWNED"
+	default:
+		return controller.priceBadge(game)
+	}
 }
 
 // priceBadge prefers the current price from a data.json fetched this
@@ -505,6 +539,7 @@ func (controller *CatalogController) previousSortMode() itchio.SortMode {
 func (controller *CatalogController) ScheduleRebuild() { controller.needsRebuild = true }
 
 func (controller *CatalogController) rebuildView() {
+	controller.viewVersion++
 	selectedURL := ""
 	selectedIndex := controller.cursor
 	if controller.cursor >= 0 && controller.cursor < len(controller.viewGames) {

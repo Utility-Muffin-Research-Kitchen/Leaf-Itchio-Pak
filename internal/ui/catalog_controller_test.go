@@ -4,10 +4,12 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -275,6 +277,100 @@ func TestListPriceBadgeUsesFetchedGameData(t *testing.T) {
 	}
 	if badges["Paid"] != "€4,99" || badges["Now free"] != "Free" || badges["Not opened"] != "$2.00" {
 		t.Fatalf("badges = %v", badges)
+	}
+}
+
+func syncTestController(count int) *CatalogController {
+	controller := &CatalogController{
+		cfg: &settings.Config{}, inv: &inventory.Inventory{Entries: make(map[string]*inventory.Entry)},
+		cachedGames: syncTestGames(count), cacheReady: true, sortMode: itchio.SortModeNew,
+		ownedURLs: make(map[string]bool), cacheUpdateCh: make(chan []itchio.Game, 1),
+	}
+	controller.rebuildView()
+	return controller
+}
+
+func syncTestGames(count int) []itchio.Game {
+	games := make([]itchio.Game, count)
+	for index := range games {
+		games[index] = itchio.Game{Title: fmt.Sprintf("Game %04d", index),
+			URL: fmt.Sprintf("https://example.invalid/game-%d", index), IsFree: true, Tags: []string{"Platformer"}}
+	}
+	return games
+}
+
+// The main loop syncs the list on every pass. Building a row for every game
+// each time took ~20 ms per pass on the device with the full catalogue.
+func TestSyncCatModelKeepsRowsWhileTheViewIsUnchanged(t *testing.T) {
+	controller := syncTestController(2000)
+	model := appui.NewMainListModel(nil)
+	model.VisibleRows = 8
+	controller.SyncCatModel(model)
+	if len(model.Items) != 2000 {
+		t.Fatalf("rows = %d, want 2000", len(model.Items))
+	}
+	first := &model.Items[0]
+	allocations := testing.AllocsPerRun(20, func() { controller.SyncCatModel(model) })
+	if &model.Items[0] != first {
+		t.Fatal("rows were built again although the view did not change")
+	}
+	if allocations > 50 {
+		t.Fatalf("an unchanged sync made %.0f allocations; want a few, not some per row", allocations)
+	}
+}
+
+func TestSyncCatModelRefreshesBadgesNearTheCursor(t *testing.T) {
+	controller := syncTestController(200)
+	model := appui.NewMainListModel(nil)
+	model.VisibleRows = 8
+	controller.SyncCatModel(model)
+	// Downloads finish without a new view; their rows must still say DL.
+	for _, index := range []int{3, 150} {
+		url := controller.viewGames[index].URL
+		controller.inv.Entries[url] = &inventory.Entry{GameURL: url,
+			Files: []inventory.DownloadedFile{{RelativePath: "game.gb"}}}
+	}
+	controller.SyncCatModel(model)
+	if model.Items[3].Badge != "DL" {
+		t.Fatalf("a download near the cursor shows %q, want DL", model.Items[3].Badge)
+	}
+	model.Cursor = 150
+	controller.SyncCatModel(model)
+	if model.Items[150].Badge != "DL" {
+		t.Fatalf("a download scrolled into view shows %q, want DL", model.Items[150].Badge)
+	}
+}
+
+func TestSyncCatModelShowsARefreshedCatalogueOfTheSameSize(t *testing.T) {
+	controller := syncTestController(3)
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	refreshed := syncTestGames(3)
+	for index := range refreshed {
+		refreshed[index].Title += " (renamed)"
+	}
+	controller.ApplyCatCache(refreshed)
+	controller.SyncCatModel(model)
+	for _, item := range model.Items {
+		if !strings.HasSuffix(item.Title, "(renamed)") {
+			t.Fatalf("rows after a refresh = %#v", model.Items)
+		}
+	}
+}
+
+func TestSyncCatModelFillsRowsAgainAfterLoading(t *testing.T) {
+	controller := syncTestController(3)
+	model := appui.NewMainListModel(nil)
+	controller.SyncCatModel(model)
+	controller.loading.Store(true)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListLoading {
+		t.Fatalf("state while loading = %v", model.State)
+	}
+	controller.loading.Store(false)
+	controller.SyncCatModel(model)
+	if model.State != appui.ListReady || len(model.Items) != 3 {
+		t.Fatalf("after loading: state = %v, rows = %d", model.State, len(model.Items))
 	}
 }
 
