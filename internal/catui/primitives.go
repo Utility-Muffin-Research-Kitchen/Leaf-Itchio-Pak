@@ -523,6 +523,19 @@ func (ui *Composer) DrawScrollingBlocks(rect Rect, title string, blocks []appui.
 	})
 }
 
+// listScrollbar places the launcher scrollbar beside a list region that
+// shows visible of total rows, as the main list does: at the region's right
+// edge, ending trim above its bottom. The rows narrow by the bar's width so a
+// highlighted row's pill stops where the bar begins. When every row fits
+// there is no bar and the rows keep the region's width.
+func listScrollbar(region Rect, visible, total, width, trim int) (bar Rect, rowWidth int, scrolls bool) {
+	if total <= visible || visible <= 0 {
+		return Rect{}, region.W, false
+	}
+	bar = Rect{X: region.X + region.W - width, Y: region.Y, W: width, H: region.H - trim}
+	return bar, region.W - width, true
+}
+
 // scrollbarWidth is Cat's scrollbar width, and scrollbarGutter the room
 // cat_draw_scroll_view leaves for it beside scrolling content.
 const (

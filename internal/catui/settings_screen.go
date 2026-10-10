@@ -73,13 +73,22 @@ func (screen *SettingsScreen) drawRows(box Box) error {
 	if start < 0 {
 		start = 0
 	}
+	bar, rowWidth, scrolls := listScrollbar(geometry.Region, geometry.VisibleRows, len(screen.model.Rows),
+		screen.ctx.Scale(scrollbarWidth), screen.ctx.Scale(4))
 	for row := 0; row < geometry.VisibleRows && start+row < len(screen.model.Rows); row++ {
 		index := start + row
 		item := screen.model.Rows[index]
-		if err := screen.ui.DrawValueRow(geometry.Row(row), item.Label, item.Value,
+		rect := geometry.Row(row)
+		rect.W = rowWidth
+		if err := screen.ui.DrawValueRow(rect, item.Label, item.Value,
 			index == screen.model.Cursor, false); err != nil {
 			return err
 		}
 	}
-	return nil
+	if !scrolls {
+		return nil
+	}
+	// Settings, Content Moderation and its tag list can run past the screen;
+	// the bar says there are more rows below or above.
+	return screen.ctx.DrawScrollbar(bar.X, bar.Y, bar.H, geometry.VisibleRows, len(screen.model.Rows), start)
 }
