@@ -617,6 +617,20 @@ func (c *Context) ScreenshotPNG(path string) error {
 	return statusError(C.catui_screenshot_png(pathC))
 }
 
+// Fixture probes for Present's needs_frame handling. They queue input the way
+// Catastrophe's backend does and run Present's settle step without presenting.
+func (c *Context) fixtureQueueButton(button Button, pressed bool) {
+	value := 0
+	if pressed {
+		value = 1
+	}
+	C.catui_fixture_queue_button(C.int(button), C.int(value))
+}
+
+func (c *Context) fixtureFramePending() bool { return C.catui_fixture_frame_pending() != 0 }
+
+func (c *Context) fixtureSettleInputFrame() { C.catui_fixture_settle_input_frame() }
+
 func (c *Context) BeginCapture() error {
 	if err := c.ensureOpen(); err != nil {
 		return err

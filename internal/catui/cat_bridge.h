@@ -71,6 +71,12 @@ int catui_keyboard(const char *initial_text, char *out_text,
 
 int catui_clear(void);
 int catui_present(void);
+/* Fixture probes for catui_present's needs_frame handling: queue a button the
+   way Cat's input backend does, read needs_frame, and run the step
+   catui_present takes before cat_present without presenting. */
+void catui_fixture_queue_button(int button, int pressed);
+int catui_fixture_frame_pending(void);
+void catui_fixture_settle_input_frame(void);
 int catui_draw_title_in(int x, int y, int w, int h, const char *title, int tier);
 int catui_title_height(void);
 int catui_hints_enabled(void);
