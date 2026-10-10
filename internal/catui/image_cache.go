@@ -118,6 +118,10 @@ type ImageCache struct {
 	sem      chan struct{}
 	notify   func()
 	now      func() time.Time
+	// restKey is the key of the latest WarmOnRest call; restAfter waits out
+	// coverRestDelay (tests replace it).
+	restKey   string
+	restAfter func(time.Duration) <-chan time.Time
 	// frameCount counts textures owned by cached artwork. The bridge registry
 	// also contains QR/detail textures, so cache uploads retain a fixed margin.
 	frameCount int
@@ -127,6 +131,9 @@ const (
 	imageCacheTextureReserve = 32
 	imageRetryInitialDelay   = time.Second
 	imageRetryMaximumDelay   = 60 * time.Second
+	// coverRestDelay is how long the main list's cursor must stay on a game
+	// before WarmOnRest fetches its cover.
+	coverRestDelay = 250 * time.Millisecond
 )
 
 func NewImageCache(maximum int, client *http.Client) *ImageCache {
@@ -137,37 +144,75 @@ func NewImageCache(maximum int, client *http.Client) *ImageCache {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
 	return &ImageCache{
-		lru:      list.New(),
-		items:    make(map[string]*list.Element),
-		fetching: make(map[string]struct{}),
-		failed:   make(map[string]struct{}),
-		retries:  make(map[string]imageRetry),
-		maximum:  maximum,
-		client:   client,
-		ready:    make(chan decodedImage, 32),
-		sem:      make(chan struct{}, 2),
-		now:      time.Now,
+		lru:       list.New(),
+		items:     make(map[string]*list.Element),
+		fetching:  make(map[string]struct{}),
+		failed:    make(map[string]struct{}),
+		retries:   make(map[string]imageRetry),
+		maximum:   maximum,
+		client:    client,
+		ready:     make(chan decodedImage, 32),
+		sem:       make(chan struct{}, 2),
+		now:       time.Now,
+		restAfter: time.After,
 	}
 }
 
 func (c *ImageCache) SetNotify(notify func()) { c.notify = notify }
 
 func (c *ImageCache) Warm(key string) {
+	if c.claim(key) {
+		go c.fetch(key)
+	}
+}
+
+// WarmOnRest fetches key like Warm, but only once no later WarmOnRest call
+// has named another key for coverRestDelay. A held d-pad passes a game every
+// 75 to 100 ms, and fetching the cover of each one woke the loop for every
+// download that finished; the cover of a game the cursor only passes is not
+// fetched.
+func (c *ImageCache) WarmOnRest(key string) {
 	if key == "" {
 		return
 	}
 	c.mu.Lock()
+	c.restKey = key
+	c.mu.Unlock()
+	if !c.claim(key) {
+		return
+	}
+	go func() {
+		<-c.restAfter(coverRestDelay)
+		c.mu.Lock()
+		rested := c.restKey == key
+		if !rested {
+			delete(c.fetching, key)
+		}
+		c.mu.Unlock()
+		if rested {
+			c.fetch(key)
+		}
+	}()
+}
+
+// claim marks key as in flight and reports whether the caller fetches it: a
+// key that is cached, already in flight, failed, or waiting to retry is not
+// fetched again.
+func (c *ImageCache) claim(key string) bool {
+	if key == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	_, cached := c.items[key]
 	_, fetching := c.fetching[key]
 	_, failed := c.failed[key]
 	retry := c.retries[key]
 	if cached || fetching || failed || (!retry.nextAt.IsZero() && c.now().Before(retry.nextAt)) {
-		c.mu.Unlock()
-		return
+		return false
 	}
 	c.fetching[key] = struct{}{}
-	c.mu.Unlock()
-	go c.fetch(key)
+	return true
 }
 
 func (c *ImageCache) Get(key string) *Texture {
@@ -260,12 +305,6 @@ func (c *ImageCache) NextFrameIn() (time.Duration, bool) {
 		}
 	}
 	return minimum, found
-}
-
-func (c *ImageCache) Busy() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.fetching) > 0 || len(c.ready) > 0
 }
 
 func (c *ImageCache) Clear() {

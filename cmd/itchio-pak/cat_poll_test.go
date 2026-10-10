@@ -19,7 +19,6 @@ func TestCatPollDelayPollsForEveryWorkerAScreenWaitsOn(t *testing.T) {
 	}{
 		{"GIF frame due", catPollState{Animated: true, AnimationIn: 80 * time.Millisecond}, 80},
 		{"GIF frame overdue", catPollState{Animated: true, AnimationIn: -time.Millisecond}, 1},
-		{"cover art loading", catPollState{ImagesLoading: true}, 50},
 		{"first catalogue page loading", catPollState{ListLoading: true}, 100},
 		{"game page loading", catPollState{DetailLoading: true}, 100},
 		{"file list loading", catPollState{FilesLoading: true}, 100},
@@ -73,10 +72,10 @@ func TestCatPollDelayUsesTheShortestDelayInFlight(t *testing.T) {
 			catPollState{CatalogBuilding: true, LibraryScanRequested: true}, 50},
 		{"rescan while a slow GIF shows",
 			catPollState{Animated: true, AnimationIn: 400 * time.Millisecond, LibraryScanRequested: true}, 50},
-		{"cover art during the sign-in countdown",
-			catPollState{SignInWaiting: true, ImagesLoading: true}, 50},
-		{"GIF frame sooner than cover art polling",
-			catPollState{Animated: true, AnimationIn: 20 * time.Millisecond, ImagesLoading: true}, 20},
+		{"download during the sign-in countdown",
+			catPollState{SignInWaiting: true, Downloading: true}, 50},
+		{"GIF frame sooner than download polling",
+			catPollState{Animated: true, AnimationIn: 20 * time.Millisecond, Downloading: true}, 20},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

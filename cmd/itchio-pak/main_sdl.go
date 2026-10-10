@@ -931,10 +931,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 				break
 			}
 			if event.Wake {
-				// A worker posted a result, maybe after this pass synced.
-				// Come straight back to collect it rather than idle in
-				// Present: this event was the only signal that it is there.
-				ctx.RequestFrame()
+				// A worker posted a result. One posted after this pass
+				// synced still has its wake in the bridge's pipe, which
+				// ends the next Present at once, so no frame is requested.
 				redraw = true
 				continue
 			}
@@ -1406,7 +1405,6 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		if milliseconds, poll := catPollDelay(catPollState{
 			AnimationIn:   delay,
 			Animated:      animated,
-			ImagesLoading: imageCache.Busy(),
 			ListLoading:   route == catRouteList && model.State == appui.ListLoading,
 			DetailLoading: route == catRouteDetail && detailModel != nil && detailModel.State == appui.DetailLoading,
 			FilesLoading: route == catRouteDownloadSelect && downloadSelectModel != nil &&

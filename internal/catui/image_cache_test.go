@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,23 +44,6 @@ func TestImageCacheSchedulesOnlyVisibleAnimations(t *testing.T) {
 	// Prevent the test-only fake textures from reaching Clear/Destroy.
 	cache.items = make(map[string]*list.Element)
 	cache.lru.Init()
-}
-
-func TestImageCacheBusyCoversFetchAndPendingUpload(t *testing.T) {
-	cache := NewImageCache(1, nil)
-	cache.fetching["cover"] = struct{}{}
-	if !cache.Busy() {
-		t.Fatal("active fetch was not busy")
-	}
-	delete(cache.fetching, "cover")
-	cache.ready <- decodedImage{key: "cover"}
-	if !cache.Busy() {
-		t.Fatal("pending owner-thread upload was not busy")
-	}
-	<-cache.ready
-	if cache.Busy() {
-		t.Fatal("idle cache remained busy")
-	}
 }
 
 func TestImageCacheRapidGIFPagingStaysWithinFrameBudget(t *testing.T) {
@@ -225,6 +209,98 @@ func TestImageCacheRetriesTransientFailureAfterBackoff(t *testing.T) {
 	if retrying {
 		t.Fatal("successful retry did not clear backoff state")
 	}
+}
+
+func restTestServer(t *testing.T) (*httptest.Server, *sync.Map) {
+	t.Helper()
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	requested := &sync.Map{}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requested.Store(request.URL.Path, true)
+		_, _ = response.Write(encoded.Bytes())
+	}))
+	t.Cleanup(server.Close)
+	return server, requested
+}
+
+func waitReady(t *testing.T, cache *ImageCache) string {
+	t.Helper()
+	select {
+	case decoded := <-cache.ready:
+		return decoded.key
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a fetched cover")
+		return ""
+	}
+}
+
+func waitNotFetching(t *testing.T, cache *ImageCache, key string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		cache.mu.Lock()
+		_, fetching := cache.fetching[key]
+		cache.mu.Unlock()
+		if !fetching {
+			return
+		}
+	}
+	t.Fatalf("%s stayed in flight", key)
+}
+
+// Holding the d-pad passes a game every 75 to 100 ms. Only the cover of the
+// game the cursor stops on is fetched.
+func TestWarmOnRestFetchesOnlyTheCoverTheCursorStopsOn(t *testing.T) {
+	server, requested := restTestServer(t)
+	cache := NewImageCache(4, server.Client())
+	rest := make(chan time.Time)
+	cache.restAfter = func(time.Duration) <-chan time.Time { return rest }
+	passed, stopped := server.URL+"/passed.png", server.URL+"/stopped.png"
+
+	cache.WarmOnRest(passed)
+	cache.WarmOnRest(stopped)
+	close(rest)
+	if got := waitReady(t, cache); got != stopped {
+		t.Fatalf("fetched %s, want %s", got, stopped)
+	}
+	waitNotFetching(t, cache, passed)
+	if _, ok := requested.Load("/passed.png"); ok {
+		t.Fatal("the cover of a game the cursor only passed was fetched")
+	}
+	if cache.Failed(passed) {
+		t.Fatal("a passed cover was marked failed")
+	}
+}
+
+// A cover skipped while the cursor passed it is fetched when the cursor
+// comes back and stays.
+func TestWarmOnRestFetchesAPassedCoverWhenTheCursorReturns(t *testing.T) {
+	server, _ := restTestServer(t)
+	cache := NewImageCache(4, server.Client())
+	rest := make(chan time.Time)
+	cache.restAfter = func(time.Duration) <-chan time.Time { return rest }
+	first, second := server.URL+"/first.png", server.URL+"/second.png"
+
+	cache.WarmOnRest(first)
+	cache.WarmOnRest(second)
+	close(rest)
+	waitReady(t, cache)
+	waitNotFetching(t, cache, first)
+	cache.WarmOnRest(first)
+	if got := waitReady(t, cache); got != first {
+		t.Fatalf("fetched %s, want %s", got, first)
+	}
+}
+
+// Detail screens fetch at once; only the list waits for the cursor to rest.
+func TestWarmDoesNotWaitForRest(t *testing.T) {
+	server, _ := restTestServer(t)
+	cache := NewImageCache(4, server.Client())
+	cache.restAfter = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
+	cache.Warm(server.URL + "/detail.png")
+	waitReady(t, cache)
 }
 
 func TestImageCacheRetryDelayCapsAtOneMinute(t *testing.T) {
