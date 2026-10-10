@@ -523,3 +523,21 @@ func TestOverWideWordsBreakInsteadOfClipping(t *testing.T) {
 		t.Fatalf("one character per line = %+v, want 3 lines", got)
 	}
 }
+
+// Settings shows the main list's scrollbar when its rows run past the
+// screen, and narrows the rows by its width so the highlight clears it.
+func TestListScrollbarSitsAtTheRightEdgeOnlyWhenRowsOverflow(t *testing.T) {
+	region := Rect{X: 20, Y: 100, W: 900, H: 480}
+	bar, rowWidth, scrolls := listScrollbar(region, 8, 12, 4, 4)
+	if !scrolls {
+		t.Fatal("12 rows in an 8-row region drew no scrollbar")
+	}
+	if bar != (Rect{X: 916, Y: 100, W: 4, H: 476}) || rowWidth != 896 {
+		t.Fatalf("bar = %+v, row width = %d; want the right edge and rows 4 px narrower", bar, rowWidth)
+	}
+	for _, total := range []int{0, 5, 8} {
+		if _, rowWidth, scrolls := listScrollbar(region, 8, total, 4, 4); scrolls || rowWidth != region.W {
+			t.Fatalf("%d rows in an 8-row region: scrolls = %v, row width = %d", total, scrolls, rowWidth)
+		}
+	}
+}
