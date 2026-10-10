@@ -862,7 +862,9 @@ func runCatApp(client *itchio.Client, cfg *settings.Config, cfgPath, cachePath, 
 		// second present without a complete draw can flash an undefined frame.
 		// Always rebuild one complete frame after every wake before presenting.
 		redraw = true
-		list.SyncCatModel(model)
+		// The list model is synced once per pass, after input: input then
+		// acts on the rows last drawn, not on a catalogue update that
+		// arrived since.
 		if devDetailPending && route == catRouteList && model.State == appui.ListReady && len(model.Items) > 0 {
 			if err := openDetail(0); err != nil {
 				return err
