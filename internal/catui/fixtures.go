@@ -41,6 +41,9 @@ func RunFixtures(config FixtureConfig) error {
 	if err := verifyFixtureWorkerWake(ctx); err != nil {
 		return err
 	}
+	if err := verifyFixtureInputFrames(ctx); err != nil {
+		return err
+	}
 	ui, err := NewComposer(ctx)
 	if err != nil {
 		return err
@@ -351,6 +354,82 @@ func verifyFixtureWorkerWake(ctx *Context) error {
 	}
 	if !wakeSeen {
 		return errors.New("Catastrophe worker wake event was not delivered")
+	}
+	return nil
+}
+
+// verifyFixtureInputFrames checks Present's needs_frame handling against
+// Catastrophe's own input queue. Once a frame began after the last event and
+// the queue is empty, Present waits for the next event instead of returning
+// at once for an identical frame. Input not drawn yet, input still queued and
+// a requested frame keep the next frame coming at once.
+func verifyFixtureInputFrames(ctx *Context) error {
+	drain := func() (int, error) {
+		taken := 0
+		for {
+			event, ok, err := ctx.PollInput()
+			if err != nil || !ok {
+				return taken, err
+			}
+			if !event.Wake {
+				taken++
+			}
+		}
+	}
+	tap := func() error {
+		ctx.fixtureQueueButton(ButtonA, true)
+		ctx.fixtureQueueButton(ButtonA, false)
+		taken, err := drain()
+		if err == nil && taken != 2 {
+			err = fmt.Errorf("Catastrophe delivered %d of 2 queued fixture events", taken)
+		}
+		return err
+	}
+	settled := func() bool {
+		ctx.fixtureSettleInputFrame()
+		return !ctx.fixtureFramePending()
+	}
+
+	if err := tap(); err != nil {
+		return err
+	}
+	if settled() {
+		return errors.New("input the app has not drawn yet lost its frame")
+	}
+	if err := ctx.Clear(); err != nil {
+		return err
+	}
+	if !settled() {
+		return errors.New("a frame that already shows the input asked for another")
+	}
+
+	ctx.fixtureQueueButton(ButtonA, true)
+	if err := ctx.Clear(); err != nil {
+		return err
+	}
+	if settled() {
+		return errors.New("input still queued lost its frame")
+	}
+	ctx.fixtureQueueButton(ButtonA, false)
+	if _, err := drain(); err != nil {
+		return err
+	}
+	if err := ctx.Clear(); err != nil {
+		return err
+	}
+	if !settled() {
+		return errors.New("a frame that shows the drained input asked for another")
+	}
+
+	ctx.RequestFrame()
+	if err := ctx.Clear(); err != nil {
+		return err
+	}
+	if settled() {
+		return errors.New("a frame the app asked for was dropped")
+	}
+	if !settled() {
+		return errors.New("a requested frame was kept after the present that drew it")
 	}
 	return nil
 }

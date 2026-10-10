@@ -27,6 +27,10 @@ static struct {
     char fallback_dir[PATH_MAX];
     atomic_uint wake_count;
     SDL_Texture *capture_target;
+    /* catui__settle_input_frame: a frame asked for since the last present,
+       and input taken since the last frame began. */
+    int frame_requested;
+    int input_since_draw;
 } catui__state;
 
 static const char *catui__fallback_names[CATUI_FALLBACK_CAP] = {
@@ -167,7 +171,11 @@ int catui_screen_width(void) { return catui__guard() == CATUI_OK ? cat_get_scree
 int catui_screen_height(void) { return catui__guard() == CATUI_OK ? cat_get_screen_height() : 0; }
 int catui_scale(int value) { return catui__guard() == CATUI_OK ? cat_scale(value) : 0; }
 uint32_t catui_ticks(void) { return SDL_GetTicks(); }
-void catui_request_frame(void) { if (catui__guard() == CATUI_OK) cat_request_frame(); }
+void catui_request_frame(void) {
+    if (catui__guard() != CATUI_OK) return;
+    catui__state.frame_requested = 1;
+    cat_request_frame();
+}
 void catui_request_frame_in(uint32_t ms) { if (catui__guard() == CATUI_OK) cat_request_frame_in(ms); }
 
 int catui_poll_input(catui_input_event *out) {
@@ -184,6 +192,7 @@ int catui_poll_input(catui_input_event *out) {
 
     cat_input_event event;
     if (!cat_poll_input(&event)) return 0;
+    catui__state.input_since_draw = 1;
     out->button = event.button;
     out->pressed = event.pressed ? 1 : 0;
     out->repeated = event.repeated ? 1 : 0;
@@ -207,14 +216,45 @@ int catui_clear(void) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
     cat_draw_background();
+    /* Every screen frame starts here, so input taken before this point is
+       what the frame shows. */
+    catui__state.input_since_draw = 0;
     return CATUI_OK;
+}
+
+/* Cat raises needs_frame when it queues input, and cat_present then returns
+   at once instead of waiting, so a loop that has not drawn the input yet gets
+   one more pass. This app takes every queued event before it draws and starts
+   each frame with catui_clear, so once the queue is empty and a frame began
+   after the last event, that frame already shows the input. Returning at once
+   only made the next pass draw the same frame again: two full frames per
+   press, two per release and two per held repeat. Keep needs_frame for a
+   frame the app asked for and for input it has not drawn yet. */
+static void catui__settle_input_frame(void) {
+    if (!catui__state.frame_requested && !catui__state.input_since_draw &&
+        cat__input_head == cat__input_tail)
+        cat__g.needs_frame = false;
+    catui__state.frame_requested = 0;
 }
 
 int catui_present(void) {
     int guard = catui__guard();
     if (guard != CATUI_OK) return guard;
+    catui__settle_input_frame();
     cat_present();
     return CATUI_OK;
+}
+
+void catui_fixture_queue_button(int button, int pressed) {
+    if (catui__guard() == CATUI_OK) cat__input_push((cat_button)button, pressed != 0);
+}
+
+int catui_fixture_frame_pending(void) {
+    return catui__guard() == CATUI_OK && cat__g.needs_frame;
+}
+
+void catui_fixture_settle_input_frame(void) {
+    if (catui__guard() == CATUI_OK) catui__settle_input_frame();
 }
 
 static int catui__fallback_text(int tier, const char *text, int draw,
